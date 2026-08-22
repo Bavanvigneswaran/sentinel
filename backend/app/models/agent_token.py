@@ -21,7 +21,16 @@ class AgentToken(Base):
     __tablename__ = "agent_tokens"
     __table_args__ = (
         # user_id is denormalized from devices so the RLS policy is a single
-        # indexed predicate rather than a join.
+        # indexed predicate rather than a join. The composite FK is what keeps
+        # that denormalization honest: without it a token could name a device
+        # owned by someone else while carrying its own user_id, and RLS would
+        # then scope the token to the wrong tenant.
+        sa.ForeignKeyConstraint(
+            ["device_id", "user_id"],
+            ["devices.id", "devices.user_id"],
+            name="fk_agent_tokens_device_id_user_id_devices",
+            ondelete="CASCADE",
+        ),
         sa.Index("ix_agent_tokens_user_id", "user_id"),
         sa.Index("ix_agent_tokens_device_id", "device_id"),
     )
@@ -30,9 +39,8 @@ class AgentToken(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         sa.Uuid, sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    device_id: Mapped[uuid.UUID] = mapped_column(
-        sa.Uuid, sa.ForeignKey("devices.id", ondelete="CASCADE"), nullable=False
-    )
+    # The FK lives in __table_args__ as a composite over (device_id, user_id).
+    device_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False)
 
     token_hash: Mapped[sha256_hash] = mapped_column(unique=True)
 

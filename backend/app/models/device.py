@@ -24,6 +24,10 @@ class Device(TimestampMixin, Base):
         sa.CheckConstraint(_in_check("platform", PLATFORMS), name="platform"),
         sa.CheckConstraint(_in_check("status", DEVICE_STATUSES), name="status"),
         sa.UniqueConstraint("user_id", "name", name="uq_devices_user_id_name"),
+        # Redundant against the primary key, but it gives child tables a
+        # composite FK target so a row can never reference a device owned by a
+        # different user. See agent_tokens and enrollment_codes.
+        sa.UniqueConstraint("id", "user_id", name="uq_devices_id_user_id"),
         # Also serves the RLS predicate `user_id = app_current_user_id()`.
         sa.Index("ix_devices_user_id", "user_id"),
     )

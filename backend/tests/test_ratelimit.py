@@ -3,6 +3,7 @@ from unittest.mock import patch
 import pytest
 
 from app.api.ratelimit import RateLimit
+from app.config import Settings
 
 LOGIN = "/auth/login"
 SIGNUP = "/auth/signup"
@@ -45,9 +46,15 @@ async def test_the_limiter_fails_open_when_redis_is_unreachable(client, redis_cl
     assert r.status_code == 200
 
 
-async def test_the_limiter_is_a_noop_when_disabled(client, settings, monkeypatch, redis_client):
+async def test_the_limiter_is_a_noop_when_disabled(monkeypatch):
+    """Patch the module's settings lookup rather than mutating a shared object,
+    so this does not depend on the state of the lru_cached instance."""
+    import app.api.ratelimit as rl
+
+    disabled = Settings(_env_file=None, environment="dev", rate_limit_enabled=False)
+    monkeypatch.setattr(rl, "get_settings", lambda: disabled)
+
     limiter = RateLimit("t", limit=1, window=60, key="ip")
-    monkeypatch.setattr(settings, "rate_limit_enabled", False)
 
     class _Req:
         client = type("C", (), {"host": "1.2.3.4"})()

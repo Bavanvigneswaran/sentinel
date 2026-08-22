@@ -36,7 +36,18 @@ def create_app() -> FastAPI:
     """
     settings = get_settings()
 
-    app = FastAPI(title="Sentinel API", version="0.1.0", lifespan=lifespan)
+    # The interactive docs enumerate every endpoint and schema. Useful in
+    # development, free reconnaissance in production.
+    is_prod = settings.environment == "prod"
+
+    app = FastAPI(
+        title="Sentinel API",
+        version="0.1.0",
+        lifespan=lifespan,
+        docs_url=None if is_prod else "/docs",
+        redoc_url=None if is_prod else "/redoc",
+        openapi_url=None if is_prod else "/openapi.json",
+    )
 
     app.add_middleware(
         CORSMiddleware,

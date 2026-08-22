@@ -198,3 +198,71 @@ async def test_device_names_are_unique_per_user_but_not_globally(admin_session, 
 
     with pytest.raises(IntegrityError):
         await svc.register_device(admin_session, user_id=user.id, name="laptop")
+
+
+# --- tenant-consistency constraints (Phase 1 security review) ----------------
+
+
+async def test_an_agent_token_cannot_claim_another_users_device(admin_session, user):
+    """The composite FK is what keeps the denormalized user_id honest.
+
+    Without it a token could name someone else's device while carrying its own
+    user_id, and since RLS scopes by that column the token would be visible to
+    the wrong tenant.
+    """
+    other = User(email="other@example.com", password_hash="x")
+    admin_session.add(other)
+    await admin_session.commit()
+    device = await svc.register_device(admin_session, user_id=user.id, name="mac")
+
+    with pytest.raises(IntegrityError):
+        await svc.issue_agent_token(admin_session, user_id=other.id, device_id=device.id)
+    await admin_session.rollback()
+
+
+async def test_an_enrollment_code_cannot_be_consumed_onto_another_users_device(
+    admin_session, user
+):
+    other = User(email="other@example.com", password_hash="x")
+    admin_session.add(other)
+    await admin_session.commit()
+
+    victim_device = await svc.register_device(admin_session, user_id=other.id, name="victim")
+    issued = await svc.create_enrollment_code(admin_session, user.id)
+
+    with pytest.raises(InvalidEnrollmentCode):
+        await svc.consume_enrollment_code(
+            admin_session, issued.code, device_id=victim_device.id
+        )
+
+    # And the code must survive unconsumed rather than being burned by the attempt.
+    remaining = await admin_session.scalar(
+        sa.text("SELECT count(*) FROM enrollment_codes WHERE consumed_at IS NULL")
+    )
+    assert remaining == 1
+
+
+async def test_deleting_a_device_keeps_the_enrollment_audit_row(admin_session, user):
+    """ON DELETE SET NULL (device_id) nulls only that column, so user_id stays
+    NOT NULL and the record that a code was consumed survives."""
+    device = await svc.register_device(admin_session, user_id=user.id, name="mac")
+    issued = await svc.create_enrollment_code(admin_session, user.id)
+    await svc.consume_enrollment_code(admin_session, issued.code, device_id=device.id)
+
+    await admin_session.execute(sa.text("DELETE FROM devices WHERE id = :i"), {"i": device.id})
+    await admin_session.commit()
+
+    row = (
+        await admin_session.execute(
+            sa.text("SELECT device_id, consumed_at, user_id FROM enrollment_codes")
+        )
+    ).one()
+    assert row.device_id is None
+    assert row.consumed_at is not None
+    assert row.user_id == user.id
+
+
+async def test_an_unconsumed_code_may_have_no_device(admin_session, user):
+    """Composite FKs are MATCH SIMPLE, so a NULL device_id skips the check."""
+    issued = await svc.create_enrollment_code(admin_session, user.id)
+    assert issued.id is not None

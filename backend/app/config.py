@@ -124,6 +124,13 @@ class Settings(BaseSettings):
                 problems.append("cookie_secure is False")
             if self.app_db_password == DEV_APP_DB_PASSWORD:
                 problems.append("app_db_password is still the development default")
+            if self.cookie_samesite == "none":
+                # SameSite is the only CSRF defence on /auth/refresh and
+                # /auth/logout; there is no CSRF token. Relaxing it to "none"
+                # makes both endpoints cross-site forgeable.
+                problems.append(
+                    "cookie_samesite='none' removes the only CSRF defence on the auth endpoints"
+                )
             if problems:
                 raise ValueError("refusing to start in prod: " + "; ".join(problems))
         return self

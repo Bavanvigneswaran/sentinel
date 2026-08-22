@@ -62,18 +62,31 @@ async def consume_enrollment_code(
 
     A single conditional UPDATE ... RETURNING, never a read followed by a write:
     two agents racing on the same code must produce exactly one winner. Zero rows
-    back means invalid, expired, or already used, and the caller cannot tell
-    which.
+    back means invalid, expired, already used, or naming a device the code's
+    owner does not own — and the caller cannot tell which.
+
+    `device_id` is caller-supplied, so its ownership is checked in the same
+    statement rather than trusted. The composite FK on the table would reject a
+    mismatch anyway; this turns that integrity error into a clean domain error.
     """
     code_hash = sha256_bytes(normalize_code(code))
 
+    conditions = [
+        EnrollmentCode.code_hash == code_hash,
+        EnrollmentCode.consumed_at.is_(None),
+        EnrollmentCode.expires_at > sa.func.now(),
+    ]
+    if device_id is not None:
+        conditions.append(
+            sa.exists().where(
+                Device.id == device_id,
+                Device.user_id == EnrollmentCode.user_id,
+            )
+        )
+
     result = await session.execute(
         sa.update(EnrollmentCode)
-        .where(
-            EnrollmentCode.code_hash == code_hash,
-            EnrollmentCode.consumed_at.is_(None),
-            EnrollmentCode.expires_at > sa.func.now(),
-        )
+        .where(*conditions)
         .values(consumed_at=sa.func.now(), device_id=device_id, consumed_ip=ip)
         .returning(EnrollmentCode.user_id)
     )
@@ -93,8 +106,12 @@ async def issue_agent_token(
     name: str | None = None,
     expires_at: datetime | None = None,
 ) -> IssuedAgentToken:
-    """Mint an opaque token scoped to one device. The plaintext is returned once
-    and never stored."""
+    """Mint an opaque token scoped to one device.
+
+    The plaintext is returned once and never stored. If `device_id` is not owned
+    by `user_id` the composite FK rejects the insert — the token's user_id is
+    what RLS scopes by, so a mismatch would hand it to the wrong tenant.
+    """
     token, prefix, token_hash = new_agent_token()
 
     row = AgentToken(

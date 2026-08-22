@@ -21,6 +21,17 @@ class EnrollmentCode(Base):
 
     __tablename__ = "enrollment_codes"
     __table_args__ = (
+        # Same tenant-consistency guarantee as agent_tokens. The column-list
+        # form of SET NULL (PostgreSQL 15+) nulls only device_id when a device
+        # is deleted, so user_id stays NOT NULL and the audit row survives.
+        # A composite FK is MATCH SIMPLE, so a NULL device_id skips the check —
+        # which is exactly right for a code that has not been consumed yet.
+        sa.ForeignKeyConstraint(
+            ["device_id", "user_id"],
+            ["devices.id", "devices.user_id"],
+            name="fk_enrollment_codes_device_id_user_id_devices",
+            ondelete="SET NULL (device_id)",
+        ),
         sa.Index("ix_enrollment_codes_user_id", "user_id"),
         sa.Index("ix_enrollment_codes_expires_at", "expires_at"),
     )
@@ -34,11 +45,9 @@ class EnrollmentCode(Base):
     # First group of the display code, for listing outstanding codes in the UI.
     code_prefix: Mapped[str] = mapped_column(sa.Text, nullable=False)
 
-    # Set when the code is consumed; SET NULL so deleting the device does not
-    # erase the record that the code was used.
-    device_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.Uuid, sa.ForeignKey("devices.id", ondelete="SET NULL"), nullable=True
-    )
+    # Set when the code is consumed. The FK lives in __table_args__ as a
+    # composite over (device_id, user_id).
+    device_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid, nullable=True)
 
     expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     consumed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
