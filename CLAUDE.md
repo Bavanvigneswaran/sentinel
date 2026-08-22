@@ -30,12 +30,17 @@ charts · Python + psutil agent (PyInstaller) · React Native + Kotlin module fo
 - `make migrate` — apply Alembic migrations · `make revision m="..."` — autogenerate a new one
 - `make test` — backend test suite (pytest) · `make lint` · `make typecheck`
 - `make db-shell` / `make redis-shell` · `make reset-db` — wipe volumes and re-migrate
-- `make agent` — run the local agent against localhost (Phase 2+)
+- `make agent-enroll code=X4T9-K2QM-7PDR` — enrol this machine · `make agent` — run it
+- `make agent-sample` — print one real sample without connecting · `make agent-status`
+- `make agent-install-service` / `agent-uninstall-service` — macOS launchd (Phase 11 adds the rest)
 
-Phase 1 status: complete. Five tables with Alembic migrations and enforced RLS; Argon2id auth with
-rotating refresh tokens; login/signup pages, protected routing, auth store. 93 backend tests green.
-Verified in a real browser: signup → dashboard → hard refresh → still signed in. No agent yet — the
-dashboard shows no devices because none can exist until Phase 2.
+Phase 2 status: backend and agent complete. Six TimescaleDB hypertables, the agent↔server WebSocket
+protocol, ingest socket with agent-token auth, device/enrollment endpoints, and a psutil agent that
+runs under launchd. 152 backend + 49 agent tests green. Verified on this Mac: enrol → connect → real
+CPU/memory/disk/network/latency/process rows in all six tables, and a killed backend produces
+exponential backoff with the outage window delivered as separate 10s samples on reconnect.
+Still to come in Phase 3: Redis fanout, viewer WS, live-mode upshift, and the UI that displays any
+of this — the web app still only has auth pages.
 
 ## Conventions
 
@@ -67,3 +72,24 @@ dashboard shows no devices because none can exist until Phase 2.
   production's reverse proxy must do the same.
 - **Env config is absolute-path resolved.** `backend/.env` (see `backend/.env.example`). Complex
   settings like `CORS_ORIGINS` are parsed as JSON, so the brackets are required.
+
+## Phase 2 invariants — don't break these
+
+- **Never synthesise a metric.** A value the platform cannot measure is `None` on the wire and NULL
+  in the database, and renders as "unavailable". Three real cases live in the collectors, each with
+  a comment: psutil reports `cpu_freq` as `4` on Apple Silicon (not MHz), `ctx_switches` is a
+  per-interval delta on macOS rather than a cumulative counter, and both obvious filters for APFS's
+  hidden volumes are wrong — read-only drops the sealed `/`, and `dontbrowse` drops
+  `/System/Volumes/Data` where all user data lives.
+- **`app/schemas/protocol.py` is the contract.** Both the agent and the server import it. Bump
+  `PROTOCOL_VERSION` for any breaking change; the server refuses a mismatch at handshake.
+- **Agent frames are untrusted.** Size-capped before parsing, schema-validated before any database
+  work, and samples outside the accepted time window are rejected rather than stored.
+- **Ingest writes are idempotent** (`ON CONFLICT DO NOTHING`), because an agent that reconnects
+  before its ack arrives will resend the batch.
+- **Counters are differentiated on the agent**, not the server, so a reboot or counter wrap is
+  detected and dropped instead of drawing a spike that never happened.
+- **A batch leaves the agent's buffer only after the server acks it**, and a backlog is chunked into
+  push-interval windows — collapsing an outage into one row would claim a resolution it never had.
+- **Metric tables carry a denormalized `user_id`** behind the same composite FK as the auth schema,
+  so RLS stays one indexed predicate and cannot be aimed at the wrong tenant.

@@ -1,8 +1,10 @@
 .PHONY: up down dev dev-backend dev-frontend test agent logs install \
-        migrate migrate-down revision db-shell redis-shell reset-db lint typecheck
+        migrate migrate-down revision db-shell redis-shell reset-db lint typecheck \
+        agent-enroll agent-sample agent-status agent-install-service agent-uninstall-service
 
 install:
 	cd backend && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+	cd agent && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 	cd web && npm install
 
 up:
@@ -28,6 +30,7 @@ dev:
 
 test:
 	cd backend && .venv/bin/pytest -q
+	cd agent && .venv/bin/pytest -q
 
 # --- database ---------------------------------------------------------------
 # Alembic runs as the owner role (ADMIN_DATABASE_URL); the app itself connects
@@ -56,10 +59,31 @@ reset-db:
 # --- quality ----------------------------------------------------------------
 lint:
 	cd backend && .venv/bin/ruff check .
+	cd agent && .venv/bin/ruff check .
 	cd web && npm run lint
 
 typecheck:
 	cd web && npx tsc -b --noEmit
 
+# --- agent ------------------------------------------------------------------
+# Enrol first: mint a code in the UI (or POST /enrollment-codes), then
+#   make agent-enroll code=X4T9-K2QM-7PDR
+agent-enroll:
+	cd agent && .venv/bin/sentinel-agent enroll --code "$(code)"
+
 agent:
-	cd agent && python -m sentinel_agent.main
+	cd agent && .venv/bin/sentinel-agent run
+
+# Print one real sample from this machine without connecting to anything.
+agent-sample:
+	cd agent && .venv/bin/sentinel-agent sample
+
+agent-status:
+	cd agent && .venv/bin/sentinel-agent status
+
+# macOS only for now; systemd and Windows Service arrive in Phase 11.
+agent-install-service:
+	cd agent && .venv/bin/sentinel-agent install-service
+
+agent-uninstall-service:
+	cd agent && .venv/bin/sentinel-agent uninstall-service

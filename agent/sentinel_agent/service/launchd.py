@@ -34,7 +34,10 @@ def build_plist(config_path: Path) -> dict:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     return {
         "Label": LABEL,
-        "ProgramArguments": [*_executable(), "run", "--config", str(config_path)],
+        # --config is a global option declared before the subparser, so it has
+        # to precede `run`. The reverse order parses as an unrecognised
+        # argument and launchd just retries the failure until it gives up.
+        "ProgramArguments": [*_executable(), "--config", str(config_path), "run"],
         "RunAtLoad": True,
         # launchd restarts the agent if it exits for any reason. The agent has
         # its own reconnect backoff, so this only catches a hard crash.
