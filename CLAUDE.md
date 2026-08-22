@@ -23,11 +23,15 @@ charts · Python + psutil agent (PyInstaller) · React Native + Kotlin module fo
 
 ## Commands
 
-<!-- fill in as Phase 0 lands -->
-- `make up` — start Postgres/Timescale + Redis
-- `make dev` — backend + frontend dev servers
-- `make test` — full test suite
-- `make agent` — run the local agent against localhost
+- `make install` — create backend venv + install deps, `npm install` for web
+- `make up` — start TimescaleDB + Redis via Docker
+- `make dev-backend` — FastAPI dev server on :8000 (reload)
+- `make dev-frontend` — Vite dev server on :5173 (proxies `/api` → :8000, `/ws` → :8000)
+- `make test` — backend test suite (pytest)
+- `make agent` — run the local agent against localhost (Phase 2+)
+
+Phase 0 status: monorepo scaffold, docker-compose, FastAPI `/health`, Vite+React+TS+Tailwind v4+shadcn
+skeleton all verified working end-to-end (proxy → live backend, not mocked). No DB/auth/agent yet.
 
 ## Conventions
 

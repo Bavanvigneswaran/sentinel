@@ -1,7 +1,13 @@
 .env
 *.pyc
 __pycache__/
-node_modules/
-dist/
 .venv/
 *.db
+
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+.DS_Store
+*.tsbuildinfo
