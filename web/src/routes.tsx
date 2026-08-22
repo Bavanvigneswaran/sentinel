@@ -4,6 +4,7 @@ import { ProtectedRoute } from "@/components/ProtectedRoute"
 import { PublicOnlyRoute } from "@/components/PublicOnlyRoute"
 import { AlertRulesPage } from "@/pages/AlertRulesPage"
 import { AlertsPage } from "@/pages/AlertsPage"
+import { AnomaliesPage } from "@/pages/AnomaliesPage"
 import { DashboardPage } from "@/pages/DashboardPage"
 import { DeviceHistoryPage } from "@/pages/DeviceHistoryPage"
 import { DevicesPage } from "@/pages/DevicesPage"
@@ -30,6 +31,7 @@ export const router = createBrowserRouter([
       { path: "/devices/:deviceId/live", element: <LiveMonitoringPage /> },
       { path: "/alerts", element: <AlertsPage /> },
       { path: "/alerts/rules", element: <AlertRulesPage /> },
+      { path: "/anomalies", element: <AnomaliesPage /> },
       { path: "/settings", element: <SettingsPage /> },
     ],
   },

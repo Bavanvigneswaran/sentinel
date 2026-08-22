@@ -12,6 +12,8 @@ export type Metric =
   | "cpu_iowait_percent"
 
 export type Comparison = ">" | ">=" | "<" | "<=" | "=="
+export type RuleType = "threshold" | "anomaly"
+export type Severity = "watch" | "warning" | "critical"
 export type AlertRuleState = "ok" | "pending" | "firing"
 export type EventStatus = "firing" | "resolved"
 
@@ -20,9 +22,11 @@ export interface AlertRule {
   /** null applies the rule to every one of the caller's devices. */
   device_id: string | null
   name: string
+  rule_type: RuleType
   metric: Metric
-  comparison: Comparison
-  threshold: number
+  /** null for an anomaly rule — judged against an adaptive baseline instead. */
+  comparison: Comparison | null
+  threshold: number | null
   for_duration_seconds: number
   enabled: boolean
   created_at: string
@@ -32,9 +36,10 @@ export interface AlertRule {
 export interface AlertRuleCreate {
   device_id?: string | null
   name: string
+  rule_type: RuleType
   metric: Metric
-  comparison: Comparison
-  threshold: number
+  comparison?: Comparison | null
+  threshold?: number | null
   for_duration_seconds: number
   enabled?: boolean
 }
@@ -46,11 +51,13 @@ export interface AlertEvent {
   rule_id: string | null
   device_id: string
   /** Snapshotted from the rule at fire time — correct even after the rule
-   * is later edited or deleted. */
+   * is later edited or deleted. null comparison/threshold means this was an
+   * anomaly-sourced event; see observed_value, baseline_mean, baseline_mad
+   * and z_score below. */
   rule_name: string
   metric: Metric
-  comparison: Comparison
-  threshold: number
+  comparison: Comparison | null
+  threshold: number | null
   status: EventStatus
   value_at_fire: number
   /** null only for an event whose owning rule was deleted before its first
@@ -61,6 +68,25 @@ export interface AlertEvent {
   resolved_value: number | null
   /** null means never notified — either not yet attempted, or silenced. */
   notified_at: string | null
+  /** The four below are populated only for an anomaly-sourced event. */
+  observed_value: number | null
+  baseline_mean: number | null
+  /** Unscaled EWMA absolute deviation — see lib/anomaly.ts's scaledSpread(). */
+  baseline_mad: number | null
+  z_score: number | null
+  /** Derived from z_score at read time, not stored — null exactly when
+   * z_score is null. */
+  severity: Severity | null
+}
+
+export interface AnomalyBaseline {
+  device_id: string
+  metric: Metric
+  mean: number
+  /** Unscaled EWMA absolute deviation — see lib/anomaly.ts's scaledSpread(). */
+  mad: number
+  sample_count: number
+  updated_at: string
 }
 
 export interface AlertSilence {

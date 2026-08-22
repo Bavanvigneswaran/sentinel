@@ -8,10 +8,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { apiFetch } from "@/lib/api"
 import type { AlertRule } from "@/types/alerts"
 import type { Device } from "@/types/api"
+import type { NotificationSettings } from "@/types/notifications"
 
 export function AlertRulesPage() {
   const [rules, setRules] = useState<AlertRule[] | null>(null)
   const [devices, setDevices] = useState<Device[]>([])
+  const [sensitivity, setSensitivity] = useState<NotificationSettings["anomaly_sensitivity"] | null>(
+    null,
+  )
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -32,6 +36,13 @@ export function AlertRulesPage() {
       .catch(() => {
         // Non-fatal: rule creation still works, just without a device picker.
       })
+    // Display only — editing sensitivity stays on the Settings page. Shown
+    // next to each anomaly rule so its firing behavior isn't a mystery.
+    apiFetch<NotificationSettings>("/notifications/settings")
+      .then((s) => setSensitivity(s.anomaly_sensitivity))
+      .catch(() => {
+        // Non-fatal: anomaly rules just won't show a sensitivity caption.
+      })
   }, [])
 
   const handleDelete = async (id: string) => {
@@ -48,12 +59,15 @@ export function AlertRulesPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Alert rules</h1>
           <p className="text-sm text-muted-foreground">
-            Static thresholds that drive the alerts triage page.
+            Static thresholds and adaptive anomaly rules that drive the alerts triage page.
           </p>
         </div>
         <div className="flex gap-2">
           <Button asChild variant="outline" size="sm">
             <Link to="/alerts">Back to alerts</Link>
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link to="/anomalies">Anomalies</Link>
           </Button>
           {!creating && (
             <Button size="sm" onClick={() => setCreating(true)}>
@@ -129,8 +143,17 @@ export function AlertRulesPage() {
                       )}
                     </span>
                     <span className="text-sm text-muted-foreground">
-                      {deviceName(rule.device_id)} · {rule.metric} {rule.comparison}{" "}
-                      {rule.threshold} for {rule.for_duration_seconds}s
+                      {rule.rule_type === "threshold" ? (
+                        <>
+                          {deviceName(rule.device_id)} · {rule.metric} {rule.comparison}{" "}
+                          {rule.threshold} for {rule.for_duration_seconds}s
+                        </>
+                      ) : (
+                        <>
+                          {deviceName(rule.device_id)} · {rule.metric} anomaly detection
+                          {sensitivity && <> · sensitivity: {sensitivity}</>}
+                        </>
+                      )}
                     </span>
                   </div>
                   <div className="flex gap-2">

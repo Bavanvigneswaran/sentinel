@@ -14,6 +14,13 @@ RULE = {
     "for_duration_seconds": 120,
 }
 
+ANOMALY_RULE = {
+    "name": "Unusual CPU",
+    "rule_type": "anomaly",
+    "metric": "cpu_percent",
+    "for_duration_seconds": 120,
+}
+
 
 async def _auth_headers(client, creds=CREDS) -> dict:
     token = (await client.post(SIGNUP, json=creds)).json()["access_token"]
@@ -106,6 +113,81 @@ async def test_delete_a_rule(client):
     assert (
         await client.delete(f"/alerts/rules/{rule['id']}", headers=headers)
     ).status_code == 404
+
+
+async def test_create_an_anomaly_rule_without_comparison_or_threshold(client):
+    headers = await _auth_headers(client)
+    created = await client.post("/alerts/rules", json=ANOMALY_RULE, headers=headers)
+    assert created.status_code == 201
+    body = created.json()
+    assert body["rule_type"] == "anomaly"
+    assert body["comparison"] is None
+    assert body["threshold"] is None
+
+
+async def test_an_anomaly_rule_with_a_comparison_is_rejected(client):
+    headers = await _auth_headers(client)
+    resp = await client.post(
+        "/alerts/rules", json={**ANOMALY_RULE, "comparison": ">"}, headers=headers
+    )
+    assert resp.status_code == 422
+
+
+async def test_a_threshold_rule_missing_its_threshold_is_rejected(client):
+    headers = await _auth_headers(client)
+    payload = {k: v for k, v in RULE.items() if k != "threshold"}
+    resp = await client.post("/alerts/rules", json=payload, headers=headers)
+    assert resp.status_code == 422
+
+
+async def test_patching_an_anomaly_rules_duration_alone_leaves_its_type_untouched(client):
+    headers = await _auth_headers(client)
+    rule = (await client.post("/alerts/rules", json=ANOMALY_RULE, headers=headers)).json()
+
+    patched = await client.patch(
+        f"/alerts/rules/{rule['id']}", json={"for_duration_seconds": 30}, headers=headers
+    )
+    assert patched.status_code == 200
+    body = patched.json()
+    assert body["rule_type"] == "anomaly"
+    assert body["for_duration_seconds"] == 30
+    assert body["comparison"] is None
+    assert body["threshold"] is None
+
+
+async def test_flipping_rule_type_without_paired_fields_is_rejected(client):
+    headers = await _auth_headers(client)
+    rule = (await client.post("/alerts/rules", json=ANOMALY_RULE, headers=headers)).json()
+
+    # Flip to threshold without supplying comparison/threshold in the same
+    # request: the schema validator itself rejects this.
+    resp = await client.patch(
+        f"/alerts/rules/{rule['id']}", json={"rule_type": "threshold"}, headers=headers
+    )
+    assert resp.status_code == 422
+
+    threshold_rule = (await client.post("/alerts/rules", json=RULE, headers=headers)).json()
+    # Flip to anomaly while still carrying comparison/threshold: also
+    # rejected by the schema validator.
+    resp = await client.patch(
+        f"/alerts/rules/{threshold_rule['id']}",
+        json={"rule_type": "anomaly"},
+        headers=headers,
+    )
+    assert resp.status_code == 422
+
+
+async def test_setting_threshold_alone_on_an_existing_anomaly_rule_is_rejected(client):
+    """rule_type isn't in this payload, so AlertRuleUpdate's own validator
+    has nothing to check — this exercises the route's IntegrityError-to-422
+    translation of the DB's rule_type_fields CHECK constraint instead."""
+    headers = await _auth_headers(client)
+    rule = (await client.post("/alerts/rules", json=ANOMALY_RULE, headers=headers)).json()
+
+    resp = await client.patch(
+        f"/alerts/rules/{rule['id']}", json={"threshold": 95.0}, headers=headers
+    )
+    assert resp.status_code == 422
 
 
 async def test_a_user_cannot_see_another_users_rules(client):

@@ -1,5 +1,6 @@
 import { useState } from "react"
 import type { FormEvent } from "react"
+import { Link } from "react-router"
 
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -7,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { apiFetch, ApiError } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import type { AlertRule, Comparison, Metric } from "@/types/alerts"
+import type { AlertRule, Comparison, Metric, RuleType } from "@/types/alerts"
 import type { Device } from "@/types/api"
 
 const METRICS: { value: Metric; label: string }[] = [
@@ -50,9 +51,10 @@ interface RuleFormProps {
 export function RuleForm({ devices, rule, onSaved, onCancel }: RuleFormProps) {
   const [name, setName] = useState(rule?.name ?? "")
   const [deviceId, setDeviceId] = useState(rule?.device_id ?? "")
+  const [ruleType, setRuleType] = useState<RuleType>(rule?.rule_type ?? "threshold")
   const [metric, setMetric] = useState<Metric>(rule?.metric ?? "cpu_percent")
   const [comparison, setComparison] = useState<Comparison>(rule?.comparison ?? ">")
-  const [threshold, setThreshold] = useState(rule ? String(rule.threshold) : "90")
+  const [threshold, setThreshold] = useState(rule?.threshold != null ? String(rule.threshold) : "90")
   const [forDuration, setForDuration] = useState(
     rule ? String(rule.for_duration_seconds) : "60",
   )
@@ -65,15 +67,26 @@ export function RuleForm({ devices, rule, onSaved, onCancel }: RuleFormProps) {
     setError(null)
     setSubmitting(true)
     try {
-      const body = {
-        name,
-        device_id: deviceId === "" ? null : deviceId,
-        metric,
-        comparison,
-        threshold: Number(threshold),
-        for_duration_seconds: Number(forDuration),
-        enabled,
-      }
+      const body =
+        ruleType === "threshold"
+          ? {
+              name,
+              device_id: deviceId === "" ? null : deviceId,
+              rule_type: ruleType,
+              metric,
+              comparison,
+              threshold: Number(threshold),
+              for_duration_seconds: Number(forDuration),
+              enabled,
+            }
+          : {
+              name,
+              device_id: deviceId === "" ? null : deviceId,
+              rule_type: ruleType,
+              metric,
+              for_duration_seconds: Number(forDuration),
+              enabled,
+            }
       if (rule) {
         await apiFetch(`/alerts/rules/${rule.id}`, { method: "PATCH", body })
       } else {
@@ -103,6 +116,28 @@ export function RuleForm({ devices, rule, onSaved, onCancel }: RuleFormProps) {
           onChange={(e) => setName(e.target.value)}
           placeholder="High CPU"
         />
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <Label>Type</Label>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant={ruleType === "threshold" ? "default" : "outline"}
+            onClick={() => setRuleType("threshold")}
+          >
+            Threshold
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={ruleType === "anomaly" ? "default" : "outline"}
+            onClick={() => setRuleType("anomaly")}
+          >
+            Anomaly
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-col gap-2">
@@ -139,35 +174,39 @@ export function RuleForm({ devices, rule, onSaved, onCancel }: RuleFormProps) {
           </select>
         </div>
 
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="rule-comparison">Condition</Label>
-          <select
-            id="rule-comparison"
-            className={selectClassName()}
-            value={comparison}
-            onChange={(e) => setComparison(e.target.value as Comparison)}
-          >
-            {COMPARISONS.map((c) => (
-              <option key={c.value} value={c.value}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        {ruleType === "threshold" && (
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="rule-comparison">Condition</Label>
+            <select
+              id="rule-comparison"
+              className={selectClassName()}
+              value={comparison}
+              onChange={(e) => setComparison(e.target.value as Comparison)}
+            >
+              {COMPARISONS.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="rule-threshold">Threshold</Label>
-          <Input
-            id="rule-threshold"
-            type="number"
-            step="any"
-            required
-            value={threshold}
-            onChange={(e) => setThreshold(e.target.value)}
-          />
-        </div>
+        {ruleType === "threshold" && (
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="rule-threshold">Threshold</Label>
+            <Input
+              id="rule-threshold"
+              type="number"
+              step="any"
+              required
+              value={threshold}
+              onChange={(e) => setThreshold(e.target.value)}
+            />
+          </div>
+        )}
 
         <div className="flex flex-col gap-2">
           <Label htmlFor="rule-duration">For (seconds)</Label>
@@ -181,11 +220,23 @@ export function RuleForm({ devices, rule, onSaved, onCancel }: RuleFormProps) {
           />
         </div>
       </div>
-      <p className="text-xs text-muted-foreground">
-        The condition must hold continuously for this long before the rule fires. A rule can
-        never fire on a single sample, even with 0 seconds — it always takes at least one more
-        evaluation tick.
-      </p>
+      {ruleType === "threshold" ? (
+        <p className="text-xs text-muted-foreground">
+          The condition must hold continuously for this long before the rule fires. A rule can
+          never fire on a single sample, even with 0 seconds — it always takes at least one more
+          evaluation tick.
+        </p>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          Fires when this metric drifts unusually far from its own recent normal for this long,
+          adapting automatically as that normal changes over time. How far counts as unusual is
+          set once for the whole account under{" "}
+          <Link to="/settings" className="underline underline-offset-2">
+            Settings → Anomaly sensitivity
+          </Link>
+          .
+        </p>
+      )}
 
       <label className="flex items-center gap-2 text-sm">
         <input

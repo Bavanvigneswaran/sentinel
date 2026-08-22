@@ -1,7 +1,17 @@
-"""Alert rules, their per-(rule, device) evaluation state, firing history, and
-silences.
+"""Alert rules, their per-(rule, device) evaluation state, firing history,
+silences, and adaptive anomaly baselines.
 
-Four tables, three different foreign-key shapes, on purpose:
+`AlertRule.rule_type` discriminates two kinds of row in one table:
+threshold rules set `comparison`/`threshold` and are judged by
+analysis/alerts.py's evaluate_condition(); anomaly rules leave both null and
+are judged by app/alerts/evaluator.py against an AnomalyBaseline row instead,
+using analysis/anomaly.py's z-score math. Both kinds feed the same `step()`
+state machine and land in the same AlertState/AlertEvent tables — a
+discriminator was chosen over a sibling table because AlertState/AlertEvent
+already FK straight to a rule row; a sibling table would need a polymorphic
+association to reuse them.
+
+Five tables, three different foreign-key shapes, on purpose:
 
 * `AlertRule.device_id` and `AlertState`/`AlertEvent`/`AlertSilence.device_id`
   are all *composite* FKs to `devices (id, user_id)`, the same
@@ -47,6 +57,7 @@ METRICS = (
     "cpu_iowait_percent",
 )
 COMPARISONS = (">", ">=", "<", "<=", "==")
+RULE_TYPES = ("threshold", "anomaly")
 ALERT_STATES = ("ok", "pending", "firing")
 EVENT_STATUSES = ("firing", "resolved")
 
@@ -65,6 +76,12 @@ class AlertRule(TimestampMixin, Base):
     __table_args__ = (
         sa.CheckConstraint(in_check("metric", METRICS), name="metric"),
         sa.CheckConstraint(in_check("comparison", COMPARISONS), name="comparison"),
+        sa.CheckConstraint(in_check("rule_type", RULE_TYPES), name="rule_type"),
+        sa.CheckConstraint(
+            "(rule_type = 'threshold' AND threshold IS NOT NULL AND comparison IS NOT NULL) "
+            "OR (rule_type = 'anomaly' AND threshold IS NULL AND comparison IS NULL)",
+            name="rule_type_fields",
+        ),
         sa.CheckConstraint("for_duration_seconds >= 0", name="for_duration_seconds_non_negative"),
         _device_fk("alert_rules"),
         sa.Index("ix_alert_rules_user_id", "user_id"),
@@ -78,9 +95,15 @@ class AlertRule(TimestampMixin, Base):
     device_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid, nullable=True)
 
     name: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    #: "threshold" rules set comparison/threshold below and are judged by
+    #: evaluate_condition(). "anomaly" rules leave both null and are judged
+    #: against an AnomalyBaseline row instead. See module docstring.
+    rule_type: Mapped[str] = mapped_column(
+        sa.Text, nullable=False, server_default=sa.text("'threshold'")
+    )
     metric: Mapped[str] = mapped_column(sa.Text, nullable=False)
-    comparison: Mapped[str] = mapped_column(sa.Text, nullable=False)
-    threshold: Mapped[float] = mapped_column(sa.Float, nullable=False)
+    comparison: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    threshold: Mapped[float | None] = mapped_column(sa.Float, nullable=True)
     #: How long `comparison` must hold continuously before PENDING becomes
     #: FIRING. See app/analysis/alerts.py for the state machine this drives.
     for_duration_seconds: Mapped[int] = mapped_column(
@@ -132,7 +155,13 @@ class AlertEvent(Base):
 
     `rule_name`/`metric`/`comparison`/`threshold` are snapshotted from the rule
     at the moment it fired, so history reads correctly even after the rule is
-    later edited or deleted.
+    later edited or deleted. `comparison`/`threshold` are null for an
+    anomaly-sourced event (no operator, no fixed threshold in that sense) —
+    `observed_value`/`baseline_mean`/`baseline_mad`/`z_score` carry the
+    equivalent evidence instead, also null for a threshold-sourced event.
+    `comparison IS NULL` is the reliable "this was an anomaly firing" signal
+    for a reader, since `rule_id` may be null after the rule itself is
+    deleted.
     """
 
     __tablename__ = "alert_events"
@@ -153,8 +182,8 @@ class AlertEvent(Base):
 
     rule_name: Mapped[str] = mapped_column(sa.Text, nullable=False)
     metric: Mapped[str] = mapped_column(sa.Text, nullable=False)
-    comparison: Mapped[str] = mapped_column(sa.Text, nullable=False)
-    threshold: Mapped[float] = mapped_column(sa.Float, nullable=False)
+    comparison: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    threshold: Mapped[float | None] = mapped_column(sa.Float, nullable=True)
 
     status: Mapped[str] = mapped_column(
         sa.Text, nullable=False, server_default=sa.text("'firing'")
@@ -170,6 +199,17 @@ class AlertEvent(Base):
     #: of per-channel success, so a persistently broken channel cannot turn
     #: into an infinite per-tick retry storm.
     notified_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+    #: The four fields below are populated only for an anomaly-sourced fire,
+    #: snapshotting the baseline exactly as it stood right before the
+    #: anomalous reading was folded into it (see evaluator.py's
+    #: judge-before-update ordering) — the authoritative record of "what
+    #: normal looked like" at the moment this fired, independent of how the
+    #: live AnomalyBaseline row may have since drifted.
+    observed_value: Mapped[float | None] = mapped_column(sa.Float, nullable=True)
+    baseline_mean: Mapped[float | None] = mapped_column(sa.Float, nullable=True)
+    baseline_mad: Mapped[float | None] = mapped_column(sa.Float, nullable=True)
+    z_score: Mapped[float | None] = mapped_column(sa.Float, nullable=True)
 
 
 class AlertSilence(Base):
@@ -199,3 +239,42 @@ class AlertSilence(Base):
     ends_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     reason: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     created_at: Mapped[ts_now]
+
+
+class AnomalyBaseline(Base):
+    """One row per (device, metric) an anomaly rule has ever evaluated
+    against that device, created lazily on first evaluation — same posture
+    as AlertState. `mean`/`mad`/`sample_count` are exactly
+    analysis/anomaly.py's BaselineState fields; app/alerts/evaluator.py is
+    the only writer, updating this once per tick regardless of whether that
+    tick fired, so the baseline keeps adapting even while an alert is open.
+    """
+
+    __tablename__ = "anomaly_baselines"
+    __table_args__ = (
+        sa.CheckConstraint(in_check("metric", METRICS), name="metric"),
+        sa.CheckConstraint("sample_count >= 0", name="sample_count_non_negative"),
+        _device_fk("anomaly_baselines"),
+        sa.UniqueConstraint("device_id", "metric", name="uq_anomaly_baselines_device_id_metric"),
+        sa.Index("ix_anomaly_baselines_user_id", "user_id"),
+    )
+
+    id: Mapped[uuid_pk]
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    device_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False)
+    metric: Mapped[str] = mapped_column(sa.Text, nullable=False)
+
+    mean: Mapped[float] = mapped_column(sa.Float, nullable=False)
+    #: EWMA of absolute deviation, unscaled — see analysis/anomaly.py.
+    mad: Mapped[float] = mapped_column(sa.Float, nullable=False)
+    sample_count: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, server_default=sa.text("0")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=False,
+        server_default=sa.func.now(),
+        onupdate=sa.func.now(),
+    )

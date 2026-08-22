@@ -8,7 +8,8 @@ export interface NotificationSettings {
   /** null falls back to the account's own email at send time. */
   email_address: string | null
   web_push_enabled: boolean
-  /** Stored now; read by nothing until Phase 6's adaptive baseline. */
+  /** Cutoff the evaluator uses for every anomaly rule on this account — see
+   * lib/anomaly.ts. */
   anomaly_sensitivity: Sensitivity
   updated_at: string
 }

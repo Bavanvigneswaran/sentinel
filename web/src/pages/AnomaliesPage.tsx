@@ -2,8 +2,9 @@ import { useEffect, useState } from "react"
 import { Link } from "react-router"
 
 import { AlertStatusBadge } from "@/components/AlertStatusBadge"
+import { AnomalyEvidenceChart } from "@/components/AnomalyEvidenceChart"
 import { AppLayout } from "@/components/AppLayout"
-import { SilenceForm } from "@/components/SilenceForm"
+import { SeverityBadge } from "@/components/SeverityBadge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { apiFetch } from "@/lib/api"
@@ -26,18 +27,25 @@ function formatRelativeTime(iso: string): string {
   return `${Math.floor(seconds / 86_400)}d ago`
 }
 
-export function AlertsPage() {
+/**
+ * Anomaly-sourced alert events — a filtered view over the same /alerts/events
+ * the threshold triage page (AlertsPage) reads, since both rule types feed
+ * one alert pipeline. `comparison === null` is the reliable "this was an
+ * anomaly firing" signal on the event itself (rule_id can be null after the
+ * rule is deleted, but the event's own snapshot always carries this).
+ */
+export function AnomaliesPage() {
   const [filter, setFilter] = useState<EventStatus | "all">("firing")
   const [events, setEvents] = useState<AlertEvent[] | null>(null)
   const [devicesById, setDevicesById] = useState<Record<string, Device>>({})
   const [error, setError] = useState<string | null>(null)
-  const [silencing, setSilencing] = useState<string | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   useEffect(() => {
     apiFetch<Device[]>("/devices")
       .then((devices) => setDevicesById(Object.fromEntries(devices.map((d) => [d.id, d]))))
       .catch(() => {
-        // Non-fatal: the triage list still works with a raw device_id shown.
+        // Non-fatal: the list still works with a raw device_id shown.
       })
   }, [])
 
@@ -48,12 +56,12 @@ export function AlertsPage() {
       apiFetch<AlertEvent[]>(`/alerts/events?status=${filter}`)
         .then((data) => {
           if (!cancelled) {
-            setEvents(data)
+            setEvents(data.filter((e) => e.comparison === null))
             setError(null)
           }
         })
         .catch(() => {
-          if (!cancelled) setError("Could not load alerts.")
+          if (!cancelled) setError("Could not load anomalies.")
         })
     }
 
@@ -66,22 +74,17 @@ export function AlertsPage() {
   }, [filter])
 
   return (
-    <AppLayout active="alerts">
+    <AppLayout active="anomalies">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Alerts</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Anomalies</h1>
           <p className="text-sm text-muted-foreground">
-            Firing and recently resolved alerts across your fleet.
+            Statistically unusual readings caught by your adaptive-baseline rules.
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button asChild variant="outline" size="sm">
-            <Link to="/anomalies">Anomalies</Link>
-          </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link to="/alerts/rules">Manage rules</Link>
-          </Button>
-        </div>
+        <Button asChild variant="outline" size="sm">
+          <Link to="/alerts/rules">Manage rules</Link>
+        </Button>
       </div>
 
       <div className="flex gap-2">
@@ -109,8 +112,8 @@ export function AlertsPage() {
             <CardTitle>Nothing here</CardTitle>
             <CardDescription>
               {filter === "firing"
-                ? "No alerts are currently firing."
-                : "No alerts match this filter."}
+                ? "No anomalies are currently firing."
+                : "No anomalies match this filter."}
             </CardDescription>
           </CardHeader>
         </Card>
@@ -125,18 +128,15 @@ export function AlertsPage() {
                   <div className="flex flex-col gap-1">
                     <span className="font-medium">{event.rule_name}</span>
                     <span className="text-sm text-muted-foreground">
-                      {devicesById[event.device_id]?.name ?? event.device_id} · {event.metric}{" "}
-                      {event.comparison !== null ? (
-                        <>
-                          {event.comparison} {event.threshold}
-                        </>
-                      ) : (
-                        <>anomaly ({event.severity})</>
-                      )}
+                      {devicesById[event.device_id]?.name ?? event.device_id} · {event.metric} ·
+                      z = {event.z_score?.toFixed(1) ?? "—"}
                     </span>
                   </div>
                   <div className="flex flex-col items-end gap-1">
-                    <AlertStatusBadge status={event.status} />
+                    <div className="flex items-center gap-3">
+                      {event.severity && <SeverityBadge severity={event.severity} />}
+                      <AlertStatusBadge status={event.status} />
+                    </div>
                     <span className="text-xs text-muted-foreground">
                       {event.status === "firing"
                         ? `fired ${formatRelativeTime(event.fired_at)}`
@@ -147,29 +147,22 @@ export function AlertsPage() {
 
                 <div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
                   <span>
-                    value at fire: {event.value_at_fire}
-                    {event.status === "firing" && event.last_value !== null && (
-                      <> · latest: {event.last_value}</>
-                    )}
+                    expected ~{event.baseline_mean?.toFixed(1) ?? "—"}, saw{" "}
+                    {event.observed_value?.toFixed(1) ?? event.value_at_fire}
                     {event.notified_at === null && event.status === "firing" && (
                       <span className="ml-2 text-xs italic">silenced</span>
                     )}
                   </span>
-                  {event.status === "firing" && silencing !== event.id && (
-                    <Button variant="ghost" size="sm" onClick={() => setSilencing(event.id)}>
-                      Silence
-                    </Button>
-                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setExpandedId(expandedId === event.id ? null : event.id)}
+                  >
+                    {expandedId === event.id ? "Hide evidence" : "View evidence"}
+                  </Button>
                 </div>
 
-                {silencing === event.id && (
-                  <SilenceForm
-                    deviceId={event.device_id}
-                    ruleId={event.rule_id}
-                    onSaved={() => setSilencing(null)}
-                    onCancel={() => setSilencing(null)}
-                  />
-                )}
+                {expandedId === event.id && <AnomalyEvidenceChart event={event} />}
               </CardContent>
             </Card>
           ))}

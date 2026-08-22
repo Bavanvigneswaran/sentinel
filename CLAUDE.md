@@ -37,17 +37,33 @@ charts · Python + psutil agent (PyInstaller) · React Native + Kotlin module fo
 Phase 5 status: alerts, the evaluator, and notifications complete on top of Phase 4's dashboard.
 Continuous aggregates at 1m/5m/1h behind a tenant-scoped wrapper view, a time-range query planner,
 and a dull-by-design health score (`app/analysis/health.py`) drive the fleet overview and per-device
-history (`app/services/fleet_service.py`, `app/services/series_service.py`). Alert rules evaluate on
-a periodic sweep (`app/alerts/evaluator.py`) through a pure OK/PENDING/FIRING state machine
-(`app/analysis/alerts.py`), open a snapshotted `alert_event` on firing, and dispatch best-effort
-email + Web Push per channel (`app/alerts/notify.py`). 297 backend tests green. Frontend: `/` is the
-real fleet dashboard; `/devices/:id/history` has a time-range picker over real charts; `/alerts`
-triages firing/resolved events with inline silencing; `/alerts/rules` is rule CRUD; `/settings` has
-notification channels plus the anomaly-sensitivity preference Phase 6 will read. Verified in-browser:
-rule create/edit/delete, settings round-trip (email toggle, override address, sensitivity), and Web
-Push's permission/support states.
-Still to come in Phase 6: adaptive-baseline anomaly detection (EWMA + MAD z-score) feeding the same
-alert pipeline as a second rule source, and the Anomalies page.
+history (`app/services/fleet_service.py`, `app/services/series_service.py`). Frontend: `/` is the
+real fleet dashboard; `/devices/:id/history` has a time-range picker over real charts; `/settings` has
+notification channels. Verified in-browser: settings round-trip (email toggle, override address,
+sensitivity), and Web Push's permission/support states.
+
+Phase 6 status: Layer 2 adaptive-baseline anomaly detection (EWMA + MAD z-score) complete, feeding the
+same alert pipeline as a second rule source, per the roadmap's "ship it, tune, then layer 3/4" staging —
+layers 3 (STL residual) and 4 (HalfSpaceTrees) are not started. `AlertRule.rule_type` discriminates
+threshold rules (unchanged from Phase 5) from anomaly rules, which leave `comparison`/`threshold` null
+and are judged against a per-`(device, metric)` `AnomalyBaseline` row instead
+(`app/analysis/anomaly.py`, `app/alerts/anomaly_eval.py`). Both rule types share one evaluator sweep
+(`app/alerts/evaluator.py`) and the same pure OK/PENDING/FIRING state machine
+(`app/analysis/alerts.py`); the state-row/event bookkeeping common to both is factored into
+`app/alerts/state_apply.py`. A fired anomaly event snapshots `observed_value`/`baseline_mean`/
+`baseline_mad`/`z_score`; severity is a read-time `@computed_field` on `AlertEventOut`
+(`classify_severity()`), never stored. 317 backend tests green. Frontend: `/alerts` triages both rule
+types (an anomaly event has `comparison: null`); `/alerts/rules` has a Threshold/Anomaly toggle;
+`/anomalies` is a filtered view of the same event stream with an expandable evidence chart
+(`AnomalyEvidenceChart`) drawing the real metric trace plus the baseline-at-fire and current-baseline
+reference lines; `/settings`'s anomaly-sensitivity preference is now live. Verified in-browser: create
+an anomaly rule, edit it (PATCH round-trips), page rendering and nav, no console errors — the one step
+not exercised this session is watching a real spike fire end-to-end against a live agent (the
+evaluator's background loop and a multi-minute warmup are outside a single interactive check; the
+full lifecycle is covered instead by `tests/test_anomaly_evaluator.py` against a real Postgres/agent
+write path).
+Still to come in Phase 6, if picked back up: layer 3/4 detectors, and widening anomaly rules past the
+6-metric `METRICS` set they currently share with threshold rules.
 
 ## Conventions
 
@@ -198,3 +214,41 @@ alert pipeline as a second rule source, and the Anomalies page.
   `MissingGreenlet` rather than silently returning stale data. Found the hard way in the browser
   against `PATCH /alerts/rules/{id}` and `PATCH /notifications/settings` — both now refresh before
   returning. Any new PATCH-style route on a `TimestampMixin` model needs the same call.
+
+## Phase 6 invariants — don't break these
+
+- **A baseline is judged against, then updated — never the other way round.** Each tick,
+  `app/alerts/anomaly_eval.py` computes the z-score against the `AnomalyBaseline` as it stood *before*
+  this tick's value, then folds the value in regardless of the verdict. Updating first would let an
+  outlier dampen its own z-score, worst exactly when it matters (a spike or step change) —
+  `tests/test_anomaly_evaluator.py`'s full-lifecycle test asserts the fired event's `baseline_mean`
+  against the exact pre-update arithmetic as a regression guard on this ordering.
+- **A rule_type is a discriminator on one table, not two tables.** `AlertRule.rule_type` (`"threshold"`
+  or `"anomaly"`) determines whether `comparison`/`threshold` are populated (enforced by the DB's
+  `rule_type_fields` CHECK, and by `AlertRuleCreate`'s/`AlertRuleUpdate`'s Pydantic validators at the
+  API boundary). `AlertState`/`AlertEvent` FK straight to a rule row regardless of its type — a sibling
+  table for anomaly rules would have needed a polymorphic association to reuse them instead.
+- **Below `WARMUP_SAMPLES` (20) observations, an anomaly rule's `condition_met` is `None`, never
+  `False`.** A still-forming baseline is unknown, not "currently normal" — the same "never synthesise
+  an answer you don't have" logic `step()` already applies to a missing reading. See
+  `app/analysis/anomaly.py`.
+- **The evaluator's existing unscoped-query exemption already covers anomaly rules; it was not
+  widened.** `_enabled_rule_user_ids()` enumerates `alert_rules` regardless of `rule_type`, so no new
+  entry in `tests/test_unscoped_import_guard.py`'s `ALLOWED` dict was needed. Do not add one for
+  anomaly-specific logic without the same "exactly one enumeration query" justification Phase 5 used.
+- **Severity is computed at read time from `z_score`, never stored.** `AlertEventOut.severity` is a
+  Pydantic `@computed_field` calling `analysis.anomaly.classify_severity()`; adding a `severity` column
+  would create a second, potentially-stale copy of what `z_score` already determines.
+- **The state-row/event bookkeeping shared by both rule types lives in exactly one place.**
+  `app/alerts/state_apply.py`'s `apply_step_result()` is the only code that opens/closes an
+  `AlertEvent` from a `step()` outcome; both `evaluator.py`'s threshold path and `anomaly_eval.py`'s
+  anomaly path call it rather than each maintaining their own copy, so the two rule types cannot
+  silently drift on dedup or notification semantics.
+- **`AnomalyBaseline` stores only current EWMA state, not history.** The Anomalies page's evidence
+  chart therefore shows two distinct reference lines — the event's own snapshotted
+  `baseline_mean`/`baseline_mad` (authoritative for "what normal looked like right before this fired")
+  and the live `AnomalyBaseline` row's current mean (which may have drifted since) — rather than
+  conflating them into one line. See `AnomalyEvidenceChart.tsx`.
+- **Anomaly rules are scoped to the same 6-metric `METRICS` set threshold rules use.** Widening
+  coverage to the full protocol means widening `_read_latest_values`'s hardcoded three-query shape in
+  `app/alerts/evaluator.py` too — a deliberately separate, not-yet-started piece of work.

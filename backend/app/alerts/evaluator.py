@@ -28,11 +28,13 @@ from datetime import UTC, datetime, timedelta
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.alerts import notify
+from app.alerts.anomaly_eval import evaluate_anomaly_pair
+from app.alerts.state_apply import apply_step_result
 from app.analysis.alerts import evaluate_condition, step
+from app.analysis.anomaly import Sensitivity
 from app.config import get_settings
 from app.db import AdminSessionLocal, SessionLocal, scope_to_user
-from app.models import AlertEvent, AlertRule, AlertSilence, AlertState, Device
+from app.models import AlertRule, AlertState, AnomalyBaseline, Device, NotificationSettings
 from app.services.metrics_read import FRESH_WINDOW_SECONDS, latest_per_entity
 
 logger = logging.getLogger(__name__)
@@ -177,17 +179,37 @@ class AlertEvaluator:
                     sa.select(AlertState).where(AlertState.rule_id.in_([r.id for r in rules]))
                 )
             }
+            baselines = {
+                (b.device_id, b.metric): b
+                for b in await session.scalars(
+                    sa.select(AnomalyBaseline).where(AnomalyBaseline.user_id == user_id)
+                )
+            }
+            sensitivity: Sensitivity = "medium"
+            if any(rule.rule_type == "anomaly" for rule, _ in pairs):
+                settings = await session.get(NotificationSettings, user_id)
+                if settings is not None:
+                    sensitivity = settings.anomaly_sensitivity  # type: ignore[assignment]
 
             for rule, device_id in pairs:
-                await self._evaluate_pair(
-                    session,
-                    user_id,
-                    rule,
-                    devices_by_id[device_id],
-                    existing_states.get((rule.id, device_id)),
-                    values.get((rule.metric, device_id)),
-                    now,
-                )
+                device = devices_by_id[device_id]
+                state_row = existing_states.get((rule.id, device_id))
+                value = values.get((rule.metric, device_id))
+                if rule.rule_type == "threshold":
+                    await self._evaluate_pair(session, user_id, rule, device, state_row, value, now)
+                else:
+                    baseline_row = await evaluate_anomaly_pair(
+                        session,
+                        user_id,
+                        rule,
+                        device,
+                        state_row,
+                        baselines.get((device_id, rule.metric)),
+                        value,
+                        sensitivity,
+                        now,
+                    )
+                    baselines[(device_id, rule.metric)] = baseline_row
 
             await session.commit()
 
@@ -223,6 +245,7 @@ class AlertEvaluator:
             )
             session.add(state_row)
 
+        assert rule.comparison is not None and rule.threshold is not None  # noqa: S101 — rule_type_fields CHECK
         condition_met = (
             None if value is None else evaluate_condition(value, rule.comparison, rule.threshold)
         )
@@ -233,101 +256,15 @@ class AlertEvaluator:
             now=now,
             for_duration_seconds=rule.for_duration_seconds,
         )
-
-        state_row.state = result.state
-        state_row.pending_since = result.pending_since
-        state_row.last_evaluated_at = now
-        if value is not None:
-            state_row.last_value = value
-
-        if result.fire:
-            assert value is not None  # noqa: S101 — step() only fires when condition_met is True
-            event = AlertEvent(
-                user_id=user_id,
-                rule_id=rule.id,
-                device_id=device.id,
-                rule_name=rule.name,
-                metric=rule.metric,
-                comparison=rule.comparison,
-                threshold=rule.threshold,
-                status="firing",
-                value_at_fire=value,
-                last_value=value,
-                fired_at=now,
-            )
-            session.add(event)
-            await session.flush()  # assigns event.id
-            state_row.current_event_id = event.id
-            await self._maybe_notify(session, user_id, rule, device, event, now, resolved=False)
-
-        elif result.resolve and state_row.current_event_id is not None:
-            event = await session.get(AlertEvent, state_row.current_event_id)
-            if event is not None:
-                event.status = "resolved"
-                event.resolved_at = now
-                event.resolved_value = value
-                if value is not None:
-                    event.last_value = value
-                await self._maybe_notify(session, user_id, rule, device, event, now, resolved=True)
-            state_row.current_event_id = None
-
-        elif (
-            state_row.state == "firing"
-            and state_row.current_event_id is not None
-            and value is not None
-        ):
-            # Still firing and re-evaluated: keep the open event's last-seen
-            # value current without touching notified_at again.
-            event = await session.get(AlertEvent, state_row.current_event_id)
-            if event is not None:
-                event.last_value = value
-
-    async def _maybe_notify(
-        self,
-        session: AsyncSession,
-        user_id: uuid.UUID,
-        rule: AlertRule,
-        device: Device,
-        event: AlertEvent,
-        now: datetime,
-        *,
-        resolved: bool,
-    ) -> None:
-        if await self._is_silenced(session, user_id, rule.id, device.id, now):
-            # Leave notified_at None: "fired but never paged" stays distinct
-            # from "paged, and every channel happened to fail".
-            return
-        try:
-            if resolved:
-                await notify.notify_resolved(session, user_id, event, device.name)
-            else:
-                await notify.notify_firing(session, user_id, event, device.name)
-        except Exception:
-            logger.exception(
-                "notification dispatch failed rule_id=%s device_id=%s resolved=%s",
-                rule.id,
-                device.id,
-                resolved,
-            )
-        event.notified_at = now
-
-    async def _is_silenced(
-        self,
-        session: AsyncSession,
-        user_id: uuid.UUID,
-        rule_id: uuid.UUID,
-        device_id: uuid.UUID,
-        now: datetime,
-    ) -> bool:
-        count = await session.scalar(
-            sa.select(sa.func.count())
-            .select_from(AlertSilence)
-            .where(
-                AlertSilence.user_id == user_id,
-                sa.or_(AlertSilence.device_id.is_(None), AlertSilence.device_id == device_id),
-                sa.or_(AlertSilence.rule_id.is_(None), AlertSilence.rule_id == rule_id),
-                AlertSilence.starts_at <= now,
-                AlertSilence.ends_at >= now,
-            )
+        await apply_step_result(
+            session,
+            user_id,
+            rule,
+            device,
+            state_row,
+            result,
+            value,
+            now,
+            comparison=rule.comparison,
+            threshold=rule.threshold,
         )
-        return bool(count)

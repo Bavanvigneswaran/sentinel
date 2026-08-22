@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import sqlalchemy as sa
 
-from app.alerts import evaluator as evaluator_module
+from app.alerts import state_apply as state_apply_module
 from app.alerts.evaluator import AlertEvaluator
 from app.db import AdminSessionLocal
 from app.ingest.writer import write_samples
@@ -62,8 +62,8 @@ def notify_calls(monkeypatch):
     async def fake_resolved(session, user_id, event, device_name):
         calls["resolved"].append((user_id, event.id, device_name))
 
-    monkeypatch.setattr(evaluator_module.notify, "notify_firing", fake_firing)
-    monkeypatch.setattr(evaluator_module.notify, "notify_resolved", fake_resolved)
+    monkeypatch.setattr(state_apply_module.notify, "notify_firing", fake_firing)
+    monkeypatch.setattr(state_apply_module.notify, "notify_resolved", fake_resolved)
     return calls
 
 

@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.deps import CurrentUser, TenantSession
 from app.models import Device
-from app.models.alerts import AlertEvent, AlertRule, AlertSilence
+from app.models.alerts import AlertEvent, AlertRule, AlertSilence, AnomalyBaseline
 from app.schemas.alerts import (
     AlertEventOut,
     AlertRuleCreate,
@@ -22,6 +22,7 @@ from app.schemas.alerts import (
     AlertRuleUpdate,
     AlertSilenceCreate,
     AlertSilenceOut,
+    AnomalyBaselineOut,
 )
 
 router = APIRouter(tags=["alerts"])
@@ -81,7 +82,21 @@ async def update_alert_rule(
     for field, value in updates.items():
         setattr(rule, field, value)
 
-    await session.commit()
+    try:
+        await session.commit()
+    except sa.exc.IntegrityError as exc:
+        # Most likely rule_type_fields: a PATCH that touches comparison or
+        # threshold without also touching rule_type (so AlertRuleUpdate's own
+        # validator had nothing to check) can still leave the row
+        # inconsistent with its unchanged rule_type — e.g. setting threshold
+        # on an existing anomaly rule. The DB CHECK is the backstop; this
+        # turns it into a clean 422 instead of a raw 500.
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="comparison/threshold must be set for a threshold rule and unset for an "
+            "anomaly rule",
+        ) from exc
     # `updated_at`'s onupdate is server-evaluated; without a refresh the ORM
     # object still holds its pre-update value, and touching it later during
     # response serialization (outside this coroutine's DB context) raises
@@ -114,6 +129,24 @@ async def list_alert_events(
         query = query.where(AlertEvent.status == status_filter)
     if device_id is not None:
         query = query.where(AlertEvent.device_id == device_id)
+    rows = await session.scalars(query)
+    return list(rows)
+
+
+# --- anomaly baselines -----------------------------------------------------
+
+
+@router.get("/alerts/anomaly-baselines", response_model=list[AnomalyBaselineOut])
+async def list_anomaly_baselines(
+    user: CurrentUser, session: TenantSession, device_id: uuid.UUID | None = None
+) -> list[AnomalyBaseline]:
+    """The live EWMA/MAD state the evaluator maintains per (device, metric) —
+    the Anomalies page's evidence chart draws its baseline band from this,
+    since AnomalyBaseline only stores current state, not history. No
+    pagination: same small-N posture as MAX_EVENTS above."""
+    query = sa.select(AnomalyBaseline)
+    if device_id is not None:
+        query = query.where(AnomalyBaseline.device_id == device_id)
     rows = await session.scalars(query)
     return list(rows)
 

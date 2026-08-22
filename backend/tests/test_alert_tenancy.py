@@ -1,5 +1,5 @@
-"""RLS across the six new alert/notification tables: two tenants' rows are
-mutually invisible, mirroring test_rollup_tenancy.py's pattern for the
+"""RLS across the seven alert/notification/anomaly tables: two tenants' rows
+are mutually invisible, mirroring test_rollup_tenancy.py's pattern for the
 raw hypertables.
 """
 
@@ -15,6 +15,7 @@ from app.models import (
     AlertRule,
     AlertSilence,
     AlertState,
+    AnomalyBaseline,
     NotificationSettings,
     User,
     WebPushSubscription,
@@ -78,6 +79,11 @@ async def two_tenants(admin_session):
         )
         admin_session.add(subscription)
 
+        baseline = AnomalyBaseline(
+            user_id=user.id, device_id=device.id, metric="cpu_percent", mean=20.0, mad=1.0
+        )
+        admin_session.add(baseline)
+
         await admin_session.commit()
         made.append({"user": user, "device": device, "rule": rule})
     return made
@@ -92,6 +98,7 @@ async def test_the_underlying_tables_really_do_hold_both_tenants(admin_session, 
         AlertSilence,
         NotificationSettings,
         WebPushSubscription,
+        AnomalyBaseline,
     ):
         count = await admin_session.scalar(sa.select(sa.func.count()).select_from(model))
         assert count == 2, model.__tablename__
@@ -123,8 +130,24 @@ async def test_a_tenant_sees_only_its_own_notification_settings_and_subscription
     assert [s.endpoint for s in subs] == ["https://push.example/a"]
 
 
+async def test_a_tenant_sees_only_its_own_anomaly_baselines(two_tenants):
+    tenant_a = two_tenants[0]
+
+    async with scoped_session_for(tenant_a["user"].id) as session:
+        baselines = list(await session.scalars(sa.select(AnomalyBaseline)))
+
+    assert [b.device_id for b in baselines] == [tenant_a["device"].id]
+
+
 async def test_an_unscoped_app_session_sees_nothing(app_session):
     """No tenant GUC set at all — every policy predicate is NULL, default deny."""
-    for model in (AlertRule, AlertState, AlertEvent, AlertSilence, NotificationSettings):
+    for model in (
+        AlertRule,
+        AlertState,
+        AlertEvent,
+        AlertSilence,
+        NotificationSettings,
+        AnomalyBaseline,
+    ):
         count = await app_session.scalar(sa.select(sa.func.count()).select_from(model))
         assert count == 0, model.__tablename__

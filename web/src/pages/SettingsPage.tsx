@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { Link } from "react-router"
 
 import { AppLayout } from "@/components/AppLayout"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -192,8 +193,12 @@ export function SettingsPage() {
             <CardHeader>
               <CardTitle>Anomaly sensitivity</CardTitle>
               <CardDescription>
-                Not used yet — this is stored now for the adaptive baseline detector coming in a
-                later release.
+                How far a metric has to drift from its own recent normal before an anomaly rule
+                fires. Applies to every anomaly rule on this account — see{" "}
+                <Link to="/alerts/rules" className="underline underline-offset-2">
+                  alert rules
+                </Link>
+                .
               </CardDescription>
             </CardHeader>
             <CardContent>

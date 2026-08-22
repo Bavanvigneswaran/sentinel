@@ -7,7 +7,7 @@ Pydantic wire schemas live in app/schemas/, not here.
 """
 
 from app.models.agent_token import AgentToken
-from app.models.alerts import AlertEvent, AlertRule, AlertSilence, AlertState
+from app.models.alerts import AlertEvent, AlertRule, AlertSilence, AlertState, AnomalyBaseline
 from app.models.base import Base
 from app.models.device import Device
 from app.models.enrollment_code import EnrollmentCode
@@ -29,6 +29,7 @@ __all__ = [
     "AlertRule",
     "AlertSilence",
     "AlertState",
+    "AnomalyBaseline",
     "Base",
     "Device",
     "DiskIoSample",
