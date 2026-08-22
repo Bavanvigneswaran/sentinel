@@ -220,4 +220,11 @@ HYPERTABLES: tuple[str, ...] = (
     "latency_samples",
     "process_samples",
 )
-RAW_RETENTION = "7 days"
+RAW_RETENTION_DAYS = 7
+RAW_RETENTION = f"{RAW_RETENTION_DAYS} days"
+
+#: The agent's default push interval, and therefore the coarsest resolution a
+#: raw row is guaranteed to carry. Live viewing drops it to 1s, so this is an
+#: upper bound used for planning a query, never for interpreting a stored row —
+#: the row's own `resolution_seconds` is the truth.
+DEFAULT_PUSH_RESOLUTION_SECONDS = DEFAULT_RESOLUTION_SECONDS

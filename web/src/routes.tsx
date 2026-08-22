@@ -3,6 +3,7 @@ import { createBrowserRouter } from "react-router"
 import { ProtectedRoute } from "@/components/ProtectedRoute"
 import { PublicOnlyRoute } from "@/components/PublicOnlyRoute"
 import { DashboardPage } from "@/pages/DashboardPage"
+import { DeviceHistoryPage } from "@/pages/DeviceHistoryPage"
 import { DevicesPage } from "@/pages/DevicesPage"
 import { LiveMonitoringPage } from "@/pages/LiveMonitoringPage"
 import { LoginPage } from "@/pages/LoginPage"
@@ -22,6 +23,7 @@ export const router = createBrowserRouter([
     children: [
       { path: "/", element: <DashboardPage /> },
       { path: "/devices", element: <DevicesPage /> },
+      { path: "/devices/:deviceId/history", element: <DeviceHistoryPage /> },
       { path: "/devices/:deviceId/live", element: <LiveMonitoringPage /> },
     ],
   },

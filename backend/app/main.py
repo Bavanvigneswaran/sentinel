@@ -59,12 +59,16 @@ def create_app() -> FastAPI:
 
     from app.api.routes.auth import router as auth_router
     from app.api.routes.devices import router as devices_router
+    from app.api.routes.fleet import router as fleet_router
     from app.api.routes.live import router as live_router
+    from app.api.routes.series import router as series_router
     from app.ingest.ws import router as ingest_router
     from app.live.viewer_ws import router as viewer_router
 
     app.include_router(auth_router)
     app.include_router(devices_router)
+    app.include_router(fleet_router)
+    app.include_router(series_router)
     app.include_router(live_router)
     app.include_router(ingest_router)
     app.include_router(viewer_router)

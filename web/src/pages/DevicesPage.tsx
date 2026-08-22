@@ -80,26 +80,43 @@ export function DevicesPage() {
       {devices !== null && devices.length > 0 && (
         <div className="flex flex-col gap-3">
           {devices.map((device) => (
-            <Link key={device.id} to={`/devices/${device.id}/live`}>
-              <Card className="transition-colors hover:bg-accent/50">
-                <CardContent className="flex items-center justify-between pt-6">
-                  <div className="flex flex-col gap-1">
-                    <span className="font-medium">{device.name}</span>
-                    <span className="text-sm text-muted-foreground">
-                      {device.hostname ?? "—"}
-                      {device.os ? ` · ${device.os}` : ""}
-                      {device.os_version ? ` ${device.os_version}` : ""}
-                    </span>
+            <Card key={device.id} className="transition-colors hover:bg-accent/30">
+              <CardContent className="flex items-center justify-between gap-4 pt-6">
+                <div className="flex flex-col gap-1">
+                  <Link
+                    to={`/devices/${device.id}/history`}
+                    className="font-medium hover:underline"
+                  >
+                    {device.name}
+                  </Link>
+                  <span className="text-sm text-muted-foreground">
+                    {device.hostname ?? "—"}
+                    {device.os ? ` · ${device.os}` : ""}
+                    {device.os_version ? ` ${device.os_version}` : ""}
+                  </span>
+                </div>
+                <div className="flex flex-col items-end gap-1">
+                  <DeviceStatusBadge status={device.status} />
+                  <span className="text-xs text-muted-foreground">
+                    last seen {formatLastSeen(device.last_seen_at)}
+                  </span>
+                  <div className="flex gap-3 text-xs">
+                    <Link
+                      to={`/devices/${device.id}/history`}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      History
+                    </Link>
+                    <Link
+                      to={`/devices/${device.id}/live`}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      Live
+                    </Link>
                   </div>
-                  <div className="flex flex-col items-end gap-1">
-                    <DeviceStatusBadge status={device.status} />
-                    <span className="text-xs text-muted-foreground">
-                      last seen {formatLastSeen(device.last_seen_at)}
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
+                </div>
+              </CardContent>
+            </Card>
           ))}
         </div>
       )}

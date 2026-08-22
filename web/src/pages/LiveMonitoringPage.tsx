@@ -7,7 +7,7 @@ import { DeviceStatusBadge } from "@/components/DeviceStatusBadge"
 import { MetricValue } from "@/components/MetricValue"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useDeviceStream } from "@/hooks/useDeviceStream"
-import { apiFetch } from "@/lib/api"
+import { ApiError, apiFetch } from "@/lib/api"
 import { colorForIndex } from "@/lib/chartColors"
 import { formatBytes, formatBytesPerSecond, formatMs } from "@/lib/formatters"
 import { subBufferRef } from "@/lib/streamBuffers"
@@ -46,18 +46,19 @@ function LiveMonitoringView({ deviceId }: { deviceId: string }) {
 
   useEffect(() => {
     let cancelled = false
-    // No single-device GET endpoint yet — the fleet is small enough in
-    // Phase 3 that filtering the list client-side is fine. Live status
-    // updates come from the socket (stream.status), not a repoll of this.
-    apiFetch<Device[]>("/devices")
-      .then((devices) => {
-        if (cancelled) return
-        const found = devices.find((d) => d.id === deviceId)
-        setDevice(found ?? null)
-        if (!found) setDeviceError("Device not found.")
+    // Fetched once for the header. Live status updates come from the socket
+    // (stream.status), not from repolling this.
+    apiFetch<Device>(`/devices/${deviceId}`)
+      .then((found) => {
+        if (!cancelled) setDevice(found)
       })
-      .catch(() => {
-        if (!cancelled) setDeviceError("Could not load this device.")
+      .catch((err) => {
+        if (cancelled) return
+        setDeviceError(
+          err instanceof ApiError && err.status === 404
+            ? "Device not found."
+            : "Could not load this device.",
+        )
       })
     return () => {
       cancelled = true
@@ -70,9 +71,15 @@ function LiveMonitoringView({ deviceId }: { deviceId: string }) {
 
   return (
     <AppLayout active="devices">
-      <div>
+      <div className="flex items-center gap-4">
         <Link to="/devices" className="text-sm text-muted-foreground hover:text-foreground">
           ← Devices
+        </Link>
+        <Link
+          to={`/devices/${deviceId}/history`}
+          className="text-sm text-muted-foreground hover:text-foreground"
+        >
+          History →
         </Link>
       </div>
 
