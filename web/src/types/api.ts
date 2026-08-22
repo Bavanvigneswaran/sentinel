@@ -31,3 +31,24 @@ export interface LoginRequest {
   email: string
   password: string
 }
+
+/** Mirrors app/schemas/devices.py:DeviceOut. `status` is server-derived —
+ * see DEVICE_STALE_AFTER_SECONDS in the backend — never trust a stored
+ * "online" without checking `last_seen_at` yourself if you bypass this type. */
+export interface Device {
+  id: string
+  name: string
+  hostname: string | null
+  os: string | null
+  os_version: string | null
+  kernel_version: string | null
+  arch: string | null
+  cpu_cores: number | null
+  total_memory_bytes: number | null
+  agent_version: string | null
+  platform: "desktop" | "android"
+  status: "pending" | "online" | "offline"
+  last_seen_at: string | null
+  enrolled_at: string | null
+  created_at: string
+}

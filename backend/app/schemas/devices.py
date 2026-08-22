@@ -3,10 +3,36 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+#: The ingest socket's `finally` block sets a device offline on graceful
+#: disconnect, but a killed backend process never runs it — the stored
+#: `status` column can say "online" forever after a crash. Three missed
+#: normal-mode pushes (30s) plus the ingest path's own 15s last-seen-touch
+#: throttle, rounded up.
+DEVICE_STALE_AFTER_SECONDS = 45
+
+
+def derive_device_status(status: str, last_seen_at: datetime | None) -> str:
+    """Downgrade a stored "online" to "offline" if last_seen_at is too old to
+    trust. Never touches "pending" (never connected) or an already-"offline"
+    row — this only catches the crash case where the stored value was never
+    updated to reflect reality.
+
+    Shared by DeviceOut (below) and app/live/viewer_ws.py, which needs the
+    exact same rule to decide whether a freshly-subscribed device is "online"
+    and to detect a status change worth pushing to an open viewer socket.
+    """
+    if status != "online":
+        return status
+    if last_seen_at is None or (
+        datetime.now(UTC) - last_seen_at
+    ).total_seconds() > DEVICE_STALE_AFTER_SECONDS:
+        return "offline"
+    return status
 
 
 class DeviceOut(BaseModel):
@@ -27,6 +53,11 @@ class DeviceOut(BaseModel):
     last_seen_at: datetime | None
     enrolled_at: datetime | None
     created_at: datetime
+
+    @model_validator(mode="after")
+    def _derive_stale_status(self) -> DeviceOut:
+        self.status = derive_device_status(self.status, self.last_seen_at)
+        return self
 
 
 class DeviceCreate(BaseModel):

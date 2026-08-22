@@ -39,11 +39,17 @@ logger = logging.getLogger(__name__)
 
 
 class WriteResult:
-    __slots__ = ("accepted", "rejected")
+    __slots__ = ("accepted", "accepted_samples", "rejected")
 
     def __init__(self, accepted: int = 0, rejected: int = 0) -> None:
         self.accepted = accepted
         self.rejected = rejected
+        #: The Sample objects that actually got written, in order. Separate
+        #: from the count because the live pipeline (app/live/bus.py) must
+        #: fan out exactly what was durably persisted — a sample rejected for
+        #: being outside the time window must never reach a viewer's chart
+        #: even though it never reaches the database either.
+        self.accepted_samples: list[Sample] = []
 
 
 def _within_window(ts: datetime, now: datetime) -> bool:
@@ -96,6 +102,7 @@ async def write_samples(
         latency_rows.extend(base | e.model_dump() for e in sample.latency)
         process_rows.extend(base | e.model_dump() for e in sample.processes)
         result.accepted += 1
+        result.accepted_samples.append(sample)
 
     if result.accepted == 0:
         return result

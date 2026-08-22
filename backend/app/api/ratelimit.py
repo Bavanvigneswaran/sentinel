@@ -16,30 +16,14 @@ import logging
 import time
 from typing import Literal
 
-import redis.asyncio as aioredis
 from fastapi import HTTPException, Request, status
 
 from app.config import get_settings
+from app.redis import get_redis
 
 logger = logging.getLogger(__name__)
 
-_redis: aioredis.Redis | None = None
-
 KeyKind = Literal["ip", "email", "user"]
-
-
-def get_redis() -> aioredis.Redis:
-    global _redis
-    if _redis is None:
-        _redis = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-    return _redis
-
-
-async def close_redis() -> None:
-    global _redis
-    if _redis is not None:
-        await _redis.aclose()
-        _redis = None
 
 
 def _client_ip(request: Request) -> str:
