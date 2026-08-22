@@ -1,5 +1,6 @@
 """Applying one analysis/alerts.py step() outcome to an AlertState row and,
-where it implies one, opening/closing the AlertEvent and dispatching a
+where it implies one, opening/closing the AlertEvent, correlating it into a
+device-level Incident (app/alerts/incident_apply.py), and dispatching a
 best-effort notification.
 
 Split out of evaluator.py so the threshold path (evaluator.py's
@@ -20,7 +21,7 @@ from datetime import datetime
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.alerts import notify
+from app.alerts import incident_apply, notify
 from app.analysis.alerts import StepResult
 from app.models import AlertEvent, AlertRule, AlertSilence, AlertState, Device
 
@@ -66,6 +67,7 @@ async def apply_step_result(
         )
         session.add(event)
         await session.flush()  # assigns event.id
+        await incident_apply.attach_to_incident(session, user_id, device, event, now)
         state_row.current_event_id = event.id
         await _maybe_notify(session, user_id, rule, device, event, now, resolved=False)
 
@@ -77,6 +79,7 @@ async def apply_step_result(
             event.resolved_value = value
             if value is not None:
                 event.last_value = value
+            await incident_apply.maybe_close_incident(session, event, now)
             await _maybe_notify(session, user_id, rule, device, event, now, resolved=True)
         state_row.current_event_id = None
 

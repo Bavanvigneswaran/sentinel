@@ -167,11 +167,18 @@ export function AlertsPage() {
                       <span className="ml-2 text-xs italic">silenced</span>
                     )}
                   </span>
-                  {event.status === "firing" && silencing !== event.id && (
-                    <Button variant="ghost" size="sm" onClick={() => setSilencing(event.id)}>
-                      Silence
-                    </Button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {event.incident_id && (
+                      <Button asChild variant="ghost" size="sm">
+                        <Link to={`/incidents/${event.incident_id}`}>View incident</Link>
+                      </Button>
+                    )}
+                    {event.status === "firing" && silencing !== event.id && (
+                      <Button variant="ghost" size="sm" onClick={() => setSilencing(event.id)}>
+                        Silence
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
                 {silencing === event.id && (

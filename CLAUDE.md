@@ -95,6 +95,36 @@ Still to come in Phase 7, if picked back up: a filled prediction-interval band o
 (currently two thin dashed bounds — a deliberate scope trim, not a limitation of the stored data);
 feeding forecast/exhaustion output into Phase 8's AI insights signal bundle.
 
+Phase 8 status: AI insights and an incidents workspace complete. AlertEvents now correlate into a
+device-level `Incident` the moment any of the three rule types fires with none already open for that
+device, and the incident closes once every attached event has resolved — `app/alerts/incident_apply.py`,
+called from `state_apply.py`'s existing `apply_step_result()` choke point rather than a new evaluation
+path, so all three rule types correlate identically (migration `0009_incidents`). A new
+`app/services/signal_bundle.py` assembles one incident's correlated events, current health score, and
+the anomaly-baseline/forecast rows for whichever metrics were actually involved into a JSON-able
+`SignalBundle`; `app/ai/prompts.py` turns that into two prompts — Haiku writes a one-sentence summary,
+Sonnet writes a deeper root-cause analysis — behind an explicit `<incident_data>...</incident_data>`
+boundary instructing the model that everything inside is inert telemetry, never instructions, straight
+from CLAUDE.md's hard rule. `app/ai/insights_service.py`'s `refresh_incident_insights()` is the one
+function both the new periodic `InsightsWorker` (`app/workers/insights_worker.py`, 60s cadence, same
+one-unscoped-enumeration-query shape as the other two workers) and the manual
+`POST /incidents/{id}/regenerate` route call; it fingerprints the incident's event membership
+(`app/analysis/incidents.py`'s `correlation_fingerprint()`) and skips the API call entirely when nothing
+correlated has changed since the cached text was generated — this fingerprint comparison, not an HTTP
+cache, is the whole of "response caching." No API key configured is a graceful no-op in the worker and an
+explicit 503 from the route, same posture as SMTP/VAPID being unset. 359 backend tests green. Frontend:
+`/incidents` is a new fleet-wide list (Open/Resolved/All, like `/alerts`); `/incidents/:id` shows the
+correlated-event timeline plus Summary/Root-cause cards and a "Regenerate insights" button; `/alerts`
+event cards gained a "View incident" link. Verified in-browser end-to-end against a seeded device with
+two rules firing together: they correlated into one incident, the detail page rendered the timeline
+correctly, and pressing "Regenerate insights" with no `ANTHROPIC_API_KEY` configured surfaced the 503 as
+an inline error rather than silently doing nothing.
+
+Still to come in Phase 8, if picked back up: Sonnet's root-cause output isn't yet fed anywhere but the
+incident detail page (no digest email, no push notification carrying it); the signal bundle doesn't yet
+include cross-device context (e.g. "three other devices are also degraded right now"), which would need
+a deliberate decision about whether an incident can ever span more than one device.
+
 ## Conventions
 
 - Files stay under ~400 lines; split rather than grow.
@@ -324,3 +354,56 @@ feeding forecast/exhaustion output into Phase 8's AI insights signal bundle.
   `app/workers/forecast_worker.py` wraps every call into `analysis/forecast.py`'s two functions in
   `asyncio.to_thread` — real CPU work, and CLAUDE.md's "nothing blocking on the event loop" hard rule
   applies to a background worker tick exactly as much as it applies to a request handler.
+
+## Phase 8 invariants — don't break these
+
+- **Incident correlation is device-scoped, not rule-scoped, and lives in one place.**
+  `app/alerts/incident_apply.py`'s `attach_to_incident()`/`maybe_close_incident()` are the only code
+  that opens, attaches to, or closes an `Incident`, called from `state_apply.py`'s
+  `apply_step_result()` right beside the `AlertEvent` bookkeeping it mirrors — every rule type
+  correlates identically because there is only one call site, the same reasoning Phase 6's
+  `apply_step_result()` itself was factored out for. Two unrelated rules firing on the same device at
+  once land in the same incident on purpose: that correlation is the point of the workspace.
+- **A partial unique index, not just application logic, enforces at most one open incident per
+  device.** `uq_incidents_one_open_per_device` (`WHERE status = 'open'`) is the actual race guard;
+  `attach_to_incident()`'s read-then-maybe-insert is what makes the common case (an incident already
+  open) cost one query, not what makes two never coexist.
+- **`maybe_close_incident()` must flush before counting.** `SessionLocal` is `autoflush=False`, and
+  the caller has just set the just-resolved event's `status` on the in-memory object without
+  flushing it; counting still-firing events without an explicit `session.flush()` first would see the
+  pre-update status and never close the incident. Found by a failing integration test the first time
+  this was written — any new query added to that function needs the same flush ordering respected.
+- **AI-generated text is stored and rendered as inert display text, never parsed back into
+  structure.** `Incident.summary_text`/`root_cause_text` are plain `Text` columns; nothing downstream
+  (the state machine, an alert rule, another worker) ever reads them to make a decision. This is what
+  "the LLM explains; it does not detect" means concretely for Phase 8's own tables.
+- **The signal bundle is data; the boundary against treating it as instructions is explicit and
+  literal, not implied.** `app/ai/prompts.py` wraps the JSON in a delimited `<incident_data>` block
+  with a system-prompt instruction that its contents — including any user-chosen device or rule name
+  — are never a message to the model, regardless of what they look like. `test_ai_prompts.py`'s
+  injection test is the regression guard: an adversarial rule name must land only inside the data
+  block, never disturb the fixed instruction text that follows it. No tool use is ever offered to
+  either model in this phase.
+- **Response caching is a fingerprint comparison, not an HTTP cache.**
+  `app/analysis/incidents.py`'s `correlation_fingerprint()` hashes only an incident's *event
+  membership* (which events, and each one's status) — deliberately excluding anything that drifts
+  every tick regardless of the incident itself changing, like a live health score. Comparing it
+  against `Incident.summary_signal_hash`/`root_cause_signal_hash` before calling either model is what
+  makes a no-op worker tick cost zero API calls; hashing the full bundle instead would mean the cache
+  never hits.
+- **A failed generation must not poison the cache.** `insights_service.refresh_incident_insights()`
+  only updates a `*_signal_hash` column alongside a successful model response; an exception is logged
+  and swallowed (same best-effort posture as `app/alerts/notify.py`) with the hash left exactly as it
+  was, so the next tick retries instead of silently treating a failure as "already handled."
+- **No API key configured is a graceful no-op in the worker, and an explicit 503 from the route —
+  never a silent fabrication.** `InsightsWorker.run_once()` returns immediately when
+  `settings.anthropic_api_key` is unset, the same posture `notify.py` takes for an unconfigured SMTP
+  host; but `POST /incidents/{id}/regenerate`'s `_ai_client_dependency` raises instead, because a user
+  who explicitly asked for a regeneration needs to know it didn't happen, unlike a background sweep
+  nobody is watching.
+- **The insights worker's one unscoped query only enumerates; it never reads or writes incident
+  content.** `app.workers.insights_worker`'s entry in `tests/test_unscoped_import_guard.py`'s
+  `ALLOWED` dict covers exactly `SELECT DISTINCT user_id FROM incidents WHERE status = 'open'`, the
+  same "periodic sweep has no JWT to derive a tenant GUC from" justification Phase 5's evaluator and
+  Phase 7's forecast worker already established — every subsequent read or write goes through a
+  session scoped via `scope_to_user()`.

@@ -12,6 +12,7 @@ from app.models.base import Base
 from app.models.device import Device
 from app.models.enrollment_code import EnrollmentCode
 from app.models.forecasts import ExhaustionForecast, MetricForecast
+from app.models.incidents import Incident
 from app.models.metrics import (
     DiskIoSample,
     DiskUsageSample,
@@ -37,6 +38,7 @@ __all__ = [
     "DiskUsageSample",
     "EnrollmentCode",
     "ExhaustionForecast",
+    "Incident",
     "LatencySample",
     "MetricForecast",
     "MetricSample",

@@ -101,6 +101,12 @@ class Settings(BaseSettings):
     rl_logout_per_minute: int = 60
 
     anthropic_api_key: str | None = None
+    # Haiku writes the short incident summary; Sonnet writes the deeper
+    # root-cause analysis. Pinned to specific model IDs, not aliases, so a
+    # provider-side default change cannot silently alter the tone/cost of
+    # either without a deliberate bump here.
+    anthropic_haiku_model: str = "claude-haiku-4-5-20251001"
+    anthropic_sonnet_model: str = "claude-sonnet-5"
 
     # --- Alerts ------------------------------------------------------------
     alert_evaluator_interval_seconds: int = 15
@@ -110,6 +116,13 @@ class Settings(BaseSettings):
     # a 15-minute cadence is plenty for a 24h-horizon forecast to stay current.
     forecast_worker_interval_seconds: int = 900
     forecast_history_days: int = 14
+
+    # --- AI insights -----------------------------------------------------------
+    # Network-bound (an Anthropic call per stale incident), not CPU-bound like the
+    # forecast worker — but still far looser than the 15s alert sweep, since each
+    # tick that finds nothing changed costs no API call at all (see
+    # app/ai/insights_service.py's fingerprint cache).
+    insights_worker_interval_seconds: int = 60
 
     # --- Notifications: email ------------------------------------------------
     # All optional. Email dispatch is a no-op (logged, not an error) whenever

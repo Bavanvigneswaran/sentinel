@@ -107,6 +107,10 @@ class AlertEventOut(BaseModel):
     id: uuid.UUID
     rule_id: uuid.UUID | None
     device_id: uuid.UUID
+    #: The incident this event was correlated into — see
+    #: app/alerts/incident_apply.py. Set synchronously at fire time, so
+    #: always populated for any event this schema ever serializes.
+    incident_id: uuid.UUID | None
     #: Snapshotted from the rule at fire time — correct even after the rule
     #: is later edited or deleted. `rule_type` is the reliable discriminator
     #: for which evidence fields below are populated (comparison/threshold

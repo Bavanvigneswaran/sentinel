@@ -50,6 +50,9 @@ export interface AlertEvent {
   id: string
   rule_id: string | null
   device_id: string
+  /** The incident this event was correlated into — see
+   * app/alerts/incident_apply.py. Always populated once an event fires. */
+  incident_id: string | null
   /** Snapshotted from the rule at fire time — correct even after the rule
    * is later edited or deleted. `rule_type` is the reliable discriminator
    * for which evidence fields below are populated (comparison/threshold are

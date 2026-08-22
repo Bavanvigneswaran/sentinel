@@ -31,6 +31,11 @@ Five tables, three different foreign-key shapes, on purpose:
   is deleted — exactly the opposite of what a firing-history row needs.
 * `AlertSilence.rule_id` is a plain FK with `ON DELETE CASCADE`: a silence for
   a rule that no longer exists is meaningless, unlike an event.
+* `AlertEvent.incident_id` is a plain FK to `incidents.id`, `ON DELETE
+  SET NULL`, for the same reason `rule_id` is plain: it is written only by
+  app/alerts/incident_apply.py inside a session already scoped to the
+  event's own owner, so `incident.user_id == event.user_id` is correct by
+  construction. See app/models/incidents.py.
 """
 
 from __future__ import annotations
@@ -186,6 +191,12 @@ class AlertEvent(Base):
         sa.Uuid, sa.ForeignKey("alert_rules.id", ondelete="SET NULL"), nullable=True
     )
     device_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False)
+    #: The incident this event was correlated into — see
+    #: app/alerts/incident_apply.py. Set when the event fires, read back when
+    #: it resolves to decide whether the incident closes too.
+    incident_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("incidents.id", ondelete="SET NULL"), nullable=True
+    )
 
     rule_name: Mapped[str] = mapped_column(sa.Text, nullable=False)
     rule_type: Mapped[str] = mapped_column(
