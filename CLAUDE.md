@@ -34,18 +34,20 @@ charts · Python + psutil agent (PyInstaller) · React Native + Kotlin module fo
 - `make agent-sample` — print one real sample without connecting · `make agent-status`
 - `make agent-install-service` / `agent-uninstall-service` — macOS launchd (Phase 11 adds the rest)
 
-Phase 3 status: live pipeline and viewer UI complete. Redis fanout (`app/live/bus.py`), a leased
-viewer registry that upshifts/downshifts an agent's push cadence and self-heals on a periodic
-reconcile tick (`app/live/registry.py`, `app/live/supervisor.py`), a ticket-authenticated viewer
-WebSocket (`app/live/viewer_ws.py`), derived device status, and a recent-samples primer endpoint.
-202 backend tests green. Frontend: `/devices` lists real devices with derived online/offline status;
-`/devices/:id/live` streams six uPlot charts (CPU, memory, network, disk I/O, latency, disk usage)
-plus CPU/memory process tables, all off ring buffers fed by the viewer socket. Verified on this Mac
-against the real agent: enrol → connect → open Live Monitoring → charts populate from the
-recent-samples primer and keep updating from the live WebSocket.
-Still to come in Phase 4: continuous aggregates, retention policies, the time-range query API,
-health-score computation, and the fleet overview / per-device summary cards — `/` is still Phase 1's
-placeholder dashboard.
+Phase 5 status: alerts, the evaluator, and notifications complete on top of Phase 4's dashboard.
+Continuous aggregates at 1m/5m/1h behind a tenant-scoped wrapper view, a time-range query planner,
+and a dull-by-design health score (`app/analysis/health.py`) drive the fleet overview and per-device
+history (`app/services/fleet_service.py`, `app/services/series_service.py`). Alert rules evaluate on
+a periodic sweep (`app/alerts/evaluator.py`) through a pure OK/PENDING/FIRING state machine
+(`app/analysis/alerts.py`), open a snapshotted `alert_event` on firing, and dispatch best-effort
+email + Web Push per channel (`app/alerts/notify.py`). 297 backend tests green. Frontend: `/` is the
+real fleet dashboard; `/devices/:id/history` has a time-range picker over real charts; `/alerts`
+triages firing/resolved events with inline silencing; `/alerts/rules` is rule CRUD; `/settings` has
+notification channels plus the anomaly-sensitivity preference Phase 6 will read. Verified in-browser:
+rule create/edit/delete, settings round-trip (email toggle, override address, sensitivity), and Web
+Push's permission/support states.
+Still to come in Phase 6: adaptive-baseline anomaly detection (EWMA + MAD z-score) feeding the same
+alert pipeline as a second rule source, and the Anomalies page.
 
 ## Conventions
 
@@ -138,3 +140,61 @@ placeholder dashboard.
   zoom/pan leaves the y-scale stuck at `[null, null]` forever, even once real data lands. Found the
   hard way verifying against the real agent: the chart held correct data throughout and simply never
   learned to scale to it. See `web/src/components/charts/LiveChart.tsx`.
+
+## Phase 4 invariants — don't break these
+
+- **A continuous aggregate cannot carry RLS directly.** TimescaleDB refuses `ENABLE ROW LEVEL
+  SECURITY` on a continuous aggregate, and a `security_invoker` view over one still runs with the
+  aggregate owner's privileges. Migration 0005's answer is a `security_barrier` wrapper view per
+  tier carrying an unconditional `user_id = app_current_user_id()`, with the aggregate itself
+  revoked from the app role — the app only ever queries `{domain}_{tier}`, never the underlying
+  `cagg_*` relation. `tests/test_rollup_tenancy.py` is the reason to trust that answer.
+- **Rollup averages are time-weighted, never avg-of-avg.** A device pushes 10s aggregates normally
+  and 1s raw while a viewer watches live, so rows inside a bucket never span equal time. Every
+  rollup column carries `sample_weight`, and re-aggregating the 1m rollup into 5m must give
+  bit-identical numbers to aggregating raw directly — see the `wavg()` family in
+  `app/models/rollups.py`. NULL is skipped, never coerced to zero, at every tier.
+- **A health-score component with no reading is excluded, not zeroed — and the weights of the
+  ones that did report are renormalised.** An offline device gets no score at all (band
+  `"unknown"`), not a stale one; its last reading describes a moment that has passed. See
+  `app/analysis/health.py` and its `unknown_health()`.
+- **The fleet overview and a single device's summary are the same computation.** Both routes call
+  `fleet_service.build_summaries()` with a different device set — a per-device summary is a fleet
+  of one. Building either any other way would let the dashboard and a device page disagree about
+  what "healthy" means.
+- **A reading older than `FRESH_WINDOW_SECONDS` (90s) is not "current".** The headline numbers on
+  a summary report no reading at all past that window rather than presenting a stale figure as
+  live — see `app/services/metrics_read.py`, shared by the dashboard and Phase 5's evaluator.
+
+## Phase 5 invariants — don't break these
+
+- **The state machine is pure — no I/O, no DB — and lives in one place.** `app/analysis/alerts.py`'s
+  `step()` takes the current state plus one fresh evaluation and returns the next state and whether
+  *this exact tick* should open or close an event. `fire`/`resolve` are true only on the transition
+  tick; a caller that re-derives them from `state` alone breaks the dedup guarantee. A rule can never
+  fire on the same tick it enters PENDING, even with `for_duration_seconds=0` — that is what stops a
+  single noisy sample from ever firing alone.
+- **The evaluator's one unscoped query is the entire exemption.** `app.alerts.evaluator` has a
+  narrowly-reasoned entry in `tests/test_unscoped_import_guard.py`'s `ALLOWED` dict for exactly one
+  query — `SELECT DISTINCT user_id FROM alert_rules WHERE enabled` — because a periodic sweep has no
+  request and no JWT to derive a tenant GUC from. Every read or write after that must go through a
+  session scoped via `scope_to_user()`, no different from a request's own session. Widening this
+  exemption to cover more than that one enumeration query is a design discussion, not a shortcut.
+- **A silence suppresses notifications only, never the state machine.** The triage page always shows
+  the true FIRING state; a silenced alert just never pages anyone. Resolving that ambiguity the other
+  way — silencing the transition itself — would mean the UI stops reflecting reality, which is the
+  one thing CLAUDE.md's "never synthesise" rule exists to prevent.
+- **Notification dispatch is best-effort and per-channel, per user.** A dead SMTP server or one
+  expired push subscription must never stop the sweep for anyone else — same philosophy as Phase 3's
+  `publish_samples`. Every send in `app/alerts/notify.py` is individually try/except-logged; a 404/410
+  from a push endpoint deletes that subscription as routine cleanup rather than retrying it forever.
+- **An already-firing alert is never auto-resolved by a device going quiet.** Missing data leaves the
+  prior state exactly as it was (`condition_met=None` is a no-op in `step()`) — resolving it would be
+  a claim about a machine nobody is talking to, the same reasoning Phase 4's health score uses for an
+  offline device.
+- **A `TimestampMixin.updated_at` column needs `session.refresh()` after an UPDATE-path commit,
+  before it's returned as a response.** Its `onupdate` is server-evaluated, so the in-memory ORM
+  object still holds the pre-update value until refreshed; serializing it as-is raises
+  `MissingGreenlet` rather than silently returning stale data. Found the hard way in the browser
+  against `PATCH /alerts/rules/{id}` and `PATCH /notifications/settings` — both now refresh before
+  returning. Any new PATCH-style route on a `TimestampMixin` model needs the same call.
