@@ -193,3 +193,43 @@ async def make_user(admin_session):
         return user
 
     return _make
+
+
+@pytest.fixture(scope="session")
+async def live_server():
+    """A real uvicorn server on the session event loop.
+
+    WebSockets cannot be exercised through httpx's ASGI transport, and
+    Starlette's sync TestClient runs the app in its own loop — which breaks
+    immediately here, because the asyncpg pool and the redis client are bound
+    to the loop that created them. Serving on the same loop as the tests keeps
+    one loop throughout and exercises the real handshake, headers included.
+    """
+    import asyncio
+    import socket
+
+    import uvicorn
+
+    from app.main import create_app
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+
+    config = uvicorn.Config(
+        create_app(), host="127.0.0.1", port=port, log_level="warning", lifespan="off"
+    )
+    server = uvicorn.Server(config)
+    task = asyncio.create_task(server.serve())
+
+    for _ in range(200):
+        if server.started:
+            break
+        await asyncio.sleep(0.05)
+    else:  # pragma: no cover
+        raise RuntimeError("uvicorn did not start")
+
+    yield f"127.0.0.1:{port}"
+
+    server.should_exit = True
+    await task

@@ -41,10 +41,22 @@ SKIP_SCHEMAS = {
 SKIP_TABLES = {"alembic_version"}
 
 
+def _is_timescale_time_index(name: str | None, obj) -> bool:  # noqa: ANN001
+    """create_hypertable() adds its own `<table>_ts_idx` on the time column.
+
+    It is not in Base.metadata, so autogenerate would emit a drop_index for it
+    on every run — and dropping it would degrade every time-range query.
+    """
+    table = getattr(getattr(obj, "table", None), "name", None)
+    return bool(name) and name == f"{table}_ts_idx"
+
+
 def include_object(obj, name, type_, reflected, compare_to) -> bool:  # noqa: ANN001
     if getattr(obj, "schema", None) in SKIP_SCHEMAS:
         return False
     if type_ == "table" and name in SKIP_TABLES:
+        return False
+    if type_ == "index" and reflected and _is_timescale_time_index(name, obj):
         return False
     return True
 

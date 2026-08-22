@@ -10,6 +10,14 @@ from app.models.agent_token import AgentToken
 from app.models.base import Base
 from app.models.device import Device
 from app.models.enrollment_code import EnrollmentCode
+from app.models.metrics import (
+    DiskIoSample,
+    DiskUsageSample,
+    LatencySample,
+    MetricSample,
+    NetSample,
+    ProcessSample,
+)
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
 
@@ -17,7 +25,13 @@ __all__ = [
     "AgentToken",
     "Base",
     "Device",
+    "DiskIoSample",
+    "DiskUsageSample",
     "EnrollmentCode",
+    "LatencySample",
+    "MetricSample",
+    "NetSample",
+    "ProcessSample",
     "RefreshToken",
     "User",
 ]

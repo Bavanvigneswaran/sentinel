@@ -34,6 +34,21 @@ class IssuedEnrollmentCode:
 
 
 @dataclass(frozen=True, slots=True)
+class ConsumedEnrollment:
+    """The code's owner, plus the row id so the caller can link the device it
+    creates back to the exact code that authorised it.
+
+    `device_id` is set when the code was minted against an existing device —
+    re-enrolling an agent on a machine that already has history. The caller
+    reuses that device instead of creating a duplicate.
+    """
+
+    user_id: uuid.UUID
+    code_id: uuid.UUID
+    device_id: uuid.UUID | None
+
+
+@dataclass(frozen=True, slots=True)
 class IssuedAgentToken:
     id: uuid.UUID
     token: str  # returned to the agent exactly once
@@ -42,13 +57,28 @@ class IssuedAgentToken:
 
 
 async def create_enrollment_code(
-    session: AsyncSession, user_id: uuid.UUID, *, ttl_seconds: int = ENROLLMENT_CODE_TTL_SECONDS
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    ttl_seconds: int = ENROLLMENT_CODE_TTL_SECONDS,
+    device_id: uuid.UUID | None = None,
 ) -> IssuedEnrollmentCode:
+    """Mint a one-time code.
+
+    Passing `device_id` binds the code to an existing device, so re-enrolling
+    an agent keeps the machine's history instead of orphaning it behind a
+    duplicate device row. The composite FK enforces that the device really
+    belongs to `user_id`.
+    """
     display, prefix, code_hash = new_enrollment_code()
     expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
 
     row = EnrollmentCode(
-        user_id=user_id, code_hash=code_hash, code_prefix=prefix, expires_at=expires_at
+        user_id=user_id,
+        code_hash=code_hash,
+        code_prefix=prefix,
+        expires_at=expires_at,
+        device_id=device_id,
     )
     session.add(row)
     await session.commit()
@@ -57,8 +87,8 @@ async def create_enrollment_code(
 
 async def consume_enrollment_code(
     session: AsyncSession, code: str, *, device_id: uuid.UUID | None = None, ip: str | None = None
-) -> uuid.UUID:
-    """Atomically claim a code and return the owning user_id.
+) -> ConsumedEnrollment:
+    """Atomically claim a code and return its owner.
 
     A single conditional UPDATE ... RETURNING, never a read followed by a write:
     two agents racing on the same code must produce exactly one winner. Zero rows
@@ -87,15 +117,36 @@ async def consume_enrollment_code(
     result = await session.execute(
         sa.update(EnrollmentCode)
         .where(*conditions)
-        .values(consumed_at=sa.func.now(), device_id=device_id, consumed_ip=ip)
-        .returning(EnrollmentCode.user_id)
+        .values(
+            consumed_at=sa.func.now(),
+            # COALESCE, not assignment: a code minted against an existing
+            # device must keep that binding when the agent consumes it.
+            device_id=sa.func.coalesce(device_id, EnrollmentCode.device_id),
+            consumed_ip=ip,
+        )
+        .returning(EnrollmentCode.user_id, EnrollmentCode.id, EnrollmentCode.device_id)
     )
-    user_id = result.scalar_one_or_none()
+    row = result.one_or_none()
     await session.commit()
 
-    if user_id is None:
+    if row is None:
         raise InvalidEnrollmentCode
-    return user_id
+    return ConsumedEnrollment(user_id=row.user_id, code_id=row.id, device_id=row.device_id)
+
+
+async def link_code_to_device(
+    session: AsyncSession, code_id: uuid.UUID, device_id: uuid.UUID
+) -> None:
+    """Record which device a consumed code produced.
+
+    Separate from consumption because the device cannot exist until the code
+    has told us who owns it.
+    """
+    await session.execute(
+        sa.update(EnrollmentCode)
+        .where(EnrollmentCode.id == code_id)
+        .values(device_id=device_id)
+    )
 
 
 async def issue_agent_token(

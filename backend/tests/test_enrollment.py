@@ -36,13 +36,16 @@ async def test_code_is_human_typeable_and_unambiguous(admin_session, user):
 
 async def test_consume_returns_the_owning_user(admin_session, user):
     issued = await svc.create_enrollment_code(admin_session, user.id)
-    assert await svc.consume_enrollment_code(admin_session, issued.code) == user.id
+    consumed = await svc.consume_enrollment_code(admin_session, issued.code)
+    assert consumed.user_id == user.id
+    assert consumed.code_id == issued.id
 
 
 async def test_consume_accepts_sloppy_formatting(admin_session, user):
     issued = await svc.create_enrollment_code(admin_session, user.id)
     messy = f"  {issued.code.lower().replace('-', ' ')}  "
-    assert await svc.consume_enrollment_code(admin_session, messy) == user.id
+    consumed = await svc.consume_enrollment_code(admin_session, messy)
+    assert consumed.user_id == user.id
 
 
 async def test_a_code_can_only_be_consumed_once(admin_session, user):
@@ -83,7 +86,7 @@ async def test_concurrent_consumption_yields_exactly_one_winner(admin_session, u
     results = await asyncio.gather(*(attempt() for _ in range(8)))
     winners = [r for r in results if r is not None]
     assert len(winners) == 1, f"expected exactly one winner, got {len(winners)}"
-    assert winners[0] == user.id
+    assert winners[0].user_id == user.id
 
 
 async def test_consumption_records_the_device_and_ip(admin_session, user):

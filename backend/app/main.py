@@ -58,8 +58,12 @@ def create_app() -> FastAPI:
     )
 
     from app.api.routes.auth import router as auth_router
+    from app.api.routes.devices import router as devices_router
+    from app.ingest.ws import router as ingest_router
 
     app.include_router(auth_router)
+    app.include_router(devices_router)
+    app.include_router(ingest_router)
 
     @app.get("/health")
     async def health() -> dict:
