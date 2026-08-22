@@ -11,3 +11,6 @@ dist-ssr/
 
 .DS_Store
 *.tsbuildinfo
+*.egg-info/
+.pytest_cache/
+.ruff_cache/

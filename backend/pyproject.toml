@@ -14,6 +14,7 @@ dependencies = [
     "argon2-cffi>=23.1",
     "pyjwt>=2.10",
     "python-multipart>=0.0.12",
+    "email-validator>=2.2",
 ]
 
 [project.optional-dependencies]
@@ -33,3 +34,18 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+
+[tool.ruff.lint]
+# ASYNC catches blocking calls inside async functions (a hard rule in CLAUDE.md);
+# S (bandit) catches weak crypto and hardcoded secrets.
+select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106"]   # asserts and test credentials
+"migrations/*" = ["E501"]
