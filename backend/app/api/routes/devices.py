@@ -41,11 +41,17 @@ async def _unique_device_name(session, user_id: uuid.UUID, name: str) -> str:  #
     Rather than failing an agent that is only trying to enroll, disambiguate
     with a numeric suffix. The user can rename it afterwards.
     """
+    # `name` is attacker-supplied on an unauthenticated endpoint. The value is
+    # parameterised so there is no injection, but unescaped LIKE metacharacters
+    # would make the collision check match far too broadly and pick an odd
+    # name, so escape them and declare the escape character explicitly.
+    pattern = name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     taken = set(
         (
             await session.scalars(
                 sa.select(Device.name).where(
-                    Device.user_id == user_id, Device.name.like(f"{name}%")
+                    Device.user_id == user_id,
+                    Device.name.like(f"{pattern}%", escape="\\"),
                 )
             )
         ).all()
@@ -206,7 +212,11 @@ async def enroll(
         # The code was minted against an existing device: re-enrolment. Reuse
         # it so the machine keeps its metric history.
         device = await session.get(Device, consumed.device_id)
-        if device is None:  # deleted between minting and enrolling
+        # deleted_at matters as much as existence: deleting a device revokes its
+        # tokens, and reusing a soft-deleted one here would silently mint a
+        # fresh credential for it. The token could never connect — the ingest
+        # path filters deleted devices — but it should not be issued at all.
+        if device is None or device.deleted_at is not None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid or expired enrollment code",

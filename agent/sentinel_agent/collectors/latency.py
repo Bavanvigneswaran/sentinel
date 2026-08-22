@@ -97,25 +97,3 @@ async def measure_all(targets: list[LatencyTarget], **kwargs) -> list[dict]:
     if not targets:
         return []
     return list(await asyncio.gather(*(measure(t, **kwargs) for t in targets)))
-
-
-def default_gateway() -> LatencyTarget | None:
-    """The default gateway, when it can be determined without extra dependencies.
-
-    Returns None rather than guessing — a wrong gateway would produce latency
-    numbers for a host the user never selected.
-    """
-    try:
-        import subprocess  # noqa: S404 — reading the local routing table
-
-        if hasattr(socket, "AF_LINK") or __import__("platform").system() == "Darwin":
-            out = subprocess.run(  # noqa: S603
-                ["/sbin/route", "-n", "get", "default"],
-                capture_output=True, text=True, timeout=2, check=False,
-            ).stdout
-            for line in out.splitlines():
-                if "gateway:" in line:
-                    return LatencyTarget(host=line.split(":", 1)[1].strip(), port=80)
-    except Exception:  # noqa: BLE001
-        logger.debug("could not determine default gateway", exc_info=True)
-    return None

@@ -271,3 +271,37 @@ async def test_an_unbound_code_creates_a_new_device(client):
 
     devices = (await client.get("/devices", headers=headers)).json()
     assert [d["name"] for d in devices] == ["fresh"]
+
+
+async def test_a_code_bound_to_a_deleted_device_cannot_be_enrolled(client, admin_session):
+    """Deleting a device revokes its tokens. Reusing it through a pre-bound
+    code would quietly mint a fresh credential for it."""
+    headers = await _auth_headers(client)
+    device_id = (
+        await client.post("/devices", json={"name": "doomed"}, headers=headers)
+    ).json()["id"]
+    code = (
+        await client.post("/enrollment-codes", json={"device_id": device_id}, headers=headers)
+    ).json()["code"]
+
+    assert (await client.delete(f"/devices/{device_id}", headers=headers)).status_code == 204
+
+    result = await client.post("/enroll", json={"code": code, "device_name": "x"})
+    assert result.status_code == 400
+
+    live = await admin_session.scalar(
+        sa.text("SELECT count(*) FROM agent_tokens WHERE revoked_at IS NULL")
+    )
+    assert live == 0, "a token was issued for a deleted device"
+
+
+async def test_like_metacharacters_in_a_device_name_are_handled(client):
+    """`device_name` reaches a LIKE pattern from an unauthenticated endpoint."""
+    headers = await _auth_headers(client)
+    for _ in range(2):
+        code = (await client.post("/enrollment-codes", json={}, headers=headers)).json()["code"]
+        result = await client.post("/enroll", json={"code": code, "device_name": "%"})
+        assert result.status_code == 201
+
+    names = sorted(d["name"] for d in (await client.get("/devices", headers=headers)).json())
+    assert names == ["%", "%-2"], f"collision handling went wrong: {names}"
