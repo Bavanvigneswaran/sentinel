@@ -15,10 +15,9 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
+import app.models  # noqa: F401  — ensures every table is registered on Base.metadata
 from app.config import get_settings
 from app.models import Base
-
-import app.models  # noqa: F401  — ensures every table is registered on Base.metadata
 
 config = context.config
 

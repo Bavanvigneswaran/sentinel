@@ -8,7 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, sha256_hash, ts_now, uuid_pk
 
-AGENT_TOKEN_SCHEME = "sag_"
+AGENT_TOKEN_SCHEME = "sag_"  # noqa: S105 — a scheme prefix, not a credential
 
 
 class AgentToken(Base):

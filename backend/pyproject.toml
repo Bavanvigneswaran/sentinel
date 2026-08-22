@@ -48,4 +48,7 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "S105", "S106"]   # asserts and test credentials
-"migrations/*" = ["E501"]
+# S608: DDL cannot take bind parameters, so migrations necessarily interpolate.
+# Every value here is a module constant or a Settings field validated against
+# ROLE_PASSWORD_RE before use — see 0001_bootstrap_roles.
+"migrations/*" = ["E501", "S608"]

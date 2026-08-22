@@ -29,8 +29,8 @@ _ENV_FILES: tuple[Path, ...] | Path = (
     else (_REPO_ROOT / ".env", _BACKEND_DIR / ".env")
 )
 
-DEV_JWT_SECRET = "dev-secret-change-me"
-DEV_APP_DB_PASSWORD = "sentinel_app"
+DEV_JWT_SECRET = "dev-secret-change-me"  # noqa: S105 — a sentinel to detect, not a secret
+DEV_APP_DB_PASSWORD = "sentinel_app"  # noqa: S105 — dev-only default, rejected in prod
 
 # The role password is interpolated into `CREATE ROLE ... PASSWORD '...'`, which
 # cannot take a bind parameter. This pattern makes that interpolation provably safe.
@@ -117,6 +117,9 @@ class Settings(BaseSettings):
             problems = []
             if self.jwt_secret == DEV_JWT_SECRET:
                 problems.append("jwt_secret is still the development default")
+            elif len(self.jwt_secret.encode()) < 32:
+                # RFC 7518 3.2: an HMAC key shorter than the digest weakens HS256.
+                problems.append("jwt_secret must be at least 32 bytes")
             if not self.cookie_secure:
                 problems.append("cookie_secure is False")
             if self.app_db_password == DEV_APP_DB_PASSWORD:
