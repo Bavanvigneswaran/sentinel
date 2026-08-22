@@ -61,3 +61,13 @@ class TimestampMixin:
         server_default=sa.func.now(),
         onupdate=sa.func.now(),
     )
+
+
+def in_check(column: str, values: tuple[str, ...]) -> str:
+    """A CHECK-constraint expression restricting `column` to `values`.
+
+    Text + CHECK rather than a PG ENUM: enums need ALTER TYPE ... ADD VALUE,
+    which is non-transactional inside a migration, and autogenerate handles
+    them badly.
+    """
+    return "{} IN ({})".format(column, ", ".join(f"'{v}'" for v in values))

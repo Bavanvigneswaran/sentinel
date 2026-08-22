@@ -6,23 +6,17 @@ from datetime import datetime
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base, TimestampMixin, uuid_pk
+from app.models.base import Base, TimestampMixin, in_check, uuid_pk
 
-# text + CHECK rather than a PG ENUM: enums need ALTER TYPE ... ADD VALUE, which
-# is non-transactional inside a migration, and autogenerate handles them badly.
 PLATFORMS = ("desktop", "android")
 DEVICE_STATUSES = ("pending", "online", "offline")
-
-
-def _in_check(column: str, values: tuple[str, ...]) -> str:
-    return "{} IN ({})".format(column, ", ".join(f"'{v}'" for v in values))
 
 
 class Device(TimestampMixin, Base):
     __tablename__ = "devices"
     __table_args__ = (
-        sa.CheckConstraint(_in_check("platform", PLATFORMS), name="platform"),
-        sa.CheckConstraint(_in_check("status", DEVICE_STATUSES), name="status"),
+        sa.CheckConstraint(in_check("platform", PLATFORMS), name="platform"),
+        sa.CheckConstraint(in_check("status", DEVICE_STATUSES), name="status"),
         sa.UniqueConstraint("user_id", "name", name="uq_devices_user_id_name"),
         # Redundant against the primary key, but it gives child tables a
         # composite FK target so a row can never reference a device owned by a

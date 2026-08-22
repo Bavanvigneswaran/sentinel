@@ -102,6 +102,26 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str | None = None
 
+    # --- Alerts ------------------------------------------------------------
+    alert_evaluator_interval_seconds: int = 15
+
+    # --- Notifications: email ------------------------------------------------
+    # All optional. Email dispatch is a no-op (logged, not an error) whenever
+    # smtp_host is unset, matching anthropic_api_key's graceful-absence pattern.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None
+    smtp_use_tls: bool = True
+
+    # --- Notifications: web push (VAPID) --------------------------------------
+    # Also optional and off when unset. Generate a keypair once with py-vapid's
+    # `vapid --gen` and place them here — this is an ops step, not code.
+    vapid_public_key: str | None = None
+    vapid_private_key: str | None = None
+    vapid_subject: str | None = None  # a "mailto:" URI, required by the spec
+
     # NOTE: pydantic-settings parses complex types as JSON, so this must be
     # written as CORS_ORIGINS=["http://localhost:5173"] — a bare URL fails.
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])

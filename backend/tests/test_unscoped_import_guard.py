@@ -41,6 +41,13 @@ ALLOWED: dict[str, str] = {
         "devices (id, user_id) rejects any row that disagrees with the "
         "device's real owner"
     ),
+    "app.alerts.evaluator": (
+        "the evaluator runs as a periodic background task with no request and "
+        "no JWT to derive a tenant GUC from; the one unscoped query enumerates "
+        "which users currently have an enabled alert rule, and every "
+        "subsequent read or write in the sweep uses a session scoped to that "
+        "user via scope_to_user(), no different from a request's own session"
+    ),
 }
 
 

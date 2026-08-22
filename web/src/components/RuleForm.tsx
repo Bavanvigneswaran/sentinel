@@ -1,0 +1,210 @@
+import { useState } from "react"
+import type { FormEvent } from "react"
+
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { apiFetch, ApiError } from "@/lib/api"
+import { cn } from "@/lib/utils"
+import type { AlertRule, Comparison, Metric } from "@/types/alerts"
+import type { Device } from "@/types/api"
+
+const METRICS: { value: Metric; label: string }[] = [
+  { value: "cpu_percent", label: "CPU %" },
+  { value: "mem_percent", label: "Memory %" },
+  { value: "swap_percent", label: "Swap %" },
+  { value: "disk_percent", label: "Disk usage % (fullest mount)" },
+  { value: "packet_loss_percent", label: "Packet loss % (worst target)" },
+  { value: "cpu_iowait_percent", label: "CPU IO wait %" },
+]
+
+const COMPARISONS: { value: Comparison; label: string }[] = [
+  { value: ">", label: "is above" },
+  { value: ">=", label: "is at or above" },
+  { value: "<", label: "is below" },
+  { value: "<=", label: "is at or below" },
+  { value: "==", label: "equals" },
+]
+
+/** Styled like ui/input.tsx's Input — there is no shared Select primitive
+ * yet, and a native <select> with matching classes is enough for this
+ * form's four dropdowns. */
+function selectClassName(className?: string): string {
+  return cn(
+    "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+    "disabled:cursor-not-allowed disabled:opacity-50",
+    className,
+  )
+}
+
+interface RuleFormProps {
+  devices: Device[]
+  /** Present when editing an existing rule; absent when creating one. */
+  rule?: AlertRule
+  onSaved: () => void
+  onCancel: () => void
+}
+
+export function RuleForm({ devices, rule, onSaved, onCancel }: RuleFormProps) {
+  const [name, setName] = useState(rule?.name ?? "")
+  const [deviceId, setDeviceId] = useState(rule?.device_id ?? "")
+  const [metric, setMetric] = useState<Metric>(rule?.metric ?? "cpu_percent")
+  const [comparison, setComparison] = useState<Comparison>(rule?.comparison ?? ">")
+  const [threshold, setThreshold] = useState(rule ? String(rule.threshold) : "90")
+  const [forDuration, setForDuration] = useState(
+    rule ? String(rule.for_duration_seconds) : "60",
+  )
+  const [enabled, setEnabled] = useState(rule?.enabled ?? true)
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault()
+    setError(null)
+    setSubmitting(true)
+    try {
+      const body = {
+        name,
+        device_id: deviceId === "" ? null : deviceId,
+        metric,
+        comparison,
+        threshold: Number(threshold),
+        for_duration_seconds: Number(forDuration),
+        enabled,
+      }
+      if (rule) {
+        await apiFetch(`/alerts/rules/${rule.id}`, { method: "PATCH", body })
+      } else {
+        await apiFetch("/alerts/rules", { method: "POST", body })
+      }
+      onSaved()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not save the rule.")
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="rule-name">Name</Label>
+        <Input
+          id="rule-name"
+          required
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="High CPU"
+        />
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="rule-device">Applies to</Label>
+        <select
+          id="rule-device"
+          className={selectClassName()}
+          value={deviceId}
+          onChange={(e) => setDeviceId(e.target.value)}
+        >
+          <option value="">All devices</option>
+          {devices.map((device) => (
+            <option key={device.id} value={device.id}>
+              {device.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="rule-metric">Metric</Label>
+          <select
+            id="rule-metric"
+            className={selectClassName()}
+            value={metric}
+            onChange={(e) => setMetric(e.target.value as Metric)}
+          >
+            {METRICS.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="rule-comparison">Condition</Label>
+          <select
+            id="rule-comparison"
+            className={selectClassName()}
+            value={comparison}
+            onChange={(e) => setComparison(e.target.value as Comparison)}
+          >
+            {COMPARISONS.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="rule-threshold">Threshold</Label>
+          <Input
+            id="rule-threshold"
+            type="number"
+            step="any"
+            required
+            value={threshold}
+            onChange={(e) => setThreshold(e.target.value)}
+          />
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="rule-duration">For (seconds)</Label>
+          <Input
+            id="rule-duration"
+            type="number"
+            min={0}
+            required
+            value={forDuration}
+            onChange={(e) => setForDuration(e.target.value)}
+          />
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        The condition must hold continuously for this long before the rule fires. A rule can
+        never fire on a single sample, even with 0 seconds — it always takes at least one more
+        evaluation tick.
+      </p>
+
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => setEnabled(e.target.checked)}
+          className="size-4 rounded border-input"
+        />
+        Enabled
+      </label>
+
+      <div className="flex gap-2">
+        <Button type="submit" disabled={submitting}>
+          {submitting ? "Saving…" : rule ? "Save changes" : "Create rule"}
+        </Button>
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  )
+}

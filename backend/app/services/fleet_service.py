@@ -28,16 +28,12 @@ from app.analysis.health import HealthInputs, HealthResult, compute_health, unkn
 from app.models import Device
 from app.models.rollups import SYSTEM, TIERS_BY_NAME
 from app.schemas.devices import derive_device_status
+from app.services.metrics_read import FRESH_WINDOW_SECONDS, latest_per_entity
 
 #: How far back a sparkline reaches by default.
 DEFAULT_WINDOW_SECONDS = 3600
 MIN_WINDOW_SECONDS = 300
 MAX_WINDOW_SECONDS = 24 * 3600
-
-#: A reading older than this is not "current". Nine normal push intervals —
-#: wide enough to survive a slow push, narrow enough that a stalled agent stops
-#: contributing numbers to a live dashboard.
-FRESH_WINDOW_SECONDS = 90
 
 #: Health is scored on a mean over this window, not on the newest sample.
 HEALTH_WINDOW_SECONDS = 300
@@ -58,41 +54,6 @@ class DeviceSummary:
     sparkline_cpu: list[float | None]
     sparkline_mem: list[float | None]
     sparkline_resolution: int
-
-
-def _device_filter(device_ids: list[uuid.UUID] | None) -> str:
-    return " AND device_id = ANY(:device_ids)" if device_ids else ""
-
-
-async def _latest_per_entity(
-    session: AsyncSession,
-    *,
-    table: str,
-    entity_keys: tuple[str, ...],
-    columns: tuple[str, ...],
-    since: datetime,
-    device_ids: list[uuid.UUID] | None,
-) -> list[dict[str, Any]]:
-    """The newest row per (device, entity) inside the window.
-
-    DISTINCT ON rather than a window function: on a hypertable ordered by ts
-    descending this stops at the first row of each group, and the alternative
-    (rank() over a partition) materialises every row in the window first.
-
-    Table and column names come from this module's own constants; only values
-    are bound.
-    """
-    keys = ", ".join(("device_id", *entity_keys))
-    selected = ", ".join(("device_id", *entity_keys, "ts", *columns))
-    rows = await session.execute(
-        sa.text(
-            f"SELECT DISTINCT ON ({keys}) {selected} "  # noqa: S608 — fixed identifiers
-            f"FROM {table} WHERE ts >= :since{_device_filter(device_ids)} "
-            f"ORDER BY {keys}, ts DESC"
-        ),
-        {"since": since, "device_ids": device_ids},
-    )
-    return [dict(row) for row in rows.mappings()]
 
 
 def _sum_at_latest_ts(
@@ -193,7 +154,7 @@ async def build_summaries(
 
     latest_system = {
         row["device_id"]: row
-        for row in await _latest_per_entity(
+        for row in await latest_per_entity(
             session,
             table="metric_samples",
             entity_keys=(),
@@ -212,7 +173,7 @@ async def build_summaries(
         )
     }
 
-    disk_rows = await _latest_per_entity(
+    disk_rows = await latest_per_entity(
         session,
         table="disk_usage_samples",
         entity_keys=("mount",),
@@ -225,7 +186,7 @@ async def build_summaries(
         disks_by_device[row["device_id"]].append(row)
 
     net_totals = _sum_at_latest_ts(
-        await _latest_per_entity(
+        await latest_per_entity(
             session,
             table="net_samples",
             entity_keys=("nic",),
@@ -236,7 +197,7 @@ async def build_summaries(
         ("rx_bytes_per_s", "tx_bytes_per_s"),
     )
     io_totals = _sum_at_latest_ts(
-        await _latest_per_entity(
+        await latest_per_entity(
             session,
             table="disk_io_samples",
             entity_keys=("disk",),
@@ -247,7 +208,7 @@ async def build_summaries(
         ("read_bytes_per_s", "write_bytes_per_s"),
     )
 
-    latency_rows = await _latest_per_entity(
+    latency_rows = await latest_per_entity(
         session,
         table="latency_samples",
         entity_keys=("target",),
