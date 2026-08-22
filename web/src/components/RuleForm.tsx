@@ -68,7 +68,7 @@ export function RuleForm({ devices, rule, onSaved, onCancel }: RuleFormProps) {
     setSubmitting(true)
     try {
       const body =
-        ruleType === "threshold"
+        ruleType === "threshold" || ruleType === "forecast"
           ? {
               name,
               device_id: deviceId === "" ? null : deviceId,
@@ -137,6 +137,14 @@ export function RuleForm({ devices, rule, onSaved, onCancel }: RuleFormProps) {
           >
             Anomaly
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={ruleType === "forecast" ? "default" : "outline"}
+            onClick={() => setRuleType("forecast")}
+          >
+            Forecast
+          </Button>
         </div>
       </div>
 
@@ -174,7 +182,7 @@ export function RuleForm({ devices, rule, onSaved, onCancel }: RuleFormProps) {
           </select>
         </div>
 
-        {ruleType === "threshold" && (
+        {(ruleType === "threshold" || ruleType === "forecast") && (
           <div className="flex flex-col gap-2">
             <Label htmlFor="rule-comparison">Condition</Label>
             <select
@@ -194,7 +202,7 @@ export function RuleForm({ devices, rule, onSaved, onCancel }: RuleFormProps) {
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        {ruleType === "threshold" && (
+        {(ruleType === "threshold" || ruleType === "forecast") && (
           <div className="flex flex-col gap-2">
             <Label htmlFor="rule-threshold">Threshold</Label>
             <Input
@@ -220,13 +228,14 @@ export function RuleForm({ devices, rule, onSaved, onCancel }: RuleFormProps) {
           />
         </div>
       </div>
-      {ruleType === "threshold" ? (
+      {ruleType === "threshold" && (
         <p className="text-xs text-muted-foreground">
           The condition must hold continuously for this long before the rule fires. A rule can
           never fire on a single sample, even with 0 seconds — it always takes at least one more
           evaluation tick.
         </p>
-      ) : (
+      )}
+      {ruleType === "anomaly" && (
         <p className="text-xs text-muted-foreground">
           Fires when this metric drifts unusually far from its own recent normal for this long,
           adapting automatically as that normal changes over time. How far counts as unusual is
@@ -235,6 +244,14 @@ export function RuleForm({ devices, rule, onSaved, onCancel }: RuleFormProps) {
             Settings → Anomaly sensitivity
           </Link>
           .
+        </p>
+      )}
+      {ruleType === "forecast" && (
+        <p className="text-xs text-muted-foreground">
+          Fires when the device's 24h-ahead forecast — fit from its last ~two weeks of history —
+          is predicted to cross this threshold, not when the live reading does. A device with too
+          little history for a trustworthy forecast simply never fires this rule until it has
+          enough.
         </p>
       )}
 

@@ -2,12 +2,13 @@
 where it implies one, opening/closing the AlertEvent and dispatching a
 best-effort notification.
 
-Split out of evaluator.py so both the threshold path (evaluator.py's
-`_evaluate_pair`) and the anomaly path (anomaly_eval.py's
-`evaluate_anomaly_pair`) go through the exact same bookkeeping — the two
-rule_type paths differ only in how they arrive at `condition_met` and what
-evidence (if any) accompanies a fire, never in what happens once step() has
-decided.
+Split out of evaluator.py so the threshold path (evaluator.py's
+`_evaluate_pair`), the anomaly path (anomaly_eval.py's
+`evaluate_anomaly_pair`), and the forecast path (forecast_eval.py's
+`evaluate_forecast_pair`) all go through the exact same bookkeeping — the
+three rule_type paths differ only in how they arrive at `condition_met` and
+what evidence (if any) accompanies a fire, never in what happens once
+step() has decided.
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ async def apply_step_result(
     *,
     comparison: str | None,
     threshold: float | None,
-    evidence: dict[str, float | None] | None = None,
+    evidence: dict[str, float | datetime | None] | None = None,
 ) -> None:
     state_row.state = result.state
     state_row.pending_since = result.pending_since
@@ -53,6 +54,7 @@ async def apply_step_result(
             rule_id=rule.id,
             device_id=device.id,
             rule_name=rule.name,
+            rule_type=rule.rule_type,
             metric=rule.metric,
             comparison=comparison,
             threshold=threshold,

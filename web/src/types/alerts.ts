@@ -12,7 +12,7 @@ export type Metric =
   | "cpu_iowait_percent"
 
 export type Comparison = ">" | ">=" | "<" | "<=" | "=="
-export type RuleType = "threshold" | "anomaly"
+export type RuleType = "threshold" | "anomaly" | "forecast"
 export type Severity = "watch" | "warning" | "critical"
 export type AlertRuleState = "ok" | "pending" | "firing"
 export type EventStatus = "firing" | "resolved"
@@ -51,10 +51,12 @@ export interface AlertEvent {
   rule_id: string | null
   device_id: string
   /** Snapshotted from the rule at fire time — correct even after the rule
-   * is later edited or deleted. null comparison/threshold means this was an
-   * anomaly-sourced event; see observed_value, baseline_mean, baseline_mad
-   * and z_score below. */
+   * is later edited or deleted. `rule_type` is the reliable discriminator
+   * for which evidence fields below are populated (comparison/threshold are
+   * set for both threshold and forecast events, so comparison alone no
+   * longer distinguishes every kind). */
   rule_name: string
+  rule_type: RuleType
   metric: Metric
   comparison: Comparison | null
   threshold: number | null
@@ -77,6 +79,9 @@ export interface AlertEvent {
   /** Derived from z_score at read time, not stored — null exactly when
    * z_score is null. */
   severity: Severity | null
+  /** Populated only for a forecast-sourced event. */
+  predicted_breach_at: string | null
+  predicted_value: number | null
 }
 
 export interface AnomalyBaseline {

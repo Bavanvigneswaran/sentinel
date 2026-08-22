@@ -21,6 +21,22 @@ export interface HistorySeries {
   values: (number | null)[]
 }
 
+/**
+ * A 24h-ahead prediction continuing past the real series' last timestamp.
+ * Rendered as a dashed line (plus two thin dotted bounds) rather than a
+ * filled band — a deliberate scope trim; see DeviceHistoryPage.
+ */
+export interface ForecastOverlay {
+  label: string
+  color: string
+  /** Unix seconds, ascending, every one strictly after the last real
+   * timestamp in `timestamps`. */
+  timestamps: number[]
+  predicted: (number | null)[]
+  lower: (number | null)[]
+  upper: (number | null)[]
+}
+
 interface HistoryChartProps {
   /** Unix seconds, ascending. */
   timestamps: number[]
@@ -29,6 +45,7 @@ interface HistoryChartProps {
   valueFormatter?: (v: number) => string
   /** Fixed y-domain, e.g. [0, 100] for a percentage. */
   domain?: [number, number]
+  forecast?: ForecastOverlay
 }
 
 function buildOptions(
@@ -37,12 +54,13 @@ function buildOptions(
   series: HistorySeries[],
   valueFormatter?: (v: number) => string,
   domain?: [number, number],
+  forecast?: ForecastOverlay,
 ): uPlot.Options {
   return {
     width,
     height,
     padding: [12, 12, 0, 0],
-    legend: { show: series.length > 1 },
+    legend: { show: series.length > 1 || forecast !== undefined },
     cursor: { drag: { x: false, y: false } },
     scales: {
       x: { time: true },
@@ -63,6 +81,34 @@ function buildOptions(
         points: { show: false },
         spanGaps: false,
       })),
+      ...(forecast
+        ? [
+            {
+              label: `${forecast.label} (forecast)`,
+              stroke: forecast.color,
+              width: 1.5,
+              dash: [6, 4],
+              points: { show: false },
+              spanGaps: false,
+            },
+            {
+              label: `${forecast.label} (low/high)`,
+              stroke: forecast.color,
+              width: 1,
+              dash: [1, 3],
+              points: { show: false },
+              spanGaps: false,
+            },
+            {
+              label: "",
+              stroke: forecast.color,
+              width: 1,
+              dash: [1, 3],
+              points: { show: false },
+              spanGaps: false,
+            },
+          ]
+        : []),
     ],
   }
 }
@@ -73,22 +119,40 @@ export function HistoryChart({
   height = 200,
   valueFormatter,
   domain,
+  forecast,
 }: HistoryChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<uPlot | null>(null)
 
   // The chart is rebuilt when the *shape* changes (a NIC appeared, a mount
-  // vanished) and only re-fed when the numbers change. uPlot cannot add or
-  // remove series after construction, so the two cases genuinely differ.
+  // vanished, a forecast series appeared/disappeared) and only re-fed when
+  // the numbers change. uPlot cannot add or remove series after
+  // construction, so the two cases genuinely differ.
   const shape = useMemo(
-    () => series.map((s) => `${s.label}:${s.color}`).join("|"),
-    [series],
+    () =>
+      series.map((s) => `${s.label}:${s.color}`).join("|") +
+      (forecast ? `|forecast:${forecast.label}:${forecast.color}` : ""),
+    [series, forecast],
   )
 
-  const data = useMemo(
-    () => [timestamps, ...series.map((s) => s.values)] as uPlot.AlignedData,
-    [timestamps, series],
-  )
+  const data = useMemo(() => {
+    if (!forecast) {
+      return [timestamps, ...series.map((s) => s.values)] as uPlot.AlignedData
+    }
+    const allTimestamps = [...timestamps, ...forecast.timestamps]
+    const pad = (values: (number | null)[]) => [
+      ...values,
+      ...forecast.timestamps.map(() => null),
+    ]
+    const futurePad = timestamps.map(() => null)
+    return [
+      allTimestamps,
+      ...series.map((s) => pad(s.values)),
+      [...futurePad, ...forecast.predicted],
+      [...futurePad, ...forecast.lower],
+      [...futurePad, ...forecast.upper],
+    ] as uPlot.AlignedData
+  }, [timestamps, series, forecast])
 
   useEffect(() => {
     const container = containerRef.current
@@ -96,7 +160,7 @@ export function HistoryChart({
 
     const width = container.clientWidth || 600
     chartRef.current = new uPlot(
-      buildOptions(width, height, series, valueFormatter, domain),
+      buildOptions(width, height, series, valueFormatter, domain, forecast),
       data,
       container,
     )

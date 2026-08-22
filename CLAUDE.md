@@ -65,6 +65,36 @@ write path).
 Still to come in Phase 6, if picked back up: layer 3/4 detectors, and widening anomaly rules past the
 6-metric `METRICS` set they currently share with threshold rules.
 
+Phase 7 status: Holt-Winters 24h forecasting and disk/memory time-to-exhaustion complete. A new
+periodic `ForecastWorker` (`app/workers/forecast_worker.py`, 15-minute default cadence — CPU-bound
+unlike the 15s alert sweep) fits `statsmodels`' `ETSModel` (additive damped trend, daily-seasonal
+once there are ≥2 days of hourly buckets) and a Theil-Sen regression per `(device, metric)` across
+the same 6-metric `METRICS` set anomaly rules use, storing the result in two new lazily-upserted
+tables, `MetricForecast`/`ExhaustionForecast` (`app/models/forecasts.py`,
+`app/analysis/forecast.py`). `rule_type` gains a third value, `"forecast"` (migration
+`0008_forecast_rules`): same `comparison`/`threshold` shape as `threshold`, but judged against the
+stored 24h-ahead forecast instead of a live reading, by `app/alerts/forecast_eval.py` — sharing
+`evaluator.py`'s one sweep and `state_apply.py`'s bookkeeping with the other two rule types rather
+than adding a second evaluation path. `AlertEvent` now snapshots `rule_type` explicitly (retiring
+the `comparison IS NULL` anomaly heuristic, which a forecast event's non-null comparison would
+otherwise start to erode) plus `predicted_breach_at`/`predicted_value` evidence. 330 backend tests
+green. Frontend: `DeviceHistoryPage`'s CPU/Memory/Disk-usage charts overlay the forecast as a dashed
+continuation plus a thin prediction-interval band, colour-matched to the real series they extend
+(`HistoryChart`'s new `forecast` prop); a "time to capacity" card sits beside the health card
+(`ExhaustionSummary`); `/forecasts` is a new fleet-wide page (soonest-to-exhaust list, predicted-
+breach alert history) with its own nav item; `RuleForm` gets a Threshold/Anomaly/Forecast toggle.
+Verified in-browser end-to-end against seeded history in the dev database, including one real
+surprise: a manually backfilled history needed one manual continuous-aggregate refresh
+(`CALL refresh_continuous_aggregate(...)`) to appear in the 1h rollup the worker reads, because
+real-time aggregation only covers data *after* the aggregate's last materialization watermark — a
+live agent's forward-only writes never hit this, but a bulk backfill does. Also verified: a forecast
+rule created via the UI, and its full pending→firing lifecycle observed live through the real
+evaluator loop with the correct predicted-vs-live values shown on `/alerts`.
+
+Still to come in Phase 7, if picked back up: a filled prediction-interval band on the chart overlay
+(currently two thin dashed bounds — a deliberate scope trim, not a limitation of the stored data);
+feeding forecast/exhaustion output into Phase 8's AI insights signal bundle.
+
 ## Conventions
 
 - Files stay under ~400 lines; split rather than grow.
@@ -252,3 +282,45 @@ Still to come in Phase 6, if picked back up: layer 3/4 detectors, and widening a
 - **Anomaly rules are scoped to the same 6-metric `METRICS` set threshold rules use.** Widening
   coverage to the full protocol means widening `_read_latest_values`'s hardcoded three-query shape in
   `app/alerts/evaluator.py` too — a deliberately separate, not-yet-started piece of work.
+
+## Phase 7 invariants — don't break these
+
+- **A forecast is judged by the evaluator, never computed there.** `app/workers/forecast_worker.py`
+  is the only writer of `MetricForecast`/`ExhaustionForecast`, on its own 15-minute cadence;
+  `app/alerts/evaluator.py` only reads whatever the worker last stored, exactly as it already does
+  for `AnomalyBaseline`. This is what keeps a slow ETS fit from ever delaying the 15s alert sweep —
+  Phase 6's "both rule types share one evaluator sweep" invariant, now extended to three rule types
+  through the same sweep.
+- **A forecast rule only fires while the device has a fresh live reading**, even though the
+  condition it judges depends only on the stored forecast. `app/alerts/forecast_eval.py` gates
+  `condition_met` on `value is not None` for exactly this reason — the same "never make a claim
+  about a machine nobody is talking to" logic `analysis/health.py`'s `unknown_health()` and Phase
+  5's "an already-firing alert is never auto-resolved by a device going quiet" both follow. Without
+  this gate, a forecast computed while a device was still reporting could keep firing indefinitely
+  after it went offline.
+- **A multi-entity metric is forecast against one real entity, never a synthetic composite.**
+  `disk_percent`/`packet_loss_percent` are fit against whichever single mount/target is currently
+  worst — `app/services/metrics_read.py`'s `worst_entity_per_device()`, shared with the evaluator's
+  own worst-of-entity logic so the two can never disagree — and that entity's name is stored on the
+  row (`MetricForecast.entity`/`ExhaustionForecast.entity`). A max-across-entities-per-bucket series
+  would not describe any one real mount's or target's trend, which is what a forecast is supposed to
+  extrapolate.
+- **`AlertEvent.rule_type` is snapshotted, not re-derived.** Phase 6's `comparison IS NULL`
+  heuristic for "this was an anomaly firing" stops being sufficient once a forecast event also sets
+  `comparison`/`threshold` like a threshold event does; `rule_type` is the explicit, permanent
+  record instead, mirroring `rule_name`/`metric` already being snapshotted at fire time. See
+  `app/models/alerts.py`.
+- **Below `MIN_POINTS_TREND` (24) real buckets, a forecast is absent, not attempted.** The same
+  "unknown, not synthesized" posture as anomaly's `WARMUP_SAMPLES` — `analysis/forecast.py`'s
+  `fit_holt_winters()` returns `None` rather than extrapolating from too little signal, and the
+  worker still upserts the row with `points=[]` so `computed_at` can say when that was last checked
+  rather than the row simply not existing.
+- **A time-to-exhaustion projection is anchored at the last real observed value, never the
+  regression line's own fitted value for "now".** `analysis/forecast.py`'s
+  `estimate_time_to_exhaustion()` — the starting point of a projection has to be something that was
+  actually measured, the same reasoning anomaly evidence snapshots the pre-update baseline rather
+  than a recomputed one.
+- **ETS fitting and the Theil-Sen regression both run off the event loop.**
+  `app/workers/forecast_worker.py` wraps every call into `analysis/forecast.py`'s two functions in
+  `asyncio.to_thread` — real CPU work, and CLAUDE.md's "nothing blocking on the event loop" hard rule
+  applies to a background worker tick exactly as much as it applies to a request handler.

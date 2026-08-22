@@ -8,7 +8,7 @@ import { useAuth } from "@/stores/auth"
 interface AppLayoutProps {
   children: ReactNode
   /** Highlights the active nav item. Undefined renders neither as active. */
-  active?: "dashboard" | "devices" | "alerts" | "anomalies" | "settings"
+  active?: "dashboard" | "devices" | "alerts" | "anomalies" | "forecasts" | "settings"
 }
 
 const NAV_ITEMS = [
@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { key: "devices", to: "/devices", label: "Devices" },
   { key: "alerts", to: "/alerts", label: "Alerts" },
   { key: "anomalies", to: "/anomalies", label: "Anomalies" },
+  { key: "forecasts", to: "/forecasts", label: "Forecasts" },
   { key: "settings", to: "/settings", label: "Settings" },
 ] as const
 

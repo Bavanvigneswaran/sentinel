@@ -143,15 +143,16 @@ export function AlertRulesPage() {
                       )}
                     </span>
                     <span className="text-sm text-muted-foreground">
-                      {rule.rule_type === "threshold" ? (
-                        <>
-                          {deviceName(rule.device_id)} · {rule.metric} {rule.comparison}{" "}
-                          {rule.threshold} for {rule.for_duration_seconds}s
-                        </>
-                      ) : (
+                      {rule.rule_type === "anomaly" ? (
                         <>
                           {deviceName(rule.device_id)} · {rule.metric} anomaly detection
                           {sensitivity && <> · sensitivity: {sensitivity}</>}
+                        </>
+                      ) : (
+                        <>
+                          {deviceName(rule.device_id)} · {rule.metric}{" "}
+                          {rule.rule_type === "forecast" ? "predicted " : ""}
+                          {rule.comparison} {rule.threshold} for {rule.for_duration_seconds}s
                         </>
                       )}
                     </span>

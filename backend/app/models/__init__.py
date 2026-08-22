@@ -11,6 +11,7 @@ from app.models.alerts import AlertEvent, AlertRule, AlertSilence, AlertState, A
 from app.models.base import Base
 from app.models.device import Device
 from app.models.enrollment_code import EnrollmentCode
+from app.models.forecasts import ExhaustionForecast, MetricForecast
 from app.models.metrics import (
     DiskIoSample,
     DiskUsageSample,
@@ -35,7 +36,9 @@ __all__ = [
     "DiskIoSample",
     "DiskUsageSample",
     "EnrollmentCode",
+    "ExhaustionForecast",
     "LatencySample",
+    "MetricForecast",
     "MetricSample",
     "NetSample",
     "NotificationSettings",

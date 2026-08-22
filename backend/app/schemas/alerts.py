@@ -19,7 +19,7 @@ Metric = Literal[
     "cpu_iowait_percent",
 ]
 Comparison = Literal[">", ">=", "<", "<=", "=="]
-RuleType = Literal["threshold", "anomaly"]
+RuleType = Literal["threshold", "anomaly", "forecast"]
 AlertState = Literal["ok", "pending", "firing"]
 EventStatus = Literal["firing", "resolved"]
 
@@ -30,10 +30,10 @@ class AlertRuleCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     rule_type: RuleType = "threshold"
     metric: Metric
-    #: Required for a threshold rule, must be omitted for an anomaly rule —
-    #: enforced below, mirroring the DB's rule_type_fields CHECK constraint
-    #: at the API boundary so a bad combination fails with a 422, not a
-    #: raw integrity error.
+    #: Required for a threshold or forecast rule, must be omitted for an
+    #: anomaly rule — enforced below, mirroring the DB's rule_type_fields
+    #: CHECK constraint at the API boundary so a bad combination fails with
+    #: a 422, not a raw integrity error.
     comparison: Comparison | None = None
     threshold: float | None = None
     for_duration_seconds: int = Field(default=60, ge=0, le=86400)
@@ -41,9 +41,9 @@ class AlertRuleCreate(BaseModel):
 
     @model_validator(mode="after")
     def _fields_match_rule_type(self) -> AlertRuleCreate:
-        if self.rule_type == "threshold":
+        if self.rule_type in ("threshold", "forecast"):
             if self.comparison is None or self.threshold is None:
-                raise ValueError("threshold rules require comparison and threshold")
+                raise ValueError(f"{self.rule_type} rules require comparison and threshold")
         elif self.comparison is not None or self.threshold is not None:
             raise ValueError("anomaly rules must not set comparison or threshold")
         return self
@@ -69,10 +69,12 @@ class AlertRuleUpdate(BaseModel):
 
     @model_validator(mode="after")
     def _rule_type_change_carries_matching_fields(self) -> AlertRuleUpdate:
-        if self.rule_type == "threshold" and (self.comparison is None or self.threshold is None):
+        if self.rule_type in ("threshold", "forecast") and (
+            self.comparison is None or self.threshold is None
+        ):
             raise ValueError(
-                "switching a rule to rule_type=threshold requires comparison and threshold "
-                "in the same request"
+                f"switching a rule to rule_type={self.rule_type} requires comparison and "
+                "threshold in the same request"
             )
         if self.rule_type == "anomaly" and (
             self.comparison is not None or self.threshold is not None
@@ -106,9 +108,12 @@ class AlertEventOut(BaseModel):
     rule_id: uuid.UUID | None
     device_id: uuid.UUID
     #: Snapshotted from the rule at fire time — correct even after the rule
-    #: is later edited or deleted. Null comparison/threshold means this was
-    #: an anomaly-sourced event; see observed_value/baseline_*/z_score below.
+    #: is later edited or deleted. `rule_type` is the reliable discriminator
+    #: for which evidence fields below are populated (comparison/threshold
+    #: are set for both threshold and forecast events, so comparison alone
+    #: no longer distinguishes every kind).
     rule_name: str
+    rule_type: RuleType
     metric: Metric
     comparison: Comparison | None
     threshold: float | None
@@ -123,6 +128,9 @@ class AlertEventOut(BaseModel):
     baseline_mean: float | None
     baseline_mad: float | None
     z_score: float | None
+    #: Populated only for a forecast-sourced event.
+    predicted_breach_at: datetime | None
+    predicted_value: float | None
 
     @computed_field  # type: ignore[prop-decorator]
     @property

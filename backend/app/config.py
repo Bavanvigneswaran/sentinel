@@ -105,6 +105,12 @@ class Settings(BaseSettings):
     # --- Alerts ------------------------------------------------------------
     alert_evaluator_interval_seconds: int = 15
 
+    # --- Forecasting ---------------------------------------------------------
+    # CPU-bound (an ETS fit per device per metric), unlike the 15s alert sweep —
+    # a 15-minute cadence is plenty for a 24h-horizon forecast to stay current.
+    forecast_worker_interval_seconds: int = 900
+    forecast_history_days: int = 14
+
     # --- Notifications: email ------------------------------------------------
     # All optional. Email dispatch is a no-op (logged, not an error) whenever
     # smtp_host is unset, matching anthropic_api_key's graceful-absence pattern.

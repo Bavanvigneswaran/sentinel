@@ -7,6 +7,7 @@ import { SilenceForm } from "@/components/SilenceForm"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { apiFetch } from "@/lib/api"
+import { formatDaysUntil } from "@/lib/formatters"
 import type { AlertEvent, EventStatus } from "@/types/alerts"
 import type { Device } from "@/types/api"
 
@@ -126,12 +127,13 @@ export function AlertsPage() {
                     <span className="font-medium">{event.rule_name}</span>
                     <span className="text-sm text-muted-foreground">
                       {devicesById[event.device_id]?.name ?? event.device_id} · {event.metric}{" "}
-                      {event.comparison !== null ? (
+                      {event.rule_type === "anomaly" ? (
+                        <>anomaly ({event.severity})</>
+                      ) : (
                         <>
+                          {event.rule_type === "forecast" ? "predicted " : ""}
                           {event.comparison} {event.threshold}
                         </>
-                      ) : (
-                        <>anomaly ({event.severity})</>
                       )}
                     </span>
                   </div>
@@ -147,7 +149,17 @@ export function AlertsPage() {
 
                 <div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
                   <span>
-                    value at fire: {event.value_at_fire}
+                    {event.rule_type === "forecast" && event.predicted_value !== null ? (
+                      <>
+                        predicted to reach {event.predicted_value.toFixed(1)}
+                        {event.predicted_breach_at &&
+                          ` (${formatDaysUntil(event.predicted_breach_at)})`}
+                        {" · live: "}
+                        {event.value_at_fire}
+                      </>
+                    ) : (
+                      <>value at fire: {event.value_at_fire}</>
+                    )}
                     {event.status === "firing" && event.last_value !== null && (
                       <> · latest: {event.last_value}</>
                     )}

@@ -1,15 +1,17 @@
 """Alert rules, their per-(rule, device) evaluation state, firing history,
 silences, and adaptive anomaly baselines.
 
-`AlertRule.rule_type` discriminates two kinds of row in one table:
+`AlertRule.rule_type` discriminates three kinds of row in one table:
 threshold rules set `comparison`/`threshold` and are judged by
-analysis/alerts.py's evaluate_condition(); anomaly rules leave both null and
-are judged by app/alerts/evaluator.py against an AnomalyBaseline row instead,
-using analysis/anomaly.py's z-score math. Both kinds feed the same `step()`
-state machine and land in the same AlertState/AlertEvent tables — a
-discriminator was chosen over a sibling table because AlertState/AlertEvent
-already FK straight to a rule row; a sibling table would need a polymorphic
-association to reuse them.
+analysis/alerts.py's evaluate_condition() against a live reading; forecast
+rules set the same two fields but are judged by app/alerts/forecast_eval.py
+against a stored MetricForecast row's 24h-ahead prediction instead of a live
+one; anomaly rules leave both null and are judged by app/alerts/evaluator.py
+against an AnomalyBaseline row, using analysis/anomaly.py's z-score math. All
+three feed the same `step()` state machine and land in the same
+AlertState/AlertEvent tables — a discriminator was chosen over a sibling
+table because AlertState/AlertEvent already FK straight to a rule row; a
+sibling table would need a polymorphic association to reuse them.
 
 Five tables, three different foreign-key shapes, on purpose:
 
@@ -57,7 +59,7 @@ METRICS = (
     "cpu_iowait_percent",
 )
 COMPARISONS = (">", ">=", "<", "<=", "==")
-RULE_TYPES = ("threshold", "anomaly")
+RULE_TYPES = ("threshold", "anomaly", "forecast")
 ALERT_STATES = ("ok", "pending", "firing")
 EVENT_STATUSES = ("firing", "resolved")
 
@@ -78,7 +80,8 @@ class AlertRule(TimestampMixin, Base):
         sa.CheckConstraint(in_check("comparison", COMPARISONS), name="comparison"),
         sa.CheckConstraint(in_check("rule_type", RULE_TYPES), name="rule_type"),
         sa.CheckConstraint(
-            "(rule_type = 'threshold' AND threshold IS NOT NULL AND comparison IS NOT NULL) "
+            "(rule_type IN ('threshold', 'forecast') AND threshold IS NOT NULL "
+            "AND comparison IS NOT NULL) "
             "OR (rule_type = 'anomaly' AND threshold IS NULL AND comparison IS NULL)",
             name="rule_type_fields",
         ),
@@ -95,9 +98,9 @@ class AlertRule(TimestampMixin, Base):
     device_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid, nullable=True)
 
     name: Mapped[str] = mapped_column(sa.Text, nullable=False)
-    #: "threshold" rules set comparison/threshold below and are judged by
-    #: evaluate_condition(). "anomaly" rules leave both null and are judged
-    #: against an AnomalyBaseline row instead. See module docstring.
+    #: "threshold" and "forecast" rules set comparison/threshold below;
+    #: "anomaly" rules leave both null and are judged against an
+    #: AnomalyBaseline row instead. See module docstring.
     rule_type: Mapped[str] = mapped_column(
         sa.Text, nullable=False, server_default=sa.text("'threshold'")
     )
@@ -153,20 +156,24 @@ class AlertState(Base):
 class AlertEvent(Base):
     """One row per firing episode — the alerts triage page's data source.
 
-    `rule_name`/`metric`/`comparison`/`threshold` are snapshotted from the rule
-    at the moment it fired, so history reads correctly even after the rule is
-    later edited or deleted. `comparison`/`threshold` are null for an
-    anomaly-sourced event (no operator, no fixed threshold in that sense) —
-    `observed_value`/`baseline_mean`/`baseline_mad`/`z_score` carry the
-    equivalent evidence instead, also null for a threshold-sourced event.
-    `comparison IS NULL` is the reliable "this was an anomaly firing" signal
-    for a reader, since `rule_id` may be null after the rule itself is
-    deleted.
+    `rule_name`/`rule_type`/`metric`/`comparison`/`threshold` are snapshotted
+    from the rule at the moment it fired, so history reads correctly even
+    after the rule is later edited or deleted — `rule_type` is the reliable
+    discriminator for a reader, since `rule_id` may be null after the rule
+    itself is deleted and, since forecast rules also set comparison/
+    threshold, `comparison IS NULL` alone no longer distinguishes every kind.
+    `comparison`/`threshold` are null for an anomaly-sourced event (no
+    operator, no fixed threshold in that sense) — `observed_value`/
+    `baseline_mean`/`baseline_mad`/`z_score` carry the equivalent evidence
+    instead. `predicted_breach_at`/`predicted_value` carry the equivalent for
+    a forecast-sourced event. All four evidence columns are null for a
+    plain threshold-sourced event.
     """
 
     __tablename__ = "alert_events"
     __table_args__ = (
         sa.CheckConstraint(in_check("status", EVENT_STATUSES), name="status"),
+        sa.CheckConstraint(in_check("rule_type", RULE_TYPES), name="rule_type"),
         _device_fk("alert_events"),
         sa.Index("ix_alert_events_user_id_status_fired_at", "user_id", "status", "fired_at"),
     )
@@ -181,6 +188,9 @@ class AlertEvent(Base):
     device_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False)
 
     rule_name: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    rule_type: Mapped[str] = mapped_column(
+        sa.Text, nullable=False, server_default=sa.text("'threshold'")
+    )
     metric: Mapped[str] = mapped_column(sa.Text, nullable=False)
     comparison: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     threshold: Mapped[float | None] = mapped_column(sa.Float, nullable=True)
@@ -210,6 +220,13 @@ class AlertEvent(Base):
     baseline_mean: Mapped[float | None] = mapped_column(sa.Float, nullable=True)
     baseline_mad: Mapped[float | None] = mapped_column(sa.Float, nullable=True)
     z_score: Mapped[float | None] = mapped_column(sa.Float, nullable=True)
+
+    #: Populated only for a forecast-sourced fire: the first forecast point
+    #: that satisfied the rule's comparison, and its predicted timestamp.
+    predicted_breach_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    predicted_value: Mapped[float | None] = mapped_column(sa.Float, nullable=True)
 
 
 class AlertSilence(Base):

@@ -48,6 +48,13 @@ ALLOWED: dict[str, str] = {
         "subsequent read or write in the sweep uses a session scoped to that "
         "user via scope_to_user(), no different from a request's own session"
     ),
+    "app.workers.forecast_worker": (
+        "same posture as app.alerts.evaluator: a periodic background task with "
+        "no request and no JWT to derive a tenant GUC from. The one unscoped "
+        "query enumerates which users currently own a device, and every "
+        "subsequent read or write uses a session scoped to that user via "
+        "scope_to_user()"
+    ),
 }
 
 

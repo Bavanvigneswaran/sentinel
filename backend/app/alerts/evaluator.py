@@ -29,13 +29,25 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.alerts.anomaly_eval import evaluate_anomaly_pair
+from app.alerts.forecast_eval import evaluate_forecast_pair
 from app.alerts.state_apply import apply_step_result
 from app.analysis.alerts import evaluate_condition, step
 from app.analysis.anomaly import Sensitivity
 from app.config import get_settings
 from app.db import AdminSessionLocal, SessionLocal, scope_to_user
-from app.models import AlertRule, AlertState, AnomalyBaseline, Device, NotificationSettings
-from app.services.metrics_read import FRESH_WINDOW_SECONDS, latest_per_entity
+from app.models import (
+    AlertRule,
+    AlertState,
+    AnomalyBaseline,
+    Device,
+    MetricForecast,
+    NotificationSettings,
+)
+from app.services.metrics_read import (
+    FRESH_WINDOW_SECONDS,
+    latest_per_entity,
+    worst_entity_per_device,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,13 +99,10 @@ async def _read_latest_values(
         )
         # The fullest mount, matching analysis/health.py's own choice of which
         # disk figure represents "the device's" disk capacity.
-        worst: dict[uuid.UUID, float] = {}
-        for row in rows:
-            if row["percent"] is None:
-                continue
-            worst[row["device_id"]] = max(worst.get(row["device_id"], 0.0), row["percent"])
+        worst = worst_entity_per_device(rows, entity_key="mount", value_key="percent")
         for device_id in device_ids:
-            values[("disk_percent", device_id)] = worst.get(device_id)
+            entry = worst.get(device_id)
+            values[("disk_percent", device_id)] = entry[1] if entry else None
 
     if "packet_loss_percent" in metrics:
         rows = await latest_per_entity(
@@ -106,15 +115,12 @@ async def _read_latest_values(
         )
         # The worst target, not the mean — one dead link is what an alert
         # should catch, and averaging it against healthy ones would hide it.
-        worst = {}
-        for row in rows:
-            if row["packet_loss_percent"] is None:
-                continue
-            worst[row["device_id"]] = max(
-                worst.get(row["device_id"], 0.0), row["packet_loss_percent"]
-            )
+        worst = worst_entity_per_device(
+            rows, entity_key="target", value_key="packet_loss_percent"
+        )
         for device_id in device_ids:
-            values[("packet_loss_percent", device_id)] = worst.get(device_id)
+            entry = worst.get(device_id)
+            values[("packet_loss_percent", device_id)] = entry[1] if entry else None
 
     return values
 
@@ -185,6 +191,12 @@ class AlertEvaluator:
                     sa.select(AnomalyBaseline).where(AnomalyBaseline.user_id == user_id)
                 )
             }
+            forecasts = {
+                (f.device_id, f.metric): f
+                for f in await session.scalars(
+                    sa.select(MetricForecast).where(MetricForecast.user_id == user_id)
+                )
+            }
             sensitivity: Sensitivity = "medium"
             if any(rule.rule_type == "anomaly" for rule, _ in pairs):
                 settings = await session.get(NotificationSettings, user_id)
@@ -197,7 +209,7 @@ class AlertEvaluator:
                 value = values.get((rule.metric, device_id))
                 if rule.rule_type == "threshold":
                     await self._evaluate_pair(session, user_id, rule, device, state_row, value, now)
-                else:
+                elif rule.rule_type == "anomaly":
                     baseline_row = await evaluate_anomaly_pair(
                         session,
                         user_id,
@@ -210,6 +222,17 @@ class AlertEvaluator:
                         now,
                     )
                     baselines[(device_id, rule.metric)] = baseline_row
+                else:
+                    await evaluate_forecast_pair(
+                        session,
+                        user_id,
+                        rule,
+                        device,
+                        state_row,
+                        forecasts.get((device_id, rule.metric)),
+                        value,
+                        now,
+                    )
 
             await session.commit()
 

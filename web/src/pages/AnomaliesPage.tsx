@@ -29,10 +29,15 @@ function formatRelativeTime(iso: string): string {
 
 /**
  * Anomaly-sourced alert events — a filtered view over the same /alerts/events
- * the threshold triage page (AlertsPage) reads, since both rule types feed
- * one alert pipeline. `comparison === null` is the reliable "this was an
- * anomaly firing" signal on the event itself (rule_id can be null after the
- * rule is deleted, but the event's own snapshot always carries this).
+ * the threshold triage page (AlertsPage) reads, since all rule types feed one
+ * alert pipeline. `rule_type` is the explicit "this was an anomaly firing"
+ * signal on the event itself (rule_id can be null after the rule is deleted,
+ * but the event's own snapshot always carries this) — used here instead of
+ * the `comparison === null` heuristic this page used before rule_type
+ * existed on AlertEvent. That heuristic still happens to be correct (a
+ * forecast event also sets comparison/threshold, so anomaly stays the only
+ * kind with both null), but there is no reason to rely on it once the
+ * explicit field is available.
  */
 export function AnomaliesPage() {
   const [filter, setFilter] = useState<EventStatus | "all">("firing")
@@ -56,7 +61,7 @@ export function AnomaliesPage() {
       apiFetch<AlertEvent[]>(`/alerts/events?status=${filter}`)
         .then((data) => {
           if (!cancelled) {
-            setEvents(data.filter((e) => e.comparison === null))
+            setEvents(data.filter((e) => e.rule_type === "anomaly"))
             setError(null)
           }
         })

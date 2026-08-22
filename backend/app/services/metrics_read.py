@@ -3,6 +3,13 @@ newest reading per (device[, entity]) inside a freshness window" — originally
 written for the dashboard (app/services/fleet_service.py) and reused as-is by
 the alert evaluator (app/alerts/evaluator.py) so the two never disagree about
 what "current" means.
+
+`worst_entity_per_device()` is the shared answer to "which entity" for a
+multi-entity metric (a mount, a latency target) — both the evaluator (which
+only needs the worst *value*) and the forecast worker (which needs to know
+which single entity's own continuous history to forecast, never a synthetic
+max-across-entities series) go through this one function so the two can never
+disagree about which mount or target counts as "the device's".
 """
 
 from __future__ import annotations
@@ -53,3 +60,24 @@ async def latest_per_entity(
         {"since": since, "device_ids": device_ids},
     )
     return [dict(row) for row in rows.mappings()]
+
+
+def worst_entity_per_device(
+    rows: list[dict[str, Any]], *, entity_key: str, value_key: str
+) -> dict[uuid.UUID, tuple[str, float]]:
+    """Per device, the `(entity, value)` pair with the highest `value_key` —
+    e.g. the fullest mount or the lossiest latency target.
+
+    A row with a NULL `value_key` is skipped: a metric the platform could not
+    measure for one entity must never be treated as a worst-case zero.
+    """
+    worst: dict[uuid.UUID, tuple[str, float]] = {}
+    for row in rows:
+        value = row[value_key]
+        if value is None:
+            continue
+        device_id = row["device_id"]
+        current = worst.get(device_id)
+        if current is None or value > current[1]:
+            worst[device_id] = (row[entity_key], value)
+    return worst
