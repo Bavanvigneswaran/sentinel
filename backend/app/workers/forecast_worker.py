@@ -11,9 +11,10 @@ This worker only *produces* forecast data. It never evaluates an alert rule
 or touches AlertState/AlertEvent — app/alerts/evaluator.py remains the one
 place any rule_type is judged (see app/alerts/forecast_eval.py), reading
 whatever this worker last computed. Splitting it this way means a slow or
-failing ETS fit can never delay the 15s alert sweep, and the 15-minute
-cadence here (config.forecast_worker_interval_seconds) only has to suit this
-worker's own CPU cost, not alerting latency.
+failing ETS fit can never delay the 15s alert sweep, and this worker's own
+cadence (config.forecast_worker_interval_seconds, 120s by default) only has
+to suit its own CPU cost — unlike the 15s sweep, a forecast computed a couple
+of minutes late is not a correctness problem.
 """
 
 from __future__ import annotations

@@ -114,7 +114,7 @@ export function ForecastsScreen({ route }: RootStackScreenProps<"Forecasts">) {
           title={lastComputedAt === null ? "Nothing projected yet" : "Nothing filling up"}
           body={
             lastComputedAt === null
-              ? "Forecasts are recomputed on a timer rather than on every reading, so a freshly enrolled device appears at the next sweep — within about a quarter of an hour."
+              ? "Forecasts are recomputed on a timer rather than on every reading, so a freshly enrolled device appears at the next sweep — within a couple of minutes."
               : `No device is trending towards its memory or disk limit. Last recomputed ${formatRelative(lastComputedAt)}.`
           }
         />

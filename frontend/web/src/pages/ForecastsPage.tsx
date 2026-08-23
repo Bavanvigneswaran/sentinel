@@ -140,7 +140,7 @@ export function ForecastsPage() {
                   // discouraging one: a device qualifies within a few minutes
                   // of reporting, and what it is actually waiting for is the
                   // next sweep.
-                  "Nothing has been projected yet. Forecasts are recomputed on a timer rather than on every reading, so a freshly enrolled device shows up at the next sweep — within about a quarter of an hour, not a day."
+                  "Nothing has been projected yet. Forecasts are recomputed on a timer rather than on every reading, so a freshly enrolled device shows up at the next sweep — within a couple of minutes, not a day."
                 : "No device is currently trending towards its memory or disk limit."}
             </p>
           )}

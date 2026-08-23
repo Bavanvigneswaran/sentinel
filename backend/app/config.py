@@ -112,9 +112,19 @@ class Settings(BaseSettings):
     alert_evaluator_interval_seconds: int = 15
 
     # --- Forecasting ---------------------------------------------------------
-    # CPU-bound (an ETS fit per device per metric), unlike the 15s alert sweep —
-    # a 15-minute cadence is plenty for a 24h-horizon forecast to stay current.
-    forecast_worker_interval_seconds: int = 900
+    # CPU-bound (an ETS fit per device per metric), unlike the 15s alert sweep,
+    # so this cadence only has to suit its own cost, not alerting latency.
+    # Was 900 (15 minutes). A brand-new device qualifies for its first forecast
+    # after roughly 4 minutes of real samples (MIN_WINDOW_SECONDS /
+    # MIN_POINTS_TREND), so a 15-minute sweep meant waiting up to 11 extra
+    # minutes past qualifying just for the next tick — measured directly: a
+    # device enrolled at 20:47:59Z got its first (fully-fitted) row at
+    # 20:59:31Z. 120s caps that wait at roughly two minutes past qualifying
+    # instead. Each tick's fitting work is real CPU, but it already runs off
+    # the event loop via asyncio.to_thread (see forecast_worker.py), and for
+    # the number of devices any one deployment of this project actually has,
+    # eight times the cadence is not a meaningful cost.
+    forecast_worker_interval_seconds: int = 120
     forecast_history_days: int = 14
 
     # --- AI insights -----------------------------------------------------------
