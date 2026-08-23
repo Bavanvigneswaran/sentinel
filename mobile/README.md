@@ -50,6 +50,26 @@ cp mobile/.env.example mobile/.env
 
 Over plain `http`, the backend must be running with `COOKIE_SECURE=false` — the
 refresh cookie is otherwise never stored and every app restart logs you out.
+The backend also needs to be listening on more than loopback for a physical
+phone (or the emulator, over its real network path rather than the `10.0.2.2`
+alias) to reach it at all: `uvicorn app.main:app --host 0.0.0.0 --port 8000`,
+not the bare `--port 8000` `make dev-backend` runs by default.
+
+**A *release* build additionally needs a cleartext exception for that host.**
+Android has blocked plaintext HTTP by default since API 28. The RN/Expo
+template only re-enables it for the **debug** build variant
+(`android/app/src/debug/AndroidManifest.xml`'s `usesCleartextTraffic="true"`),
+so `expo run:android`/`make mobile-android` have always worked over `http://`
+and silently said nothing about why a *release* APK — built by
+`make mobile-apk` — would not. `plugins/withDevBackendCleartext.js` fixes this
+by generating a Network Security Config scoped to exactly
+`EXPO_PUBLIC_API_URL`'s host, read at `expo prebuild` time — never a blanket
+`usesCleartextTraffic="true"`, which would silently accept plaintext to *any*
+host the app ever talks to. A `https://` backend needs no exception and gets
+none. This means **`EXPO_PUBLIC_API_URL` must be correct at prebuild time**,
+not just at runtime: changing it means `npx expo prebuild --platform android
+--clean` again before `assembleRelease`, or the exception is scoped to the
+wrong host and the release build cannot reach the (new) one.
 
 Then, with an emulator running or a phone attached:
 

@@ -421,6 +421,36 @@ this is a self-signed key good for installing the app "anywhere," the same trust
 desktop binaries, and Android's install prompt says so on first open exactly like Gatekeeper/
 SmartScreen do for the others.
 
+The user then asked whether it would actually run, which it would not have: two more real defects
+turned up, both found only by *installing the built APK on the real emulator and driving it*, not by
+any test or code review. First, `/download`'s Android card rendered desktop CLI install steps —
+`chmod +x sentinel.apk`, `./sentinel.apk enroll --code …` — commands that cannot be typed anywhere on
+a phone; `agentInstall.ts` gained `isCliInstall()`/`androidInstallSteps()` with the app's real
+one-tap enrolment (the signed-in app mints its own code internally, per Phase 10b — nothing to
+paste), and `DownloadPage` branches on it. Second, and worse: **the release APK could not reach any
+backend at all.** Android has blocked plaintext HTTP by default since API 28; the RN/Expo template
+only re-enables it for the **debug** build variant
+(`android/app/src/debug/AndroidManifest.xml`'s `usesCleartextTraffic="true"`), so every prior
+"verified end-to-end on a real emulator" claim in this file — Phase 10a, Phase 10b — was against a
+*debug* build, and nobody had ever produced a release build before this session to find out it
+silently could not talk to `http://` at all. A signed-in screen with a red "Could not reach the
+backend" banner is what surfaced it. `mobile/plugins/withDevBackendCleartext.js` fixes this the
+narrow way: a Network Security Config scoped to exactly `EXPO_PUBLIC_API_URL`'s host, generated at
+`expo prebuild` time — not `usesCleartextTraffic="true"` app-wide, which would silently accept
+plaintext to *any* host the app ever talks to, forever. A `https://` backend needs no exception and
+gets none. Verified for real, not merely rebuilt: `uvicorn` restarted bound to `0.0.0.0` (the
+Makefile's `dev-backend` binds to loopback only, which a physical phone — or the emulator over its
+real network path rather than the `10.0.2.2` host alias — cannot reach either), the emulator's own
+`nc` confirmed raw HTTP reachability independent of the app, then the *rebuilt* release APK was
+installed fresh via `adb install`, launched, and signed in through the real UI against
+`phase10a@example.com` — rendering this Mac's actual live CPU/memory/health numbers, pulled over
+plaintext through the new exception. `mobile/.env` and `android/` (generated, gitignored) were
+reverted to the documented emulator-default state afterward so the normal `make mobile-android` dev
+loop is unaffected; the corrected, working APK was re-registered in the manifest with its real
+(different — APK builds are not byte-reproducible) checksum. `mobile/README.md` now documents both
+gaps — the `--host 0.0.0.0` requirement and the release-only cleartext exception — since neither was
+written down anywhere before. 49 mobile JS tests (was 41).
+
 Still to come in Phase 11, if picked back up: run the CI matrix and publish real Windows and Linux
 binaries (and find out what breaks); a `.dmg` so a notarized macOS build can be *stapled* — a bare
 binary cannot be, so Gatekeeper checks it online and an air-gapped machine still warns; and a real

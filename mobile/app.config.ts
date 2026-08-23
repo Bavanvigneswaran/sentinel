@@ -50,6 +50,12 @@ const config: ExpoConfig = {
     // friends are set — and `make mobile-apk` refuses to build without them,
     // so there is no path that quietly produces a debug-signed distributable.
     "./plugins/withReleaseSigning",
+    // Android blocks plain-http:// traffic by default since API 28; the RN
+    // template only re-enables it for the *debug* build variant, which is why
+    // a release build silently cannot reach EXPO_PUBLIC_API_URL at all until
+    // this scopes an exception to exactly that host. A deployed https://
+    // backend needs no exception and gets none.
+    "./plugins/withDevBackendCleartext",
     [
       "expo-notifications",
       {
