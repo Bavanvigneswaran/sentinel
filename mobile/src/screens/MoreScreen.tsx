@@ -3,8 +3,11 @@
  *
  * A menu rather than four more bottom tabs: a bottom bar stops being usable
  * past about five, and these four are things you open deliberately rather than
- * flick between. Fleet / Devices / Alerts stay as tabs because those are the
- * ones you actually flick between when something is wrong.
+ * flick between. Devices / Alerts stay as tabs because those are the ones you
+ * actually flick between when something is wrong.
+ *
+ * These are also reachable per-device from a device's own screen, which is the
+ * more common way to want them — this menu is the fleet-wide entry point.
  */
 
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native"
@@ -71,7 +74,7 @@ export function MoreScreen({ navigation }: RootTabScreenProps<"More">) {
 
       <Text style={text.tiny}>
         Alert rules, silence windows beyond a one-hour mute, notification channels, report
-        exports and per-device history stay in the web console.
+        schedules and per-device history stay in the web console.
       </Text>
     </Screen>
   )

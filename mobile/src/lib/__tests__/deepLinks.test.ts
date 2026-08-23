@@ -15,7 +15,7 @@ describe("appUrlForPath", () => {
   })
 
   it("maps the other known paths", () => {
-    assert.equal(appUrlForPath("/"), "sentinel://fleet")
+    assert.equal(appUrlForPath("/"), "sentinel://devices")
     assert.equal(appUrlForPath("/devices"), "sentinel://devices")
   })
 

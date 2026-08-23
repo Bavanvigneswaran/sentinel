@@ -14,7 +14,7 @@ import { DeviceStatusBadge } from "@/components/Badges"
 import { HealthScore } from "@/components/HealthScore"
 import { MetricValue } from "@/components/MetricValue"
 import { Sparkline } from "@/components/Sparkline"
-import { Card } from "@/components/ui"
+import { Button, Card } from "@/components/ui"
 import { colorForIndex } from "@/lib/chartColors"
 import { formatBytes, formatBytesPerSecond } from "@/lib/formatters"
 import { formatDuration, formatRelative } from "@/lib/timeRanges"
@@ -24,9 +24,14 @@ import type { DeviceSummary } from "@/types/fleet"
 export function DeviceSummaryCard({
   summary,
   onPress,
+  onWatchLive,
 }: {
   summary: DeviceSummary
   onPress: () => void
+  /** The one thing the separate Devices list had that this card did not, kept
+   * when the two tabs merged: one tap from the list straight into the 1s live
+   * stream, without going through the device screen first. */
+  onWatchLive?: () => void
 }) {
   const { device, health, latest, disks, sparkline } = summary
   const worstDisk = disks[0] ?? null
@@ -80,6 +85,10 @@ export function DeviceSummaryCard({
           <Text style={text.tiny}>{formatBytes(latest.mem_total_bytes)} RAM</Text>
         )}
       </View>
+
+      {onWatchLive && (
+        <Button size="sm" variant="outline" title="Watch live" onPress={onWatchLive} />
+      )}
     </Card>
   )
 }

@@ -31,7 +31,11 @@ interface PolledResource<T> {
    * "loaded and empty". */
   loading: boolean
   refreshing: boolean
+  /** Pull-to-refresh: shows the spinner, because the user asked for it. */
   refresh: () => void
+  /** Refetch without the spinner — for a refresh the user did not gesture
+   * for, such as a screen regaining focus. Same request, no chrome. */
+  reload: () => void
 }
 
 export function usePolledResource<T>(
@@ -106,5 +110,9 @@ export function usePolledResource<T>(
     void load(true)
   }, [load])
 
-  return { data, error, loading, refreshing, refresh }
+  const reload = useCallback(() => {
+    void load(false)
+  }, [load])
+
+  return { data, error, loading, refreshing, refresh, reload }
 }

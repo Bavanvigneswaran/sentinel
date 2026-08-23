@@ -21,7 +21,11 @@ export const APP_SCHEME = "sentinel://"
  * inherits Object.prototype, so a payload of `{"url": "constructor"}` would
  * find a "route" and be navigated to. A Map has no prototype chain to walk. */
 const ROUTES = new Map<string, string>([
-  ["/", "fleet"],
+  // The Fleet and Devices tabs merged into one, so "/" and "/devices" are now
+  // the same screen. Both stay mapped: the backend sends whichever the web
+  // console uses, and dropping "/" would make a payload the server considers
+  // valid resolve to nothing here.
+  ["/", "devices"],
   ["/alerts", "alerts"],
   ["/devices", "devices"],
   ["/settings", "settings"],

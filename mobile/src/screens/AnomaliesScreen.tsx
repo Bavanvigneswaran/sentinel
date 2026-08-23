@@ -17,8 +17,10 @@ import { EmptyState, Screen } from "@/components/Screen"
 import { Card, ErrorNote, Segmented } from "@/components/ui"
 import { usePolledResource } from "@/hooks/usePolledResource"
 import { apiFetch } from "@/lib/api"
+import { withDeviceScope } from "@/lib/deviceScope"
 import { formatRelative } from "@/lib/timeRanges"
 import { colors, spacing, text } from "@/theme"
+import type { RootStackScreenProps } from "@/navigation/types"
 import type { AlertEvent, EventStatus } from "@/types/alerts"
 import type { Device } from "@/types/api"
 
@@ -36,12 +38,14 @@ function round(value: number | null | undefined, digits = 1): string {
   return value == null ? "—" : value.toFixed(digits)
 }
 
-export function AnomaliesScreen() {
+export function AnomaliesScreen({ route }: RootStackScreenProps<"Anomalies">) {
+  const deviceId = route.params?.deviceId
+  const deviceName = route.params?.deviceName
   const [filter, setFilter] = useState<Filter>("firing")
   const [devices, setDevices] = useState<Record<string, Device>>({})
 
   const { data, error, refreshing, refresh } = usePolledResource<AlertEvent[]>(
-    `/alerts/events?status=${filter}&rule_type=anomaly`,
+    withDeviceScope(`/alerts/events?status=${filter}&rule_type=anomaly`, deviceId),
     POLL_INTERVAL_MS,
     "Could not load anomalies.",
   )
@@ -58,6 +62,9 @@ export function AnomaliesScreen() {
 
   return (
     <Screen title="Anomalies" refreshing={refreshing} onRefresh={refresh}>
+      {deviceName && (
+        <Text style={text.tiny}>Showing {deviceName} only. Open this from More for every device.</Text>
+      )}
       <Text style={text.small}>
         Readings that departed from what this machine's own baseline says is normal — not a
         threshold anybody set.

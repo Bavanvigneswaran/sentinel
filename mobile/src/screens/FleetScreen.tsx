@@ -1,6 +1,10 @@
 /**
- * The command centre: every device's health, headline numbers and last hour,
- * in one request. Ported from web/src/pages/DashboardPage.tsx.
+ * The Devices tab: every device's health, headline numbers and last hour, in
+ * one request. Ported from web/src/pages/DashboardPage.tsx.
+ *
+ * This was the Fleet tab, beside a separate Devices tab that listed the same
+ * machines with less on each row. They merged — see TabParamList in
+ * navigation/types.ts for why the plain list had nothing this does not.
  *
  * A poll rather than a socket, for the same reason as the web dashboard: the
  * live pipeline exists to push one agent to 1s sampling while somebody watches
@@ -9,6 +13,8 @@
  * per-device live view is one tap away.
  */
 
+import { useFocusEffect } from "@react-navigation/native"
+import { useCallback } from "react"
 import { StyleSheet, Text, View } from "react-native"
 
 import { DeviceSummaryCard } from "@/components/DeviceSummaryCard"
@@ -25,16 +31,28 @@ const POLL_INTERVAL_MS = 30_000
 /** Matches the server's default; the sparklines cover this window. */
 const WINDOW_SECONDS = 3600
 
-export function FleetScreen({ navigation }: RootTabScreenProps<"Fleet">) {
-  const { data, error, loading, refreshing, refresh } = usePolledResource<FleetOverview>(
+export function FleetScreen({ navigation }: RootTabScreenProps<"Devices">) {
+  const { data, error, loading, refreshing, refresh, reload } = usePolledResource<FleetOverview>(
     `/fleet/overview?window_seconds=${WINDOW_SECONDS}`,
     POLL_INTERVAL_MS,
     "Could not refresh the fleet overview.",
   )
 
+  // Refetch whenever this screen comes back into focus, on top of the 30s
+  // poll. Removing a device happens on its own screen and pops back to here,
+  // and a list that still shows the machine you just removed — for up to a
+  // full poll interval — reads as the removal having failed. AppState covers
+  // backgrounding; it says nothing about moving between screens inside the
+  // app, which is the case that actually surprised somebody.
+  useFocusEffect(
+    useCallback(() => {
+      reload()
+    }, [reload]),
+  )
+
   return (
     <Screen
-      title="Fleet"
+      title="Devices"
       subtitle="Health of every machine you've enrolled, from its own real telemetry."
       right={data ? <Text style={text.tiny}>{formatRelative(data.generated_at)}</Text> : undefined}
       refreshing={refreshing}
@@ -49,7 +67,7 @@ export function FleetScreen({ navigation }: RootTabScreenProps<"Fleet">) {
       {data?.devices.length === 0 && (
         <EmptyState
           title="No devices yet"
-          body="Enrol a machine from the web app — generate a code, then run `make agent-enroll code=…` followed by `make agent` on the machine you want to watch."
+          body="Add a machine from the web console's Devices page — it mints an enrollment code for the agent to redeem. To monitor this phone instead, open More → Settings → Monitor this phone; it enrols itself and needs no code."
         />
       )}
 
@@ -59,6 +77,12 @@ export function FleetScreen({ navigation }: RootTabScreenProps<"Fleet">) {
           summary={summary}
           onPress={() =>
             navigation.navigate("Device", {
+              deviceId: summary.device.id,
+              deviceName: summary.device.name,
+            })
+          }
+          onWatchLive={() =>
+            navigation.navigate("Live", {
               deviceId: summary.device.id,
               deviceName: summary.device.name,
             })

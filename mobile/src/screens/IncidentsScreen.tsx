@@ -19,9 +19,11 @@ import { EmptyState, Screen } from "@/components/Screen"
 import { Card, ErrorNote, Segmented } from "@/components/ui"
 import { usePolledResource } from "@/hooks/usePolledResource"
 import { apiFetch } from "@/lib/api"
+import { withDeviceScope } from "@/lib/deviceScope"
 import { formatRelative } from "@/lib/timeRanges"
 import { spacing, text } from "@/theme"
 import type { Device } from "@/types/api"
+import type { RootStackScreenProps } from "@/navigation/types"
 import type { Incident, IncidentStatus } from "@/types/incidents"
 
 const POLL_INTERVAL_MS = 15_000
@@ -34,12 +36,14 @@ const FILTERS: { value: Filter; label: string }[] = [
   { value: "all", label: "All" },
 ]
 
-export function IncidentsScreen() {
+export function IncidentsScreen({ route }: RootStackScreenProps<"Incidents">) {
+  const deviceId = route.params?.deviceId
+  const deviceName = route.params?.deviceName
   const [filter, setFilter] = useState<Filter>("open")
   const [devices, setDevices] = useState<Record<string, Device>>({})
 
   const { data, error, refreshing, refresh } = usePolledResource<Incident[]>(
-    `/incidents?status=${filter}`,
+    withDeviceScope(`/incidents?status=${filter}`, deviceId),
     POLL_INTERVAL_MS,
     "Could not load incidents.",
   )
@@ -56,6 +60,9 @@ export function IncidentsScreen() {
 
   return (
     <Screen title="Incidents" refreshing={refreshing} onRefresh={refresh}>
+      {deviceName && (
+        <Text style={text.tiny}>Showing {deviceName} only. Open this from More for every device.</Text>
+      )}
       <Text style={text.small}>
         Alerts that fired together on one machine, grouped into the thing that was actually
         happening.

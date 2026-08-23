@@ -15,9 +15,11 @@ import { EmptyState, Screen } from "@/components/Screen"
 import { Card, ErrorNote } from "@/components/ui"
 import { usePolledResource } from "@/hooks/usePolledResource"
 import { apiFetch } from "@/lib/api"
+import { withDeviceScope } from "@/lib/deviceScope"
 import { formatDaysUntil } from "@/lib/formatters"
 import { formatRelative } from "@/lib/timeRanges"
 import { colors, spacing, text } from "@/theme"
+import type { RootStackScreenProps } from "@/navigation/types"
 import type { Device } from "@/types/api"
 import type { ExhaustionForecast, MetricForecast } from "@/types/forecast"
 
@@ -40,16 +42,18 @@ const CONFIDENCE_NOTE: Record<string, string | undefined> = {
   high: undefined,
 }
 
-export function ForecastsScreen() {
+export function ForecastsScreen({ route }: RootStackScreenProps<"Forecasts">) {
+  const deviceId = route.params?.deviceId
+  const deviceName = route.params?.deviceName
   const [devices, setDevices] = useState<Record<string, Device>>({})
 
   const exhaustion = usePolledResource<ExhaustionForecast[]>(
-    "/forecasts/exhaustion",
+    withDeviceScope("/forecasts/exhaustion", deviceId),
     POLL_INTERVAL_MS,
     "Could not load projections.",
   )
   const forecasts = usePolledResource<MetricForecast[]>(
-    "/forecasts",
+    withDeviceScope("/forecasts", deviceId),
     POLL_INTERVAL_MS,
     "Could not load forecasts.",
   )
@@ -82,6 +86,9 @@ export function ForecastsScreen() {
         forecasts.refresh()
       }}
     >
+      {deviceName && (
+        <Text style={text.tiny}>Showing {deviceName} only. Open this from More for every device.</Text>
+      )}
       <Text style={text.small}>
         Where each machine is heading, from its own measured trend. Nothing here is a
         threshold anybody set.

@@ -118,8 +118,8 @@ export function CollectorScreen({ navigation }: RootStackScreenProps<"Collector"
     Alert.alert(
       "Stop monitoring this phone?",
       "The collector stops and this phone forgets its agent token. The device and its " +
-        "history stay on the server — revoke the token from the web console to retire it " +
-        "for good.",
+        "history stay on the server — open it from the Devices tab and remove it there to " +
+        "retire it for good.",
       [
         { text: "Cancel", style: "cancel" },
         {

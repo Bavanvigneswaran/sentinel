@@ -19,8 +19,9 @@
  * card names them, so the absence is stated rather than hidden.
  */
 
+import { useState } from "react"
 import type { ReactNode } from "react"
-import { StyleSheet, Text, View } from "react-native"
+import { Alert, StyleSheet, Text, View } from "react-native"
 
 import { DeviceStatusBadge } from "@/components/Badges"
 import { HealthBreakdown, HealthScore } from "@/components/HealthScore"
@@ -28,6 +29,7 @@ import { MetricValue } from "@/components/MetricValue"
 import { Screen } from "@/components/Screen"
 import { Button, Card, CardTitle, ErrorNote } from "@/components/ui"
 import { usePolledResource } from "@/hooks/usePolledResource"
+import { apiFetch } from "@/lib/api"
 import {
   readingKeysFor,
   unmeasurableNoteFor,
@@ -36,10 +38,21 @@ import {
 import { formatBytes, formatBytesPerSecond, formatMs } from "@/lib/formatters"
 import { formatDuration, formatRelative } from "@/lib/timeRanges"
 import type { RootStackScreenProps } from "@/navigation/types"
+import { status as collectorStatus, stop as stopCollector, unenroll } from "sentinel-collector"
 import { colors, radius, spacing, text } from "@/theme"
 import type { DeviceSummary, LatestReadings } from "@/types/fleet"
 
 const POLL_INTERVAL_MS = 15_000
+
+/** Tuple list rather than four hand-written buttons so the label and the route
+ * cannot drift apart. Each of these takes an optional deviceId — see
+ * RootStackParamList. */
+const DEVICE_SECTIONS = [
+  ["Incidents", "Incidents"],
+  ["Anomalies", "Anomalies"],
+  ["Forecasts", "Forecasts"],
+  ["Reports", "Reports"],
+] as const
 
 export function DeviceScreen({ route, navigation }: RootStackScreenProps<"Device">) {
   const { deviceId } = route.params
@@ -51,6 +64,63 @@ export function DeviceScreen({ route, navigation }: RootStackScreenProps<"Device
 
   const latest = data?.latest ?? null
   const unmeasurableNote = data ? unmeasurableNoteFor(data.device.platform) : null
+  const [removing, setRemoving] = useState(false)
+  const [removeError, setRemoveError] = useState<string | null>(null)
+
+  /* Removal lives here rather than on the list: it is a deliberate act about
+   * one machine, and a Remove control on every fleet card is a thing to hit by
+   * accident while scrolling. Alert.alert is the platform's own confirm — the
+   * web console uses a two-step inline confirm instead only because the DOM
+   * has no equivalent worth reaching for.
+   *
+   * Minting an enrollment code is deliberately NOT here. A code's only
+   * destination is a terminal on some other machine, and there is no path from
+   * a phone screen to that terminal better than opening the console on the
+   * machine itself — while this phone enrols itself with one tap and never
+   * needs a code at all (Phase 10b). Deletion is the half that a phone is
+   * genuinely a good place for: retiring a box you have just decommissioned. */
+  const remove = async () => {
+    if (!data) return
+    setRemoving(true)
+    setRemoveError(null)
+    try {
+      await apiFetch(`/devices/${deviceId}`, { method: "DELETE" })
+
+      // If the device just removed IS this phone, tear its collector down too.
+      // Without this the server revokes the token and forgets the device while
+      // the foreground service keeps sampling, keeps its persistent
+      // notification up, and keeps reconnecting with a credential that will
+      // never be accepted again. Settings went on saying "this phone is
+      // reporting its own metrics" after the row was gone, which is how this
+      // was found. status() is safe to call anywhere: on iOS or a build with
+      // no native module it reports deviceId null, which matches nothing.
+      if (collectorStatus().deviceId === deviceId) {
+        await stopCollector()
+        await unenroll()
+      }
+
+      navigation.goBack()
+    } catch {
+      setRemoveError("Could not remove this device.")
+      setRemoving(false)
+    }
+  }
+
+  const isThisPhone = collectorStatus().deviceId === deviceId
+
+  const confirmRemove = () =>
+    Alert.alert(
+      `Remove ${data?.device.name ?? "this device"}?`,
+      "Its agent token is revoked immediately, so the agent stops reporting. The history " +
+        "already collected is kept." +
+        (isThisPhone
+          ? " This is the phone you are holding, so its collector stops and it forgets its token too."
+          : ""),
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Remove", style: "destructive", onPress: () => void remove() },
+      ],
+    )
 
   return (
     <Screen refreshing={refreshing} onRefresh={refresh}>
@@ -90,6 +160,27 @@ export function DeviceScreen({ route, navigation }: RootStackScreenProps<"Device
                 })
               }
             />
+          </Card>
+
+          <Card>
+            <CardTitle>For this machine</CardTitle>
+            {/* The same four screens the More tab opens fleet-wide, scoped to
+                this device. Reaching them from here rather than filtering a
+                fleet list by hand is the common case: you are already looking
+                at one machine and want its anomalies, not everybody's. */}
+            <View style={styles.links}>
+              {DEVICE_SECTIONS.map(([route, label]) => (
+                <Button
+                  key={route}
+                  size="sm"
+                  variant="outline"
+                  title={label}
+                  onPress={() =>
+                    navigation.navigate(route, { deviceId, deviceName: data.device.name })
+                  }
+                />
+              ))}
+            </View>
           </Card>
 
           <Card>
@@ -157,6 +248,20 @@ export function DeviceScreen({ route, navigation }: RootStackScreenProps<"Device
                 </View>
               ))
             )}
+          </Card>
+          <Card>
+            <CardTitle>Remove this device</CardTitle>
+            <Text style={text.small}>
+              Revokes its agent token and takes it off your fleet. The metrics already
+              collected are kept.
+            </Text>
+            {removeError && <ErrorNote message={removeError} />}
+            <Button
+              variant="destructive"
+              title={removing ? "Removing…" : "Remove device"}
+              disabled={removing}
+              onPress={confirmRemove}
+            />
           </Card>
         </>
       )}
@@ -251,6 +356,7 @@ const styles = StyleSheet.create({
   headRow: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md },
   headText: { flex: 1, gap: 2 },
   headRight: { alignItems: "flex-end", gap: spacing.xs },
+  links: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   stats: { flexDirection: "row", flexWrap: "wrap", rowGap: spacing.md },
   stat: { width: "50%", gap: 2, paddingRight: spacing.sm },
   footnote: { marginTop: spacing.sm },

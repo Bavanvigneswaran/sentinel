@@ -27,7 +27,6 @@ export const linking: LinkingOptions<RootStackParamList> = {
     screens: {
       Tabs: {
         screens: {
-          Fleet: "fleet",
           Devices: "devices",
           Alerts: "alerts",
           More: "more",

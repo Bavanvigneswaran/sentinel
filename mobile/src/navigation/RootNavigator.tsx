@@ -17,7 +17,6 @@ import { AlertsScreen } from "@/screens/AlertsScreen"
 import { AuthScreen } from "@/screens/AuthScreen"
 import { CollectorScreen } from "@/screens/CollectorScreen"
 import { DeviceScreen } from "@/screens/DeviceScreen"
-import { DevicesScreen } from "@/screens/DevicesScreen"
 import { FleetScreen } from "@/screens/FleetScreen"
 import { LiveScreen } from "@/screens/LiveScreen"
 import { AnomaliesScreen } from "@/screens/AnomaliesScreen"
@@ -38,8 +37,7 @@ const Tabs = createBottomTabNavigator<TabParamList>()
  * actually covers — an uncovered one renders as a tofu box, which is how
  * "◧" was caught on the emulator. */
 const TAB_GLYPHS: Record<keyof TabParamList, string> = {
-  Fleet: "●",
-  Devices: "■",
+  Devices: "●",
   Alerts: "▲",
   More: "≡",
 }
@@ -60,12 +58,18 @@ function TabsNavigator() {
         ),
       })}
     >
-      <Tabs.Screen name="Fleet" component={FleetScreen} />
-      <Tabs.Screen name="Devices" component={DevicesScreen} />
+      {/* FleetScreen under the name "Devices": the merged tab is the fleet
+          view, and "Devices" is the noun for what it lists. */}
+      <Tabs.Screen name="Devices" component={FleetScreen} />
       <Tabs.Screen name="Alerts" component={AlertsScreen} />
       <Tabs.Screen name="More" component={MoreScreen} />
     </Tabs.Navigator>
   )
+}
+
+/** "Forecasts" fleet-wide, "Forecasts · web-01" when scoped to one device. */
+function scopedTitle(base: string, params: { deviceName?: string } | undefined): string {
+  return params?.deviceName ? `${base} · ${params.deviceName}` : base
 }
 
 export function RootNavigator() {
@@ -98,10 +102,29 @@ export function RootNavigator() {
         component={DeviceScreen}
         options={({ route }) => ({ title: route.params.deviceName ?? "Device" })}
       />
-      <Stack.Screen name="Anomalies" component={AnomaliesScreen} />
-      <Stack.Screen name="Forecasts" component={ForecastsScreen} />
-      <Stack.Screen name="Incidents" component={IncidentsScreen} />
-      <Stack.Screen name="Reports" component={ReportsScreen} />
+      {/* The header carries the scope. Opened from More these read
+          "Anomalies"; opened from a device they read "Anomalies · web-01", so
+          a short list is visibly a filtered one rather than a quiet fleet. */}
+      <Stack.Screen
+        name="Anomalies"
+        component={AnomaliesScreen}
+        options={({ route }) => ({ title: scopedTitle("Anomalies", route.params) })}
+      />
+      <Stack.Screen
+        name="Forecasts"
+        component={ForecastsScreen}
+        options={({ route }) => ({ title: scopedTitle("Forecasts", route.params) })}
+      />
+      <Stack.Screen
+        name="Incidents"
+        component={IncidentsScreen}
+        options={({ route }) => ({ title: scopedTitle("Incidents", route.params) })}
+      />
+      <Stack.Screen
+        name="Reports"
+        component={ReportsScreen}
+        options={({ route }) => ({ title: scopedTitle("Reports", route.params) })}
+      />
       <Stack.Screen name="Settings" component={SettingsScreen} />
       <Stack.Screen
         name="Collector"

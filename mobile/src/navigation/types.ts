@@ -2,7 +2,7 @@
  * The route table, as types. React Navigation's equivalent of
  * web/src/routes.tsx.
  *
- * A tab navigator nested in a stack: the four tabs are the things you switch
+ * A tab navigator nested in a stack: the three tabs are the things you switch
  * between, and everything else is pushed on top of whichever tab you came
  * from. Anomalies/Forecasts/Incidents/Reports live on the stack behind the
  * More tab rather than as tabs of their own — a bottom bar stops being usable
@@ -21,16 +21,32 @@ export type RootStackParamList = {
   Live: { deviceId: string; deviceName?: string }
   /** Phase 10b: this phone as a monitored device, not as a viewer of others. */
   Collector: undefined
-  /** Reached from the More tab rather than a tab each. */
-  Anomalies: undefined
-  Forecasts: undefined
-  Incidents: undefined
-  Reports: undefined
+  /** Reached two ways, which is what the optional param is for: from the More
+   * tab with no params (fleet-wide, as before), or from a device's own screen
+   * with `deviceId` set (that machine only). Every backing endpoint already
+   * took `device_id` as a query param, so scoping these cost no backend
+   * change — see app/api/routes/{alerts,forecasts,incidents,reports}.py.
+   *
+   * `| undefined` rather than a required object: React Navigation treats a
+   * param type with no undefined in it as mandatory, and `navigate("Reports")`
+   * from the More menu would stop typechecking. */
+  Anomalies: { deviceId?: string; deviceName?: string } | undefined
+  Forecasts: { deviceId?: string; deviceName?: string } | undefined
+  Incidents: { deviceId?: string; deviceName?: string } | undefined
+  Reports: { deviceId?: string; deviceName?: string } | undefined
   Settings: undefined
 }
 
 export type TabParamList = {
-  Fleet: undefined
+  /** One tab, not the two this had. Fleet and Devices both listed every
+   * machine and both opened Device; the fleet card was already a superset of
+   * the plain list's — same name, hostname, OS and status badge, plus the
+   * health score, the headline numbers and an hour of sparkline. The only
+   * things the plain list had to itself were "last seen" and a Live shortcut,
+   * which now live on the fleet card. A bottom bar has four slots worth using
+   * and spending two of them on the same list was the worst way to use them.
+   * The web console keeps `/` and `/devices` separate: a sidebar has room a
+   * bottom bar does not. */
   Devices: undefined
   Alerts: undefined
   /** A menu, not a screen of its own — see MoreScreen for why these four are

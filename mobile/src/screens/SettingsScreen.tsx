@@ -130,8 +130,9 @@ export function SettingsScreen({ navigation }: RootStackScreenProps<"Settings">)
       <Card>
         <CardTitle>Elsewhere</CardTitle>
         <Text style={text.small}>
-          Alert rules, silence windows, email and Web Push channels, reports, incidents and
-          history live in the web console. This app is the viewer half.
+          Alert rules, silence windows, email and Web Push channels, report schedules and
+          per-device history live in the web console. Incidents, anomalies, forecasts and
+          reports are here, under More or on a device's own screen.
         </Text>
       </Card>
 
