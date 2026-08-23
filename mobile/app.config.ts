@@ -56,6 +56,10 @@ const config: ExpoConfig = {
     // this scopes an exception to exactly that host. A deployed https://
     // backend needs no exception and gets none.
     "./plugins/withDevBackendCleartext",
+    // Sharing a downloaded report needs a FileProvider entry in the manifest,
+    // which this plugin contributes; without it the share sheet throws on the
+    // content:// URI rather than opening.
+    "expo-sharing",
     [
       "expo-notifications",
       {
