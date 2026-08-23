@@ -13,7 +13,9 @@
 const assert = require("node:assert/strict")
 const { describe, it } = require("node:test")
 
-const { buildNetworkSecurityConfigXml, cleartextHostFor } = require("./withDevBackendCleartext.js")
+const { buildNetworkSecurityConfigXml, cleartextHostFor,
+  buildDebugNetworkSecurityConfigXml,
+} = require("./withDevBackendCleartext.js")
 
 describe("cleartextHostFor", () => {
   it("extracts the host from a plain http:// URL", () => {
@@ -60,5 +62,27 @@ describe("buildNetworkSecurityConfigXml", () => {
     const xml = buildNetworkSecurityConfigXml("example.com")
     assert.match(xml, /^<\?xml version="1\.0" encoding="utf-8"\?>/)
     assert.equal((xml.match(/</g) || []).length, (xml.match(/>/g) || []).length)
+  })
+})
+
+describe("buildDebugNetworkSecurityConfigXml", () => {
+  it("permits cleartext everywhere, which is what the debug build already had", () => {
+    const xml = buildDebugNetworkSecurityConfigXml()
+    assert.match(xml, /<base-config cleartextTrafficPermitted="true"/)
+  })
+
+  it("is not scoped to a domain — that is the release config's job", () => {
+    // The bug this guards: a networkSecurityConfig beats usesCleartextTraffic,
+    // so an allow-list inherited by the debug variant silently cut the dev
+    // client off from Metro, which is served from the developer's LAN address
+    // and is not the backend host.
+    assert.doesNotMatch(buildDebugNetworkSecurityConfigXml(), /<domain/)
+  })
+
+  it("differs from the release config, or the override would be pointless", () => {
+    assert.notEqual(
+      buildDebugNetworkSecurityConfigXml(),
+      buildNetworkSecurityConfigXml("10.0.2.2"),
+    )
   })
 })
