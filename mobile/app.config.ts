@@ -45,6 +45,11 @@ const config: ExpoConfig = {
   },
   plugins: [
     "expo-dev-client",
+    // Replaces the generated release buildType's *public* React Native debug
+    // keystore with a real one. A no-op unless SENTINEL_ANDROID_KEYSTORE and
+    // friends are set — and `make mobile-apk` refuses to build without them,
+    // so there is no path that quietly produces a debug-signed distributable.
+    "./plugins/withReleaseSigning",
     [
       "expo-notifications",
       {

@@ -1,0 +1,128 @@
+# Build the agent for every platform we ship.
+#
+# This workflow exists because PyInstaller does not cross-compile. That is not
+# a limitation to work around — the bootloader is a native executable and the
+# frozen stdlib is the host's — so the only honest answer is one runner per
+# target. A `make agent-build` on a developer's Mac produces a macOS binary and
+# says so; this is where the other three come from.
+#
+# See docs/PACKAGING.md for the decision and for the manual fallback when CI
+# is not available.
+
+name: agent-build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["agent-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # One platform failing must not throw away the three that worked; the
+      # merge step below handles a partial matrix, and the download page
+      # handles a partial manifest.
+      fail-fast: false
+      matrix:
+        include:
+          - label: macos-arm64
+            runner: macos-14
+          - label: macos-x64
+            runner: macos-13
+          - label: linux-x64
+            # Pinned to the OLDEST supported runner on purpose. A PyInstaller
+            # binary links against the glibc it was built on and will not run
+            # on anything older, so building on ubuntu-latest silently drops
+            # every user on a stable-release distro.
+            runner: ubuntu-22.04
+          - label: windows-x64
+            runner: windows-2022
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the agent and its build toolchain
+        working-directory: agent
+        run: python -m pip install -e ".[dev,build]"
+
+      - name: Test before packaging
+        working-directory: agent
+        run: python -m pytest -q
+
+      - name: Build
+        working-directory: agent
+        env:
+          # Unset here. Signing is deliberately configuration, not code — see
+          # agent/build/signing.py. Populate these as repository secrets when
+          # certificates exist and the same build starts producing signed
+          # binaries with no change to this workflow.
+          SENTINEL_MACOS_SIGN_IDENTITY: ${{ secrets.SENTINEL_MACOS_SIGN_IDENTITY }}
+          SENTINEL_MACOS_NOTARY_PROFILE: ${{ secrets.SENTINEL_MACOS_NOTARY_PROFILE }}
+          SENTINEL_WINDOWS_SIGN_THUMBPRINT: ${{ secrets.SENTINEL_WINDOWS_SIGN_THUMBPRINT }}
+        run: python build/build.py
+
+      - name: Check it runs and reads this machine
+        working-directory: agent
+        shell: bash
+        run: |
+          binary=$(python - <<'PY'
+          import sys, pathlib
+          sys.path.insert(0, "build")
+          import agent_manifest as m
+          from sentinel_agent import __version__
+          print(pathlib.Path("dist") / m.artifact_name(__version__, m.os_key(), m.arch_key()))
+          PY
+          )
+          "$binary" --version
+          # `sample` is the real check: it proves psutil's compiled extension
+          # made it into the bundle, which --version does not.
+          "$binary" sample > /dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.label }}
+          path: |
+            agent/dist/sentinel-agent-*
+            agent/dist/manifest.json
+          if-no-files-found: error
+
+  publish:
+    name: merge manifests
+    runs-on: ubuntu-latest
+    needs: build
+    # `always()` so a three-of-four matrix still publishes three binaries
+    # rather than nothing.
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Merge into one manifest
+        shell: bash
+        run: |
+          mkdir -p dist
+          # Each runner's binary keeps its own name, so a flat copy cannot collide.
+          find artifacts -name 'sentinel-agent-*' -type f -exec cp {} dist/ \;
+          python agent/build/merge_manifests.py dist/manifest.json \
+            $(find artifacts -name manifest.json)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-agent-release
+          path: dist/
+          if-no-files-found: error

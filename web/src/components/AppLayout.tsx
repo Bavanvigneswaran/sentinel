@@ -11,6 +11,7 @@ interface AppLayoutProps {
   active?:
     | "dashboard"
     | "devices"
+    | "download"
     | "alerts"
     | "anomalies"
     | "forecasts"
@@ -22,6 +23,7 @@ interface AppLayoutProps {
 const NAV_ITEMS = [
   { key: "dashboard", to: "/", label: "Dashboard" },
   { key: "devices", to: "/devices", label: "Devices" },
+  { key: "download", to: "/download", label: "Download" },
   { key: "alerts", to: "/alerts", label: "Alerts" },
   { key: "anomalies", to: "/anomalies", label: "Anomalies" },
   { key: "forecasts", to: "/forecasts", label: "Forecasts" },

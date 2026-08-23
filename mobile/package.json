@@ -33,7 +33,7 @@
     "web": "expo start --web",
     "lint": "oxlint",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --disable-warning=MODULE_TYPELESS_PACKAGE_JSON \"src/**/*.test.ts\""
+    "test": "node --test --disable-warning=MODULE_TYPELESS_PACKAGE_JSON \"src/**/*.test.ts\" \"plugins/*.test.js\""
   },
   "private": true
 }

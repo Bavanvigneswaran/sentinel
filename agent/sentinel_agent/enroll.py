@@ -7,7 +7,7 @@ import socket
 
 import httpx
 
-from sentinel_agent.config import AgentConfig
+from sentinel_agent.config import AgentConfig, requires_tls
 
 logger = logging.getLogger(__name__)
 
@@ -16,13 +16,34 @@ class EnrollmentError(Exception):
     pass
 
 
-def enroll(config: AgentConfig, code: str, device_name: str | None = None) -> AgentConfig:
+def enroll(
+    config: AgentConfig,
+    code: str,
+    device_name: str | None = None,
+    *,
+    allow_insecure: bool = False,
+) -> AgentConfig:
     """Enrol this machine and persist the returned token.
 
     The user's password is never involved: the one-time code is the only
     credential, and what comes back is an opaque token scoped to this device
     alone and revocable from the UI.
+
+    Refuses plaintext to a remote host. Enrollment is the one exchange that
+    carries both the single-use code *and* the long-lived token it becomes, so
+    doing it over http:// hands anyone on the path a credential that is valid
+    until somebody notices and revokes it. `allow_insecure` exists for a LAN
+    test against a server that has no certificate yet, and has to be asked for
+    explicitly.
     """
+    if requires_tls(config.server_url) and not allow_insecure:
+        raise EnrollmentError(
+            f"refusing to send an enrollment code to {config.server_url} over an "
+            f"unencrypted connection — the agent token would come back in "
+            f"cleartext. Use https://, or pass --insecure if you genuinely mean "
+            f"to do this on a trusted network."
+        )
+
     name = device_name or socket.gethostname()
 
     try:

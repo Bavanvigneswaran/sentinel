@@ -14,6 +14,7 @@ SAFE_PROD = {
     "cookie_secure": True,
     "app_db_password": "a-strong-role-password",
     "cookie_samesite": "strict",
+    "rate_limit_enabled": True,
 }
 
 
@@ -34,6 +35,12 @@ def test_a_correctly_configured_production_boots():
         ({"app_db_password": DEV_APP_DB_PASSWORD}, "app_db_password"),
         # SameSite is the only CSRF defence on /auth/refresh and /auth/logout.
         ({"cookie_samesite": "none"}, "CSRF"),
+        # .env.example ships this false for good dev reasons (the Vite proxy
+        # puts every request in the 127.0.0.1 bucket), so a deployment that
+        # copies it and flips ENVIRONMENT=prod would otherwise run with
+        # /auth/login and /enroll — the only unauthenticated write in the
+        # system — unthrottled, and nothing would say so.
+        ({"rate_limit_enabled": False}, "rate_limit_enabled"),
     ],
 )
 def test_production_refuses_to_start_when_insecure(override, expected):

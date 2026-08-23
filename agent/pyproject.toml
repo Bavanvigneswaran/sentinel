@@ -12,6 +12,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.7"]
+# Only needed to produce a distributable binary, never to run the agent.
+# Separate from `dev` so `make install` does not pull a packaging toolchain
+# onto every machine that just wants to run the tests.
+build = ["pyinstaller>=6.11"]
 
 [project.scripts]
 sentinel-agent = "sentinel_agent.cli:main"
@@ -22,12 +26,21 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
 
+[tool.ruff.lint.isort]
+# build/ is on sys.path only for the build scripts and their tests, so isort
+# cannot infer these are ours.
+known-first-party = ["sentinel_agent", "agent_manifest", "signing"]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]
 # ASYNC109 wants callers to wrap with asyncio.timeout instead of taking a
 # timeout parameter. These are internal probe helpers where a per-probe timeout
 # is the clearer contract, and the timeout is applied with wait_for internally.
 "sentinel_agent/collectors/latency.py" = ["ASYNC109"]
+# The build scripts are not shipped in the wheel and are run explicitly by a
+# person or by CI; subprocess calls to codesign/signtool/PyInstaller are the
+# entire point of them.
+"build/*" = ["S404", "S603", "S607"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

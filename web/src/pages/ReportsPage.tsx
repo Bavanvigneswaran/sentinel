@@ -5,6 +5,7 @@ import { ReportScheduleForm } from "@/components/ReportScheduleForm"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { apiDownload, apiFetch, ApiError } from "@/lib/api"
+import { triggerDownload } from "@/lib/download"
 import { formatDurationSeconds } from "@/lib/formatters"
 import { cn } from "@/lib/utils"
 import type { Device } from "@/types/api"
@@ -46,15 +47,6 @@ function fmtPct(value: number | null): string {
 function fmtDelta(value: number | null): string {
   if (value === null) return "—"
   return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`
-}
-
-function triggerDownload(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement("a")
-  link.href = url
-  link.download = filename
-  link.click()
-  URL.revokeObjectURL(url)
 }
 
 export function ReportsPage() {

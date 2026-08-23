@@ -33,7 +33,10 @@ react-native-svg for charts) in `mobile/`, plus a Kotlin collector module in Pha
 - `make db-shell` / `make redis-shell` · `make reset-db` — wipe volumes and re-migrate
 - `make agent-enroll code=X4T9-K2QM-7PDR` — enrol this machine · `make agent` — run it
 - `make agent-sample` — print one real sample without connecting · `make agent-status`
-- `make agent-install-service` / `agent-uninstall-service` — macOS launchd (Phase 11 adds the rest)
+- `make agent-install-service` / `agent-uninstall-service` — launchd / systemd / Task Scheduler
+  (add `scope=system` for a boot-time install on Linux or Windows; macOS is per-user only)
+- `make agent-build` — PyInstaller binary **for this machine only** · `agent-build-check` — say which
+- `make mobile-apk` — release APK; refuses without a real keystore. See `docs/PACKAGING.md`.
 - `make mobile-android` — build/install/launch the Android dev build · `make mobile` — Metro only
 - `make mobile-prebuild` — regenerate `mobile/android/` from `app.config.ts` · `make mobile-test`
 
@@ -299,6 +302,83 @@ is shown in the phone's own notification but has no protocol field, deliberately
 docs/ANDROID_METRICS.md for the four layers of surface that would cost; and the collector has only
 been run against an emulator, so the probe results for `/proc/loadavg` and `scaling_cur_freq` on real
 OEM hardware are unknown by design rather than assumed.
+
+Phase 11 status: packaging and distribution complete — for one platform, verified, with the other
+three written down rather than claimed. **PyInstaller does not cross-compile**: it ships a native
+bootloader per platform and freezes the *host's* CPython, so this Mac produces a macOS arm64 binary
+and nothing else. That is stated in the three places somebody could hit it — the spec has no target
+selector, `build/build.py` prints `Target: macos/arm64 — PyInstaller does not cross-compile` before
+it does anything and offers no `--target`, and the Makefile has `agent-build` and deliberately **no**
+`agent-build-windows`. The real answer is a four-runner CI matrix
+(`.github/workflows/agent-build.yml`), with `ubuntu-22.04` pinned as the *oldest* supported runner
+because a PyInstaller binary links against the glibc it was built on. `agent/build/` holds the spec,
+the build driver, `signing.py`, and the pure `agent_manifest.py`, whose manifest is the contract
+between CI and the download page; `merge_manifests.py` is what lets four machines that never see
+each other's output produce one file. All of it is in **`docs/PACKAGING.md`**, which is the authority
+for how anything gets built, alongside `docs/INSTALL.md` for users.
+
+The agent grew a scope. `sentinel_agent/paths.py` resolves the config — and the agent token in it —
+from `user` or `system` rather than `Path.home()`, because a systemd system unit runs as root and a
+Windows task registered `/RU SYSTEM` has its profile under
+`C:\Windows\System32\config\systemprofile`; neither is the HOME of the person who typed the
+enrollment code. `service/` gained `base.py` (one `agent_command()` all three installers share, which
+is also what makes a PyInstaller binary register itself rather than a venv console script),
+`systemd.py` and `windows.py`, behind an `installer_for()` dispatch. Every renderer — `build_plist`,
+`build_unit`, `build_task_xml` — is **pure**, so a Linux unit and a Windows task are asserted from
+this Mac and fed back through the real argument parser. 127 agent tests (was 49), 474 backend, 27 web
+(vitest, new), 41 mobile JS, 36 Kotlin.
+
+Windows gets a **Task Scheduler task, not an SCM service**, because a PyInstaller console binary
+cannot answer the Service Control Manager and `sc.exe create` yields error 1053. Registration goes
+through `/XML` rather than `/TR`: `/TR` breaks on `C:\Program Files\…` quoting and, more
+importantly, cannot express `StopIfGoingOnBatteries=false`, `StopOnIdleEnd=false` and
+`ExecutionTimeLimit=PT0S` — Task Scheduler's defaults would stop the agent when a laptop is unplugged
+and terminate a healthy one after three days. macOS deliberately has **no** system scope: a
+LaunchDaemon is root-requiring code that cannot be exercised from a test suite, so `--scope system`
+is an actionable error pointing at INSTALL.md's hand-written plist.
+
+Frontend: `/download` is a new authenticated page. `AGENT_DIST_DIR` unset is a supported state — the
+page says no build exists and gives the from-source command rather than offering a link that 404s,
+the same posture as unset SMTP/VAPID/FCM/ANTHROPIC_API_KEY. `web/src/lib/platform.ts` is pure and
+tested, and its load-bearing field is `archCertain`: Safari and Chrome both report Apple Silicon as
+`Intel Mac OS X`, permanently, so a Mac's architecture is *not derivable* from a user agent and the
+page offers both builds with an explanation instead of guessing. Chromium's
+`getHighEntropyValues()` narrows it when available, which it did in verification.
+
+Verified end-to-end against the real backend: a 12.3MB macOS arm64 binary built here, run
+(`--version` and `sample` against this machine, with `cpu_iowait_percent`/`cpu_freq_mhz` correctly
+null per Phase 2), served through the authenticated API, downloaded from the browser as a
+12,841,200-byte blob matching the manifest's `size_bytes` exactly, checksum-matched against the SHA-256
+the page displays, then installed as a real launchd LaunchAgent whose plist pointed at the **frozen
+binary** rather than a venv script, observed connecting and pushing real telemetry, and uninstalled
+cleanly. The "no build published" state was also seen for real, before `AGENT_DIST_DIR` was set.
+
+**No Windows or Linux binary has ever been produced.** The spec, the matrix and the systemd/Task
+Scheduler installers are written and unit-tested, but "the spec file looks right" is not "it builds" —
+treat the matrix's first run as the real test.
+
+The security review found three things worth fixing, all now fixed with tests: **an agent would
+enrol over plaintext `http://` to a remote host** with no warning, sending the single-use code and
+receiving the long-lived token in cleartext (ARCHITECTURE.md has said `wss://`-only since Phase 0,
+and nothing enforced it — Phase 11 is exactly when it stops being advice, since the agent becomes a
+binary a stranger points at a URL they typed); **`RATE_LIMIT_ENABLED=false` was not checked by the
+prod validator**, so a deployment copying `.env.example` and flipping `ENVIRONMENT=prod` would run
+with `/auth/login` and `/enroll` unthrottled and nothing would say so; and the download catalogue's
+`unavailable_reason` **leaked absolute server paths** to any signed-in user. The `/code-review high`
+pass found three more: a Task Scheduler task **discards stdout**, so a Windows agent had no log at
+all (now `--log-file`, rotated); a missing `systemctl` **crashed `status` with a traceback** instead
+of saying "not installed"; and the rewritten `config.save()` had **reopened the token file by path**
+after locking it down, adding a symlink-swap window the original single-fd version never had.
+Everything else in auth and the agent protocol came back clean — token in an `Authorization` header
+never a query string, never logged, indexed-hash lookup with no timing comparison, TLS verification
+nowhere disabled, frames size-capped before parsing, `/enroll` atomically single-use and
+rate-limited with invalid/expired/used deliberately indistinguishable.
+
+Still to come in Phase 11, if picked back up: run the CI matrix and publish real Windows and Linux
+binaries (and find out what breaks); a `.dmg` so a notarized macOS build can be *stapled* — a bare
+binary cannot be, so Gatekeeper checks it online and an air-gapped machine still warns; and a real
+Windows service via pywin32 if `services.msc` visibility ever matters more than the Task Scheduler
+trade-off documented in PACKAGING.md.
 
 ## Conventions
 
@@ -777,3 +857,107 @@ OEM hardware are unknown by design rather than assumed.
   a synthesised answer. The spread survives anyway: the rollups compute
   `lowest("mem_percent", "mem_percent_min")`, folding in the raw gauge, so the 1m tier the charts
   and reports actually read carries real min/max across the minute. Verified against a live phone.
+
+
+## Phase 11 invariants — don't break these
+
+- **PyInstaller does not cross-compile, and nothing may pretend otherwise.** The spec takes no
+  target, `build/build.py` offers no `--target` and prints the target it is about to build before it
+  builds, and there is no `make agent-build-windows`. A Makefile target that silently only ever
+  works on the machine it was written on is worse than no target — the four-runner matrix in
+  `.github/workflows/agent-build.yml` is the answer, and `ubuntu-22.04` is pinned there as the
+  *oldest* supported runner because a PyInstaller binary links against the glibc it was built on.
+- **`docs/PACKAGING.md` is the authority for how anything is built, signed, or installed as a
+  service**, the way `docs/ANDROID_METRICS.md` is for what a phone may report. If the code and that
+  file disagree, the code is wrong.
+- **The build manifest is validated, not trusted.** It is written by CI on a machine the server
+  never sees, so `download_service._parse_build()` drops any entry naming an unknown OS/arch or a
+  `filename` that is not a plain filename, and a wrong `schema_version` takes the whole file out of
+  service with a reason the page renders. That filename check is what lets `resolve_artifact()`
+  treat the catalogue as an **allow-list** — a name is never joined into a path until it has matched
+  an entry by exact string equality, with a containment check after it as the second line of defence
+  against a symlink planted in the dist directory.
+- **`signed: false` is recorded and rendered, never omitted.** An unsigned binary means Gatekeeper or
+  SmartScreen will interrupt the install, and the page quotes the dialog verbatim *before* the click
+  rather than leaving the user alone with it. No certificates exist; enabling signing later is
+  configuration (`build/signing.py` already reads the env vars, the workflow already passes the
+  secrets) and not a rewrite. Corollaries worth keeping: **no
+  `SENTINEL_WINDOWS_SIGN_PASSWORD`** — signtool would take a .pfx password on the command line,
+  putting a signing key's password in the process table and every CI log — and **UPX stays off**,
+  because packing is a strong heuristic signal to antivirus and SmartScreen and an already-unsigned
+  monitoring agent should not also look packed.
+- **An unset `AGENT_DIST_DIR` degrades visibly.** `/download` says no build exists and gives the
+  from-source command; it never offers a link that 404s. Same posture as unset SMTP/VAPID/FCM/
+  `ANTHROPIC_API_KEY`. `DownloadCatalog.unavailable_reason` is the load-bearing field — an empty
+  build list with no reason is indistinguishable from one that failed to load, and the page would
+  have nothing honest to say. Those reason strings are rendered verbatim, so they never name an
+  absolute server path: the path goes to the log, which is where the operator reads it.
+- **A Mac's architecture is not derivable from a browser.** Safari and Chrome both report
+  `Intel Mac OS X` on Apple Silicon, permanently, for compatibility, so `platform.ts` returns
+  `archCertain: false` and the page offers *both* Mac builds. Guessing hands half of all Mac users a
+  binary that cannot run — a worse outcome than asking which Mac they have.
+- **Where the agent token lives is a scope decision, never `Path.home()`.** A systemd system unit
+  runs as root and a Windows `/RU SYSTEM` task's profile is
+  `C:\Windows\System32\config\systemprofile`. `paths.config_dir(scope)` resolves it, the installer
+  writes the resolved path into the unit/plist/task, and the running service never re-derives it.
+  Deliberately **not** XDG-aware on Linux/macOS (`~/.config/sentinel` is what Phase 2 shipped and
+  relocating it would strand existing agents), and **`%LOCALAPPDATA%` not `%APPDATA%`** on Windows,
+  because a device-scoped token must not roam onto another machine.
+- **The token is written through a descriptor whose permissions were already verified.**
+  `paths.open_private()` returns an fd, not a path: reopening by name after locking down would let
+  the entry be swapped for a symlink in between, landing the token on the symlink's target with the
+  0600 check having passed against a file no longer there. On Windows that window is unavoidable
+  (icacls takes a path, not a handle) so the file is created empty, locked, then reopened — the
+  important half still holds, because a failure to restrict happens before any token exists on disk.
+  On Windows the ACL uses **well-known SIDs**, never the localised names "SYSTEM" and
+  "Administrators", and `/inheritance:r` is the load-bearing flag: without it the file keeps
+  ProgramData's "Users: read" ACE.
+- **Enrollment refuses plaintext to a remote host; `run` only warns.** Enrollment is the one exchange
+  carrying both the single-use code and the long-lived token it becomes, so `http://` there hands
+  anyone on the path a credential good until somebody revokes it. `run` warns instead, because
+  killing an already-working monitor over a transport choice its operator already made would be the
+  wrong trade. Loopback is exempt or every developer would just disable the guard, and
+  `config.is_loopback()` treats anything not *provably* loopback as remote.
+- **Every service definition renders purely, and is asserted through the real argument parser.**
+  This project is developed on a Mac; a systemd unit or a Task Scheduler XML that is only inspected
+  by eye is exactly the thing that looks right and fails on the target. `--config` is a global option
+  and must precede `run`, or the service manager retries the failure forever — so
+  `tests/test_service_units.py` parses each rendered command back rather than asserting the strings
+  are present. `agent_command()` lives in `service/base.py` so all three cannot drift, and so a
+  PyInstaller build registers `sys.executable` itself rather than a venv console script that is not
+  there.
+- **A missing system tool is a failed run, not a traceback.** Not every Linux has systemd (a
+  container, WSL1, Alpine). `_run()` in each installer converts `OSError` into a returncode-127
+  `CompletedProcess`, so `sentinel-agent status` answers "not installed" instead of dying — an
+  `OSError` is not a `ServiceError` and the CLI's handler would not have caught it.
+- **Two systemd directives are load-bearing in opposite directions.**
+  `RestrictAddressFamilies` **must** include `AF_NETLINK` — psutil's per-NIC counters go through
+  `getifaddrs()`, which is a netlink socket, and omitting it yields an agent that connects fine and
+  reports no network metrics at all. `ProtectProc=` must **not** be set: `invisible` hides
+  `/proc/<pid>/` for processes we do not own, which is precisely what the top-processes collector
+  reads. The system unit's empty `CapabilityBoundingSet` is what makes `User=root` mean "owns its
+  config file" rather than "can do anything".
+- **Windows Task Scheduler defaults would break the agent, and it discards its output.**
+  `StopIfGoingOnBatteries`/`StopOnIdleEnd` default true and `ExecutionTimeLimit` defaults to three
+  days; all three are overridden. And because a task's stdout goes nowhere — unlike launchd's plist
+  redirect or systemd's journal — the installer passes `--log-file` so Windows is not the one
+  platform where a failing agent leaves no record.
+- **`RATE_LIMIT_ENABLED=false` is refused in prod.** `.env.example` ships it false for real dev
+  reasons (the Vite proxy puts every request in the 127.0.0.1 bucket), which is exactly why a
+  deployment that copies it and flips `ENVIRONMENT=prod` must not start: `/auth/login` guards a
+  password and `/enroll` is the only unauthenticated write in the system.
+- **The download endpoints are authenticated.** The binary is not secret, but making it public would
+  add a second unauthenticated route beside `/enroll` — which this codebase keeps as the only one —
+  for no gain, since an agent is useless without an enrollment code and minting one requires signing
+  in. `AGENT_DOWNLOAD_BASE_URL` is the escape hatch for scale, and the page switches to a plain
+  anchor for an absolute URL rather than trying to fetch it with a bearer token it has no business
+  sending cross-origin.
+- **No APK is published, and the release build must never fall back to the debug key.** `expo
+  prebuild` points the release buildType at React Native's *public* debug keystore, which would let
+  anyone forge an update Android accepts as the same app. `plugins/withReleaseSigning.js` swaps in a
+  real key when configured — a config plugin, because `mobile/android/` is generated and gitignored
+  and hand-edits vanish at the next prebuild — and `make mobile-apk` **refuses to build** when it is
+  not, rather than warning and proceeding. Its gradle rewrite is split at `buildTypes` for a reason:
+  a single lazy regex over the whole file starts inside the injected `signingConfigs.release` block
+  and rewrites the *debug* buildType instead, silently leaving release on the public key. Passwords
+  come from the environment, never `-P` gradle properties.

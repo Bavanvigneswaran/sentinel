@@ -6,16 +6,21 @@ here, so the file is written 0600 and never logged.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
-DEFAULT_CONFIG_DIR = Path(
-    os.environ.get("SENTINEL_AGENT_HOME", Path.home() / ".config" / "sentinel")
-)
-DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_DIR / "agent.toml"
+from sentinel_agent.paths import CONFIG_FILENAME, default_config_dir, open_private
+
+# Resolved at import for the CLI's help text. `SENTINEL_AGENT_HOME` still wins;
+# see paths.py for why a service is handed an explicit --config instead of
+# re-deriving this from an environment it does not have.
+DEFAULT_CONFIG_DIR = default_config_dir()
+DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_DIR / CONFIG_FILENAME
 
 DEFAULT_SERVER = "http://localhost:8000"
 DEFAULT_SAMPLE_INTERVAL = 1
@@ -28,6 +33,36 @@ DEFAULT_BUFFER_SIZE = 3600
 
 class ConfigError(Exception):
     pass
+
+
+def is_loopback(url: str) -> bool:
+    """True when `url` points at this machine.
+
+    Used to decide whether plaintext HTTP is acceptable. Anything that is not
+    provably loopback is treated as remote — an unresolvable or odd host is not
+    given the benefit of the doubt, because the thing being protected is a
+    long-lived credential.
+    """
+    host = urlsplit(url).hostname
+    if not host:
+        return False
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def requires_tls(url: str) -> bool:
+    """True when talking to `url` in plaintext would expose the agent token.
+
+    ARCHITECTURE.md has said since Phase 0 that it is `wss://` only outside
+    localhost. Phase 11 is when that stops being advice: before it, the agent
+    was something you ran against your own dev server; now it is a binary a
+    stranger downloads and points at a URL they typed.
+    """
+    return not url.startswith("https://") and not is_loopback(url)
 
 
 @dataclass
@@ -107,12 +142,11 @@ class AgentConfig:
             "",
         ]
 
-        # Create with 0600 from the outset rather than chmod-ing afterwards,
-        # which would leave a window where the token is world-readable.
-        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as handle:
+        # The file is private before a single byte of the token is written, and
+        # what gets written to is the descriptor whose permissions were checked
+        # — never the path re-resolved a second time. See paths.open_private().
+        with os.fdopen(open_private(self.path), "w") as handle:
             handle.write("\n".join(lines))
-        os.chmod(self.path, 0o600)
 
     def require_token(self) -> str:
         if not self.agent_token:

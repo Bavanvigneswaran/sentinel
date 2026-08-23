@@ -84,6 +84,7 @@ def create_app() -> FastAPI:
     from app.api.routes.alerts import router as alerts_router
     from app.api.routes.auth import router as auth_router
     from app.api.routes.devices import router as devices_router
+    from app.api.routes.downloads import router as downloads_router
     from app.api.routes.fleet import router as fleet_router
     from app.api.routes.forecasts import router as forecasts_router
     from app.api.routes.incidents import router as incidents_router
@@ -104,6 +105,7 @@ def create_app() -> FastAPI:
     app.include_router(incidents_router)
     app.include_router(notifications_router)
     app.include_router(reports_router)
+    app.include_router(downloads_router)
     app.include_router(ingest_router)
     app.include_router(viewer_router)
 

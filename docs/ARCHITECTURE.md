@@ -87,5 +87,13 @@ State machine per rule per device: `OK → PENDING → FIRING → RESOLVED`. `PE
 - **Android global CPU% is not readable** since API 26 — `/proc/stat` is blocked to apps. You get: per-app CPU, memory, battery/thermal, network per-uid, storage, uptime. Design the Android device page to show *those* rather than pretending it matches a Linux box.
   *Resolved in Phase 10b:* the full field-by-field decision lives in **`docs/ANDROID_METRICS.md`**, which is the authority for the Kotlin collector. Two findings worth carrying forward: "per-app CPU" turns out to mean *this app only*, so `processes[]` is sent empty rather than putting a true number under a "top processes on this machine" heading; and `TrafficStats` is device-wide rather than per-interface, so the single NIC entity is named `device-total` rather than guessing `wlan0`.
 - **Unsigned agent binaries** trigger SmartScreen (Windows) and Gatekeeper (macOS). Fine locally; budget for an Apple Developer ID (~$99/yr) and a Windows code-signing cert before anyone else installs it.
+  *Addressed in Phase 11:* still unsigned — no certificates have been bought — but the constraint is now
+  surfaced rather than discovered. Every build carries `signed: false` through the manifest, and the
+  download page quotes the exact dialog the user is about to see and gives them a SHA-256 to check
+  instead. Turning signing on is configuration (`agent/build/signing.py` already looks for the env vars,
+  and the CI workflow already passes the secrets through), not a rewrite. The wider packaging decision —
+  that **PyInstaller does not cross-compile**, so each platform's binary comes from its own CI runner —
+  lives in **`docs/PACKAGING.md`**, along with why Windows gets a Task Scheduler task rather than a real
+  service and why no Android APK ships.
 - **Seasonality-aware ML needs history.** For the first two weeks, forecasts and seasonal anomalies will be weak no matter how good the code is. The adaptive baseline (layer 2) is what carries the demo.
 - **macOS temperature/fan** requires elevated helpers; treat as optional/missing.

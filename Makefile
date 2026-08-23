@@ -1,7 +1,9 @@
 .PHONY: up down dev dev-backend dev-frontend test agent logs install \
         migrate migrate-down revision db-shell redis-shell reset-db lint typecheck \
         agent-enroll agent-sample agent-status agent-install-service agent-uninstall-service \
+        agent-build agent-build-check agent-build-clean \
         mobile mobile-android mobile-prebuild mobile-test mobile-collector-test \
+        mobile-apk \
         mobile-collector-logs
 
 install:
@@ -34,6 +36,7 @@ dev:
 test:
 	cd backend && .venv/bin/pytest -q
 	cd agent && .venv/bin/pytest -q
+	cd web && npm test
 	cd mobile && npm test
 	$(MAKE) mobile-collector-test
 
@@ -88,12 +91,36 @@ agent-sample:
 agent-status:
 	cd agent && .venv/bin/sentinel-agent status
 
-# macOS only for now; systemd and Windows Service arrive in Phase 11.
+# launchd on macOS, systemd on Linux, Task Scheduler on Windows. Add
+# scope=system for a boot-time, machine-wide install on Linux or Windows;
+# macOS is per-user only (see agent/sentinel_agent/service/launchd.py).
+#   make agent-install-service scope=system
+SCOPE ?= $(or $(scope),user)
+
 agent-install-service:
-	cd agent && .venv/bin/sentinel-agent install-service
+	cd agent && .venv/bin/sentinel-agent --scope $(SCOPE) install-service
 
 agent-uninstall-service:
-	cd agent && .venv/bin/sentinel-agent uninstall-service
+	cd agent && .venv/bin/sentinel-agent --scope $(SCOPE) uninstall-service
+
+# --- packaging (Phase 11) -----------------------------------------------------
+# PyInstaller DOES NOT CROSS-COMPILE. `make agent-build` produces a binary for
+# THIS machine and nothing else — it prints the target it is about to build so
+# that is never a surprise. Windows and Linux binaries come from the CI matrix
+# in .github/workflows/agent-build.yml, one runner per target. There is
+# deliberately no `make agent-build-windows`: a target that silently only ever
+# works on the machine it was written on is worse than no target.
+# See docs/PACKAGING.md.
+
+agent-build-check:
+	cd agent && .venv/bin/python build/build.py --check
+
+agent-build:
+	cd agent && .venv/bin/pip install -q -e ".[build]" && .venv/bin/python build/build.py
+
+agent-build-clean:
+	cd agent && .venv/bin/pip install -q -e ".[build]" && \
+		.venv/bin/python build/build.py --clean
 
 # --- mobile (Phase 10a Android viewer) ---------------------------------------
 # Point mobile/.env at a backend the *device* can reach before the first run:
@@ -116,6 +143,35 @@ mobile-prebuild:
 
 mobile-test:
 	cd mobile && npm test
+
+# A distributable release APK. Refuses to build without a real keystore rather
+# than falling back to React Native's *public* debug key, which the generated
+# android/app/build.gradle otherwise uses for the release buildType — an APK
+# signed with a key everybody has lets anyone forge an update Android accepts
+# as the same app. plugins/withReleaseSigning.js does the wiring; passwords come
+# from the environment, never from -P properties (they show in the process
+# table). Create a keystore once with:
+#   keytool -genkeypair -v -keystore sentinel-release.jks -alias sentinel \
+#           -keyalg RSA -keysize 4096 -validity 10000
+mobile-apk:
+	@missing=""; \
+	for v in SENTINEL_ANDROID_KEYSTORE SENTINEL_ANDROID_KEYSTORE_PASSWORD \
+	         SENTINEL_ANDROID_KEY_ALIAS SENTINEL_ANDROID_KEY_PASSWORD; do \
+		eval "val=\$$$$v"; [ -n "$$val" ] || missing="$$missing $$v"; \
+	done; \
+	if [ -n "$$missing" ]; then \
+		echo "Refusing to build a release APK: no keystore configured."; \
+		echo "Unset:$$missing"; \
+		echo "Without these the release build would be signed with React Native's"; \
+		echo "public debug key — see docs/PACKAGING.md."; \
+		exit 1; \
+	fi; \
+	cd mobile && npx expo prebuild --platform android --clean && \
+		cd android && ./gradlew assembleRelease && \
+		echo "APK: mobile/android/app/build/outputs/apk/release/app-release.apk" && \
+		echo "Publish it with: python agent/build/register_build.py --os android \\" && \
+		echo "  --arch arm64 --version 0.1.0 --signed --signing '<your key>' \\" && \
+		echo "  --file mobile/android/app/build/outputs/apk/release/app-release.apk"
 
 # --- collector (Phase 10b: the phone as a monitored device) -------------------
 # The Kotlin foreground-service collector lives in mobile/modules/sentinel-collector.

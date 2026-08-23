@@ -8,6 +8,7 @@ import { AnomaliesPage } from "@/pages/AnomaliesPage"
 import { DashboardPage } from "@/pages/DashboardPage"
 import { DeviceHistoryPage } from "@/pages/DeviceHistoryPage"
 import { DevicesPage } from "@/pages/DevicesPage"
+import { DownloadPage } from "@/pages/DownloadPage"
 import { ForecastsPage } from "@/pages/ForecastsPage"
 import { IncidentDetailPage } from "@/pages/IncidentDetailPage"
 import { IncidentsPage } from "@/pages/IncidentsPage"
@@ -33,6 +34,7 @@ export const router = createBrowserRouter([
       { path: "/devices", element: <DevicesPage /> },
       { path: "/devices/:deviceId/history", element: <DeviceHistoryPage /> },
       { path: "/devices/:deviceId/live", element: <LiveMonitoringPage /> },
+      { path: "/download", element: <DownloadPage /> },
       { path: "/alerts", element: <AlertsPage /> },
       { path: "/alerts/rules", element: <AlertRulesPage /> },
       { path: "/anomalies", element: <AnomaliesPage /> },

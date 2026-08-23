@@ -14,3 +14,6 @@ dist-ssr/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+
+# PyInstaller intermediates (agent/build/ is source; agent/.pyinstaller/ is scratch)
+.pyinstaller/

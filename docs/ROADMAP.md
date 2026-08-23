@@ -72,9 +72,18 @@ arriving with the app closed. Verified — including survival of a task swipe an
 Known gap: re-enrolling after "Forget this phone" creates a new device row rather than reattaching
 to the old one's history.
 
-### Phase 11 — Packaging + distribution  ·  Sonnet 5  ·  ~1–2 sessions
-PyInstaller builds per OS, OS-detecting download page, install docs, signing (when you're ready to pay for certs),
-final `/security-review` + `/code-review high` over auth and the agent protocol.
+### Phase 11 — Packaging + distribution  ·  Opus 5  ·  ~1–2 sessions  ·  **DONE**
+PyInstaller spec + build driver, per-OS service installers (launchd / systemd / Task Scheduler),
+scope-aware config and token locations, an authenticated OS-detecting `/download` page driven by a
+validated build manifest, `docs/INSTALL.md` and **`docs/PACKAGING.md`**.
+**PyInstaller does not cross-compile**, so the answer for the other platforms is written down rather
+than faked: a four-runner CI matrix in `.github/workflows/agent-build.yml`, and deliberately no
+`make agent-build-windows`. Signing is designed for and unconfigured — no certs bought — so every
+build carries `signed: false` and the page quotes the Gatekeeper/SmartScreen dialog before the click.
+**Done when:** a real binary, built here, downloads from the page, checksum-matches, installs as a
+launchd service and pushes real telemetry. Verified — macOS arm64 only.
+Known gaps: no Windows or Linux binary has ever been produced (the matrix has not run); no Android
+APK is published (a release build would otherwise be signed with React Native's public debug key).
 
 ---
 
