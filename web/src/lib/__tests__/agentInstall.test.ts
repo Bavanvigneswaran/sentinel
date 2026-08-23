@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  androidInstallSteps,
   buildsFor,
   installSteps,
+  isCliInstall,
   unsignedWarning,
   verifyCommand,
 } from "@/lib/agentInstall"
@@ -125,5 +127,33 @@ describe("buildsFor with a platform that has no agent", () => {
     // explanation instead of a broken card.
     const catalog = [build({ os: "macos", arch: "arm64", filename: "mac-arm64" })]
     expect(buildsFor(catalog, "ios", null, false)).toEqual([])
+  })
+})
+
+describe("isCliInstall", () => {
+  it("is true for every desktop OS", () => {
+    expect(isCliInstall(build({ os: "macos" }))).toBe(true)
+    expect(isCliInstall(build({ os: "linux" }))).toBe(true)
+    expect(isCliInstall(build({ os: "windows" }))).toBe(true)
+  })
+
+  it("is false for Android — there is no shell to run installSteps() in", () => {
+    expect(isCliInstall(build({ os: "android" }))).toBe(false)
+  })
+})
+
+describe("androidInstallSteps", () => {
+  it("never tells the user to run a shell command", () => {
+    // The bug this guards against: installSteps() rendered
+    // "./sentinel-*.apk enroll --code …" for Android, a command that cannot
+    // be typed anywhere on a phone.
+    const steps = androidInstallSteps().join(" ")
+    expect(steps).not.toContain("chmod")
+    expect(steps).not.toContain("./sentinel")
+    expect(steps).not.toContain("enroll --code")
+  })
+
+  it("says enrolment needs no pasted code, matching the app's real one-tap flow", () => {
+    expect(androidInstallSteps().join(" ")).toMatch(/one-tap|nothing to type/)
   })
 })

@@ -76,7 +76,20 @@ export function verifyCommand(build: AgentBuild): string {
   return `sha256sum ${build.filename}`
 }
 
-/** Getting from a downloaded file to a running, enrolled agent. */
+/**
+ * True for the platforms that install through a CLI (`enroll`, `install-service`,
+ * `status`). Android has none of that — it is an app, not a binary you invoke.
+ * Enrolment is a tap inside the app, and there is no shell to chmod anything
+ * in or run a status command from. `DownloadPage` branches its install-steps
+ * block on this rather than routing Android through `installSteps()`, which
+ * would otherwise render `./sentinel-*.apk enroll --code …` — a command that
+ * cannot be typed anywhere on a phone.
+ */
+export function isCliInstall(build: AgentBuild): boolean {
+  return build.os !== "android"
+}
+
+/** Getting from a downloaded file to a running, enrolled agent (desktop OSes — see isCliInstall). */
 export function installSteps(build: AgentBuild, code = "<YOUR-CODE>"): string[] {
   if (build.os === "windows") {
     return [
@@ -93,12 +106,27 @@ export function installSteps(build: AgentBuild, code = "<YOUR-CODE>"): string[] 
   ]
 }
 
-/** What `install-service` will actually register, per platform. */
+/**
+ * The Android equivalent of installSteps(): plain steps, not shell commands,
+ * because there is no shell. No code is pasted from the Devices page either —
+ * the signed-in app mints its own short-lived one internally and hands it
+ * straight to the collector, per Phase 10b.
+ */
+export function androidInstallSteps(): string[] {
+  return [
+    "Transfer the APK to your phone (email, a cable, or a private link — not the Play Store).",
+    "On the phone: allow installs from this source when prompted, then open the APK to install it.",
+    "Open the Sentinel app and sign in with your account.",
+    'From the device list, choose "Monitor this device" — the app enrols itself with a one-tap code it mints internally. There is nothing to type.',
+  ]
+}
+
+/** What `install-service` (or, on Android, opening the app) will actually register. */
 export const SERVICE_MECHANISM: Record<BuildOs, string> = {
   macos: "a per-user launchd LaunchAgent (no admin password needed)",
   linux: "a systemd user unit, or --scope system for a machine-wide one",
   windows: "a Task Scheduler task, not a services.msc entry — see the install docs for why",
-  android: "a foreground service, started from the app",
+  android: "a foreground service the app starts on tap — no separate install-service step",
 }
 
 /**

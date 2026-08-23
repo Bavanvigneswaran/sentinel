@@ -5,9 +5,11 @@ import { AppLayout } from "@/components/AppLayout"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
+  androidInstallSteps,
   ARCH_LABEL,
   buildsFor,
   installSteps,
+  isCliInstall,
   OS_LABEL,
   SERVICE_MECHANISM,
   unsignedWarning,
@@ -94,7 +96,9 @@ function BuildCard({ build }: { build: AgentBuild }) {
 
         <div className="flex flex-col gap-1">
           <span className="text-xs font-medium text-muted-foreground">
-            Verify it before you run it
+            {build.os === "android"
+              ? "Verify it on this computer before you transfer it to your phone"
+              : "Verify it before you run it"}
           </span>
           <Code>{verifyCommand(build)}</Code>
           <code className="overflow-x-auto font-mono text-[11px] text-muted-foreground">
@@ -127,18 +131,34 @@ function BuildCard({ build }: { build: AgentBuild }) {
         )}
 
         <div className="flex flex-col gap-1">
-          <span className="text-xs font-medium text-muted-foreground">
-            Then enrol it — mint a code on the{" "}
-            <Link to="/devices" className="underline">
-              Devices
-            </Link>{" "}
-            page first
-          </span>
-          {installSteps(build).map((step) => (
-            <Code key={step}>{step}</Code>
-          ))}
+          {isCliInstall(build) ? (
+            <>
+              <span className="text-xs font-medium text-muted-foreground">
+                Then enrol it — mint a code on the{" "}
+                <Link to="/devices" className="underline">
+                  Devices
+                </Link>{" "}
+                page first
+              </span>
+              {installSteps(build).map((step) => (
+                <Code key={step}>{step}</Code>
+              ))}
+            </>
+          ) : (
+            // Android has no CLI to enrol from — the app mints its own code
+            // internally and there is nothing to type. Plain steps, not shell
+            // commands: rendering `./sentinel.apk enroll --code …` here would
+            // be a command that cannot be run anywhere on a phone.
+            <ol className="flex list-decimal flex-col gap-1 pl-5 text-sm text-muted-foreground">
+              {androidInstallSteps().map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
+          )}
           <span className="text-xs text-muted-foreground">
-            {`install-service registers ${SERVICE_MECHANISM[build.os]}.`}
+            {isCliInstall(build)
+              ? `install-service registers ${SERVICE_MECHANISM[build.os]}.`
+              : SERVICE_MECHANISM[build.os]}
           </span>
         </div>
       </CardContent>

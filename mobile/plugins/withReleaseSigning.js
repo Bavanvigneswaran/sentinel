@@ -23,6 +23,18 @@
  * command-line arguments are visible in the process table and in any CI log
  * that echoes commands. Same reasoning as agent/build/signing.py refusing a
  * .pfx password.
+ *
+ * The injected Groovy is null-safe for a reason found by running it, not by
+ * reasoning about it: Gradle evaluates every project's build.gradle during
+ * configuration regardless of which task was actually requested, so a bare
+ * `storeFile file(System.getenv("SENTINEL_ANDROID_KEYSTORE"))` throws
+ * "Cannot convert 'null' to File" the moment those four variables are not
+ * exported in *this* shell — which broke `:sentinel-collector`'s own unit
+ * tests, a target that never touches signing at all, the first time this ran
+ * without the variables still set from an earlier build. The guard means an
+ * unconfigured environment fails, loudly and correctly, only if `assembleRelease`
+ * is actually invoked — never for an unrelated task sharing the same Gradle
+ * project.
  */
 
 const { withAppBuildGradle } = require("expo/config-plugins")
@@ -44,10 +56,24 @@ const RELEASE_SIGNING_CONFIG = `
             // Injected by plugins/withReleaseSigning.js. Read from the
             // environment rather than gradle properties so the passwords never
             // reach the process table or a CI log.
-            storeFile file(System.getenv("SENTINEL_ANDROID_KEYSTORE"))
-            storePassword System.getenv("SENTINEL_ANDROID_KEYSTORE_PASSWORD")
-            keyAlias System.getenv("SENTINEL_ANDROID_KEY_ALIAS")
-            keyPassword System.getenv("SENTINEL_ANDROID_KEY_PASSWORD")
+            //
+            // Guarded on the keystore path being set at all: Gradle evaluates
+            // this block during project configuration for EVERY task, not just
+            // assembleRelease, so an unguarded file(System.getenv(...)) throws
+            // "Cannot convert 'null' to File" and takes down a completely
+            // unrelated task — such as :sentinel-collector's own unit tests —
+            // the moment these four variables are not exported in the current
+            // shell. Left unset, signingConfigs.release simply has no
+            // storeFile, and Gradle's own error at actual signing time
+            // ("Keystore file ... not set for signing config 'release'") is
+            // the one place this should ever fail.
+            def sentinelKeystore = System.getenv("SENTINEL_ANDROID_KEYSTORE")
+            if (sentinelKeystore != null) {
+                storeFile file(sentinelKeystore)
+                storePassword System.getenv("SENTINEL_ANDROID_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("SENTINEL_ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("SENTINEL_ANDROID_KEY_PASSWORD")
+            }
         }`
 
 /**

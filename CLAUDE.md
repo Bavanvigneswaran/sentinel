@@ -399,6 +399,28 @@ honest about. Fixed with a fallback to `signal.signal()`, which itself needs car
 runs outside the event loop and cannot call `agent.stop` directly, so it hands off through
 `loop.call_soon_threadsafe()`. 143 agent tests (was 139).
 
+A real Android release build followed, at the user's request: a self-generated release keystore
+(`~/.sentinel-keys/`, outside the repo), `mobile/plugins/withReleaseSigning.js` swapping it into
+`android/app/build.gradle` in place of React Native's public debug key, `make mobile-apk`, and the
+resulting APK registered into the same manifest `/download` already reads — `os: "android"` was
+already a first-class citizen there, not a special case. Verified past "it built": `apksigner
+verify`'s SHA-256 was checked against the keystore's own fingerprint (not merely "some signature
+exists"), `aapt2 dump badging` confirmed the package id/version/label, and the browser downloaded it
+through the real authenticated route with byte-for-byte matching size. **Building it surfaced a real
+regression the writing-and-testing pass had not**: the injected `storeFile file(System.getenv(...))`
+crashes with "Cannot convert 'null' to File" the instant that variable is unset — and Gradle
+evaluates every project's `build.gradle` during configuration for *any* task, not just
+`assembleRelease`, so it took down `:sentinel-collector`'s own unit tests, a target that never
+touches signing at all. `make test` in a plain shell (no keystore exported) is what caught it. Fixed
+with a `def sentinelKeystore = System.getenv(...); if (sentinelKeystore != null) { ... }` guard —
+unset now means "no release signing configured," never "crash," consistent with every other
+optional-integration pattern in this codebase. Re-verified in a shell with the four keystore
+variables explicitly unset: 42 Kotlin tests (was 36) pass, and `make mobile-apk` alone — with them
+set — still produces a correctly-signed APK. **No Play Store listing, no Google-verified identity**:
+this is a self-signed key good for installing the app "anywhere," the same trust model as the
+desktop binaries, and Android's install prompt says so on first open exactly like Gatekeeper/
+SmartScreen do for the others.
+
 Still to come in Phase 11, if picked back up: run the CI matrix and publish real Windows and Linux
 binaries (and find out what breaks); a `.dmg` so a notarized macOS build can be *stapled* — a bare
 binary cannot be, so Gatekeeper checks it online and an air-gapped machine still warns; and a real

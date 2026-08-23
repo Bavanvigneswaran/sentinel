@@ -66,6 +66,19 @@ describe("addReleaseSigning", () => {
     assert.equal(addReleaseSigning(once), once)
   })
 
+  it("guards storeFile against an unset keystore variable", () => {
+    // Found by running it, not by reasoning about it: Gradle evaluates every
+    // project's build.gradle during configuration for EVERY task, not just
+    // assembleRelease. An unguarded `file(System.getenv("SENTINEL_ANDROID_KEYSTORE"))`
+    // throws "Cannot convert 'null' to File" and takes down a completely
+    // unrelated task — :sentinel-collector's own unit tests — the moment
+    // those variables are not exported in the shell running Gradle, which is
+    // every shell except the one `make mobile-apk` itself opened.
+    const out = addReleaseSigning(GENERATED)
+    assert.match(out, /if \(sentinelKeystore != null\)/)
+    assert.doesNotMatch(out, /storeFile file\(System\.getenv\(/)
+  })
+
   it("refuses to guess when the template has changed", () => {
     // Better a failed build than a release quietly signed with the public key.
     assert.throws(() => addReleaseSigning("android {\n}\n"), /template changed/)
