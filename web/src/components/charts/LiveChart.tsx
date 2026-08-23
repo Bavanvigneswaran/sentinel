@@ -17,8 +17,26 @@ export interface SeriesSpec {
 // or stall in ways unrelated to whether new data has actually arrived.
 const REDRAW_INTERVAL_MS = 250
 
+/**
+ * How much of the recent past a live chart shows, in seconds.
+ *
+ * This is the difference between a chart that reads as live and one that
+ * looks frozen. uPlot auto-fits its x-scale to whatever data it holds, and
+ * the buffer accumulates 900 points — so with no explicit range the window
+ * grows from the primer's ~5 minutes towards 15, and one new sample per
+ * second moves the trace by 1/300th of the width and then less. It is
+ * genuinely drawing every sample; it just cannot be seen doing it.
+ *
+ * A fixed window makes the scroll rate constant: at 120s each new second is
+ * a visible 1/120th step, and it stays that way however long the screen is
+ * left open.
+ */
+export const DEFAULT_LIVE_WINDOW_SECONDS = 120
+
 interface LiveChartProps {
   title: string
+  /** Seconds of history to keep visible. See DEFAULT_LIVE_WINDOW_SECONDS. */
+  windowSeconds?: number
   /** Mutated in place by the caller's sample stream; read directly on a
    * timer tick rather than through React state — see lib/ringBuffer.ts. */
   buffer: React.RefObject<RingBuffer>
@@ -36,6 +54,7 @@ function buildOptions(
   width: number,
   height: number,
   series: SeriesSpec[],
+  windowSeconds: number,
   valueFormatter?: (v: number) => string,
 ): uPlot.Options {
   return {
@@ -45,7 +64,21 @@ function buildOptions(
     padding: [12, 12, 0, 0],
     cursor: { drag: { x: false, y: false } },
     legend: { show: series.length > 0 },
-    scales: { x: { time: true } },
+    scales: {
+      x: {
+        time: true,
+        // Anchor the right edge to the newest sample and show a fixed span
+        // behind it, rather than letting uPlot fit every point it holds.
+        // Returning the data bounds unchanged when the buffer is empty
+        // matters: a [NaN, NaN] range here leaves the scale broken even once
+        // real samples arrive, which is the same class of bug as passing
+        // `false` to setData (see Phase 3's uPlot invariant).
+        range: (_u, dataMin, dataMax) =>
+          dataMax == null || Number.isNaN(dataMax)
+            ? [dataMin, dataMax]
+            : [dataMax - windowSeconds, dataMax],
+      },
+    },
     axes: [
       {},
       {
@@ -74,6 +107,7 @@ export function LiveChart({
   series,
   deriveSeries,
   valueFormatter,
+  windowSeconds = DEFAULT_LIVE_WINDOW_SECONDS,
 }: LiveChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<uPlot | null>(null)
@@ -88,7 +122,7 @@ export function LiveChart({
 
     const width = container.clientWidth || 600
     chartRef.current = new uPlot(
-      buildOptions(title, width, height, initialKeys, valueFormatter),
+      buildOptions(title, width, height, initialKeys, windowSeconds, valueFormatter),
       buffer.current.toAlignedData(initialKeys.map((s) => s.key)) as uPlot.AlignedData,
       container,
     )
@@ -114,7 +148,14 @@ export function LiveChart({
         chartRef.current?.destroy()
         const specs = deriveSeries ? deriveSeries(currentBuffer.seriesKeys()) : (series ?? [])
         chartRef.current = new uPlot(
-          buildOptions(title, container.clientWidth || width, height, specs, valueFormatter),
+          buildOptions(
+            title,
+            container.clientWidth || width,
+            height,
+            specs,
+            windowSeconds,
+            valueFormatter,
+          ),
           currentBuffer.toAlignedData(keys) as uPlot.AlignedData,
           container,
         )
@@ -138,8 +179,11 @@ export function LiveChart({
       chartRef.current?.destroy()
       chartRef.current = null
     }
+    // windowSeconds is in this list because the x-scale range closure is baked
+    // into the options at construction: without it, changing the window picker
+    // would update no chart already on screen.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- chart owns its own imperative lifecycle
-  }, [title, height])
+  }, [title, height, windowSeconds])
 
   return <div ref={containerRef} className="w-full" />
 }

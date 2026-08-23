@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Link, useParams } from "react-router"
 
 import { AppLayout } from "@/components/AppLayout"
-import { LiveChart } from "@/components/charts/LiveChart"
+import { DEFAULT_LIVE_WINDOW_SECONDS, LiveChart } from "@/components/charts/LiveChart"
 import { DeviceStatusBadge } from "@/components/DeviceStatusBadge"
 import { MetricValue } from "@/components/MetricValue"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -11,6 +11,7 @@ import { ApiError, apiFetch } from "@/lib/api"
 import { colorForIndex } from "@/lib/chartColors"
 import { formatBytes, formatBytesPerSecond, formatMs } from "@/lib/formatters"
 import { subBufferRef } from "@/lib/streamBuffers"
+import { cn } from "@/lib/utils"
 import type { Device } from "@/types/api"
 
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
@@ -24,6 +25,17 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
   )
 }
 
+/** How much recent history the charts show. Shorter reads as more "live":
+ * every chart scrolls one window-width per window, so at 60s a new sample is
+ * a visible 1/60th step and at 15m it is imperceptible even though the data
+ * is identical. */
+const WINDOW_OPTIONS = [
+  { seconds: 60, label: "1m" },
+  { seconds: DEFAULT_LIVE_WINDOW_SECONDS, label: "2m" },
+  { seconds: 300, label: "5m" },
+  { seconds: 900, label: "15m" },
+] as const
+
 export function LiveMonitoringPage() {
   const { deviceId } = useParams<{ deviceId: string }>()
   if (!deviceId) return null
@@ -35,6 +47,7 @@ export function LiveMonitoringPage() {
 }
 
 function LiveMonitoringView({ deviceId }: { deviceId: string }) {
+  const [windowSeconds, setWindowSeconds] = useState<number>(DEFAULT_LIVE_WINDOW_SECONDS)
   const [device, setDevice] = useState<Device | null>(null)
   const [deviceError, setDeviceError] = useState<string | null>(null)
 
@@ -92,7 +105,26 @@ function LiveMonitoringView({ deviceId }: { deviceId: string }) {
             {device?.os_version ? ` ${device.os_version}` : ""}
           </p>
         </div>
-        <DeviceStatusBadge status={effectiveStatus} />
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1 rounded-md border p-1">
+            {WINDOW_OPTIONS.map((opt) => (
+              <button
+                key={opt.seconds}
+                type="button"
+                onClick={() => setWindowSeconds(opt.seconds)}
+                className={cn(
+                  "rounded px-2 py-0.5 text-xs transition-colors",
+                  windowSeconds === opt.seconds
+                    ? "bg-accent font-medium text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <DeviceStatusBadge status={effectiveStatus} />
+        </div>
       </div>
 
       {deviceError && (
@@ -116,6 +148,7 @@ function LiveMonitoringView({ deviceId }: { deviceId: string }) {
             title="CPU"
             buffer={systemRef}
             height={180}
+            windowSeconds={windowSeconds}
             series={[
               { key: "cpu_percent", label: "total", color: colorForIndex(0) },
               { key: "cpu_user_percent", label: "user", color: colorForIndex(1) },
@@ -130,6 +163,7 @@ function LiveMonitoringView({ deviceId }: { deviceId: string }) {
             title="Memory"
             buffer={systemRef}
             height={180}
+            windowSeconds={windowSeconds}
             series={[
               { key: "mem_percent", label: "used", color: colorForIndex(0) },
               { key: "swap_percent", label: "swap", color: colorForIndex(1) },
@@ -143,6 +177,7 @@ function LiveMonitoringView({ deviceId }: { deviceId: string }) {
             title="Network"
             buffer={netRef}
             height={180}
+            windowSeconds={windowSeconds}
             deriveSeries={(keys) =>
               keys.map((k, i) => ({ key: k, label: k, color: colorForIndex(i) }))
             }
@@ -155,6 +190,7 @@ function LiveMonitoringView({ deviceId }: { deviceId: string }) {
             title="Disk I/O"
             buffer={diskIoRef}
             height={180}
+            windowSeconds={windowSeconds}
             deriveSeries={(keys) =>
               keys.map((k, i) => ({ key: k, label: k, color: colorForIndex(i) }))
             }
@@ -167,6 +203,7 @@ function LiveMonitoringView({ deviceId }: { deviceId: string }) {
             title="Latency"
             buffer={latencyRef}
             height={180}
+            windowSeconds={windowSeconds}
             deriveSeries={(keys) =>
               keys.map((k, i) => ({ key: k, label: k, color: colorForIndex(i) }))
             }
