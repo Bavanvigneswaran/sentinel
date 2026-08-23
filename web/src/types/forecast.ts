@@ -30,6 +30,14 @@ export interface MetricForecast {
   computed_at: string
   horizon_seconds: number
   bucket_seconds: number
+  /** Real history behind the fit. Null on rows written before it was recorded. */
+  history_seconds: number | null
+  /**
+   * How far to trust this projection. A forecast now appears within minutes of
+   * a device enrolling rather than after a day — the horizon is capped to the
+   * history behind it, and this says so in a word.
+   */
+  confidence: "provisional" | "medium" | "high"
   /** Empty when there wasn't enough history to fit one — still present so
    * computed_at can say when that was last checked. */
   points: ForecastPoint[]

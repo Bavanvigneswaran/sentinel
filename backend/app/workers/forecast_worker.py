@@ -59,6 +59,31 @@ _SYSTEM_COLUMNS = {"cpu_percent", "mem_percent", "swap_percent", "cpu_iowait_per
 #: enough for the requested point budget — 24 points/day hits that exactly.
 _POINTS_PER_DAY = 24
 
+#: A window narrower than this cannot produce enough buckets at any tier to
+#: fit anything, and plan_series rejects a zero-width range outright.
+_MIN_WINDOW_SECONDS = 120
+
+
+def _window_start_for(device, lookback_start: datetime, now: datetime) -> datetime:
+    """Where this device's forecast window should begin.
+
+    `enrolled_at` is a lower bound on its history that is already loaded — no
+    extra query — and using it is what lets a young device be forecast at all.
+
+    Falls back to the full lookback for a device too new to narrow to, rather
+    than skipping it: Phase 7's invariant is that the worker still upserts a
+    row with `points=[]` so `computed_at` can say when it last checked. An
+    early return here would have made the row simply not exist, which reads as
+    "the worker has never run" instead of "there is nothing to fit yet".
+    """
+    first_seen = device.enrolled_at or device.created_at
+    if first_seen is None:
+        return lookback_start
+    start = max(lookback_start, first_seen)
+    if (now - start).total_seconds() < _MIN_WINDOW_SECONDS:
+        return lookback_start
+    return start
+
 
 class ForecastWorker:
     def __init__(self) -> None:
@@ -145,10 +170,21 @@ class ForecastWorker:
                 )
             }
 
-            window_start = now - timedelta(days=self._history_days)
+            lookback_start = now - timedelta(days=self._history_days)
             max_points = self._history_days * _POINTS_PER_DAY
 
             for device in devices:
+                # Plan from when this device actually started reporting, not
+                # from a flat 14 days ago. A device enrolled an hour ago has no
+                # hourly buckets at all, so the flat window produced a plan at
+                # 1h resolution, found ~1 row, and returned no forecast for a
+                # full day — which read as "forecasting is broken" rather than
+                # "not yet". plan_series already picks a finer tier for a
+                # narrower window (a 20-minute span lands on 10s buckets), so
+                # clamping the start is the whole fix; analysis/forecast.py's
+                # MAX_HORIZON_RATIO is what keeps the resulting early forecast
+                # from over-reaching.
+                window_start = _window_start_for(device, lookback_start, now)
                 plan = plan_series(window_start, now, max_points=max_points, now=now)
                 await self._compute_device(
                     session,
@@ -248,6 +284,11 @@ class ForecastWorker:
             entity,
             points,
             bucket_seconds,
+            # The real span behind the fit, which is what decides whether the
+            # UI presents it as provisional. Derived from the observations
+            # themselves, not from the requested window: gaps are dropped
+            # upstream, so asking the window would overstate it.
+            len(values) * bucket_seconds,
             now,
             existing_forecasts,
         )
@@ -305,6 +346,7 @@ def _upsert_forecast(
     entity: str | None,
     points: tuple[ForecastPoint, ...] | None,
     bucket_seconds: int,
+    history_seconds: int,
     now: datetime,
     existing: dict[tuple[uuid.UUID, str], MetricForecast],
 ) -> None:
@@ -320,6 +362,7 @@ def _upsert_forecast(
             computed_at=now,
             horizon_seconds=horizon,
             bucket_seconds=bucket_seconds,
+            history_seconds=history_seconds,
             points=points_data,
         )
         session.add(row)
@@ -329,6 +372,7 @@ def _upsert_forecast(
         row.computed_at = now
         row.horizon_seconds = horizon
         row.bucket_seconds = bucket_seconds
+        row.history_seconds = history_seconds
         row.points = points_data
 
 

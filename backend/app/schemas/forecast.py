@@ -9,7 +9,9 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, computed_field
+
+from app.analysis.forecast import forecast_confidence
 
 Metric = Literal[
     "cpu_percent",
@@ -42,10 +44,26 @@ class MetricForecastOut(BaseModel):
     computed_at: datetime
     horizon_seconds: int
     bucket_seconds: int
+    #: How much real history backed the fit. Null on rows written before the
+    #: column existed.
+    history_seconds: int | None = None
     #: Empty when the worker last found too little history to fit one —
     #: still returned (rather than omitted) so the caller can see when that
     #: was last checked via computed_at.
     points: list[ForecastPointOut]
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def confidence(self) -> str:
+        """How far to trust this projection, in one word.
+
+        A computed field rather than a stored column, for the same reason
+        Phase 6's alert severity is: `history_seconds` already determines it,
+        and a second copy could only ever drift from the first. An unknown
+        history (a pre-migration row) gets the most cautious answer rather
+        than the most flattering one.
+        """
+        return forecast_confidence(self.history_seconds or 0)
 
 
 class ExhaustionForecastOut(BaseModel):

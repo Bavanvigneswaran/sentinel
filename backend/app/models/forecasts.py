@@ -72,6 +72,12 @@ class MetricForecast(Base):
     )
     horizon_seconds: Mapped[int] = mapped_column(sa.Integer, nullable=False)
     bucket_seconds: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    #: How much real history this fit was built on. Stored rather than derived
+    #: because the horizon alone cannot distinguish "one day of data" from
+    #: "five" once both are capped at the 24h default — and that distinction is
+    #: exactly what `ForecastOut.confidence` reports. Nullable for rows written
+    #: before the column existed.
+    history_seconds: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     points: Mapped[list[dict]] = mapped_column(
         JSONB, nullable=False, server_default=sa.text("'[]'::jsonb")
     )

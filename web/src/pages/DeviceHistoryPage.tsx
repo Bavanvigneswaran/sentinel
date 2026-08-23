@@ -230,6 +230,9 @@ function DeviceHistoryView({ deviceId }: { deviceId: string }) {
                     domain={chart.domain}
                     forecast={chart.forecast}
                   />
+                  {chart.caption && (
+                    <p className="pt-2 text-xs text-muted-foreground">{chart.caption}</p>
+                  )}
                 </CardContent>
               </Card>
             ),
@@ -253,6 +256,8 @@ function DeviceHistoryView({ deviceId }: { deviceId: string }) {
 
 interface ChartSpec {
   title: string
+  /** Rendered under the chart — currently how far to trust its forecast. */
+  caption?: string
   timestamps: number[]
   series: { label: string; color: string; values: (number | null)[] }[]
   format?: (v: number) => string
@@ -265,6 +270,26 @@ const percent = (v: number) => `${v.toFixed(0)}%`
 /** A forecast continues past the real series' last timestamp, dashed, in the
  * same colour as the real series it extends — see HistoryChart. Undefined
  * (no overlay) when there wasn't enough history to fit one. */
+/**
+ * How a forecast's own confidence should be described under its chart.
+ *
+ * A forecast now appears within minutes of a device enrolling instead of after
+ * a full day, because the worker plans its window from when the device started
+ * reporting. That is only honest if the projection says how thin the ground
+ * under it is — so the horizon is capped to the history behind it, and this
+ * puts that in words rather than leaving the user to notice the dashed line is
+ * short.
+ */
+export function forecastCaption(forecast: MetricForecast | undefined): string | undefined {
+  if (!forecast || forecast.points.length === 0) return undefined
+  const hours = Math.max(1, Math.round((forecast.history_seconds ?? 0) / 3600))
+  const span = hours < 48 ? `${hours}h` : `${Math.round(hours / 24)}d`
+  if (forecast.confidence === "high") return undefined
+  return forecast.confidence === "provisional"
+    ? `Provisional forecast — fitted on ${span} of history, so it only projects that far ahead.`
+    : `Forecast fitted on ${span} of history; it will lengthen and steady as more accumulates.`
+}
+
 function toForecastOverlay(
   forecast: MetricForecast | undefined,
   label: string,
@@ -355,15 +380,24 @@ function buildCharts(
             format: percent,
             domain: [0, 100] as [number, number],
             forecast: cpuForecast,
+            caption: forecastCaption(forecastFor("cpu_percent")),
           },
         ]),
-    { title: "Memory", ...memory, format: percent, domain: [0, 100], forecast: memForecast },
+    {
+      title: "Memory",
+      ...memory,
+      format: percent,
+      domain: [0, 100],
+      forecast: memForecast,
+      caption: forecastCaption(forecastFor("mem_percent")),
+    },
     {
       title: "Disk usage",
       ...diskUsage,
       format: percent,
       domain: [0, 100],
       forecast: diskForecast,
+      caption: forecastCaption(diskForecastRow),
     },
     {
       title: "Network in",

@@ -57,6 +57,37 @@ MAX_FORECAST_STEPS = 500
 MIN_POINTS_EXHAUSTION = 8
 EXHAUSTION_MAX_HORIZON_DAYS = 3650.0
 
+#: A forecast never projects further ahead than the span it was fitted on.
+#: This is what makes an *early* forecast honest rather than reckless: the
+#: worker now plans its window from when a device actually started reporting,
+#: so a four-minute-old device gets 10s buckets and enough points to fit — but
+#: projecting that 24 hours ahead would be exactly the "arithmetic noise
+#: dressed up as a forecast" this module exists to refuse. The horizon grows
+#: with the history instead: four minutes of data forecasts four minutes
+#: ahead, and only once there is a full day does the 24h default apply.
+MAX_HORIZON_RATIO = 1.0
+
+#: History spans below which a forecast is labelled provisional. Purely a
+#: presentation concern — the numbers are identical either way; what changes is
+#: whether the UI invites anyone to act on them.
+CONFIDENCE_HIGH_SECONDS = 2 * 86_400
+CONFIDENCE_MEDIUM_SECONDS = 6 * 3_600
+
+
+def forecast_confidence(history_seconds: float) -> str:
+    """How much a forecast built on `history_seconds` of data deserves trust.
+
+    Derived at read time from the fit's own inputs rather than stored, the same
+    way Phase 6's alert severity is a computed field over `z_score` instead of
+    a second copy that can drift.
+    """
+    if history_seconds >= CONFIDENCE_HIGH_SECONDS:
+        return "high"
+    if history_seconds >= CONFIDENCE_MEDIUM_SECONDS:
+        return "medium"
+    return "provisional"
+
+
 
 @dataclass(frozen=True)
 class ForecastPoint:
@@ -80,6 +111,12 @@ def fit_holt_winters(
     if len(values) < MIN_POINTS_TREND or bucket_seconds <= 0:
         return None
 
+    # Never project further ahead than the history behind the fit. Without
+    # this, a device four minutes old — which now gets a fit at all, because
+    # the worker plans its window from when the device started reporting —
+    # would extrapolate a full day from 24 ten-second buckets.
+    observed_seconds = len(values) * bucket_seconds
+    horizon_seconds = min(horizon_seconds, int(observed_seconds * MAX_HORIZON_RATIO))
     steps = min(MAX_FORECAST_STEPS, max(1, horizon_seconds // bucket_seconds))
     endog = pd.Series(np.asarray(values, dtype=float), index=pd.RangeIndex(len(values)))
 
