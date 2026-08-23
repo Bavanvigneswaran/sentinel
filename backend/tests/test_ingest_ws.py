@@ -137,6 +137,73 @@ async def test_a_soft_deleted_device_cannot_connect(live_server, enrolled, admin
 # --- handshake --------------------------------------------------------------
 
 
+@pytest.fixture
+def touch_every_frame(monkeypatch):
+    """Re-check authorization on every metrics frame instead of every 15s.
+
+    The check deliberately rides on the throttled last_seen write, so in
+    production a revoked agent has at most one throttle window left. Here that
+    window is the difference between a test that runs instantly and one that
+    sleeps 15 seconds, and the behaviour under test is the check itself.
+    """
+    from app.ingest import ws
+
+    monkeypatch.setattr(ws, "LAST_SEEN_TOUCH_THROTTLE_SECONDS", -1)
+
+
+async def test_revoking_a_token_kills_an_already_open_socket(
+    live_server, enrolled, admin_session, touch_every_frame
+):
+    """Authentication happens once, at the handshake — so a revoked token used
+    to leave the *session* it had already opened working indefinitely.
+
+    Found by removing a phone from the Android app: the device row was
+    soft-deleted and the token revoked, and the collector went on pushing
+    metrics into the deleted device, still reporting itself as connected. A
+    desktop agent may not reconnect for days, so "it fails on the next
+    handshake" is not a revocation.
+    """
+    async with _connect(live_server, enrolled["token"]) as ws:
+        await _send(ws, HELLO)
+        await _recv(ws)
+
+        await admin_session.execute(
+            sa.text("UPDATE agent_tokens SET revoked_at = now() WHERE id = :i"),
+            {"i": enrolled["token_id"]},
+        )
+        await admin_session.commit()
+
+        await _send(ws, _metrics())
+        frame = await _recv(ws)
+
+    assert frame["type"] == "error"
+    assert frame["code"] == "unauthorized"
+    assert frame["retryable"] is False
+
+
+async def test_deleting_a_device_kills_an_already_open_socket(
+    live_server, enrolled, admin_session, touch_every_frame
+):
+    """The mirror of the above: DELETE /devices/{id} revokes the token *and*
+    soft-deletes the row, and either one alone has to be enough to stop an
+    open session."""
+    async with _connect(live_server, enrolled["token"]) as ws:
+        await _send(ws, HELLO)
+        await _recv(ws)
+
+        await admin_session.execute(
+            sa.text("UPDATE devices SET deleted_at = now() WHERE id = :i"),
+            {"i": enrolled["device"].id},
+        )
+        await admin_session.commit()
+
+        await _send(ws, _metrics())
+        frame = await _recv(ws)
+
+    assert frame["type"] == "error"
+    assert frame["code"] == "unauthorized"
+
+
 async def test_a_valid_token_completes_the_handshake(live_server, enrolled):
     async with _connect(live_server, enrolled["token"]) as ws:
         await _send(ws, HELLO)

@@ -82,8 +82,14 @@ class _Sender:
 async def _reject(sender: _Sender, code: str, message: str, *, retryable: bool) -> None:
     """Tell the agent why before closing, so it can back off intelligently
     instead of hammering a socket that will never accept it."""
+    # Constructed outside the try on purpose. `code` is a closed Literal on
+    # ErrorFrame, so an unlisted value raises here — and inside the try that
+    # became a swallowed ValidationError which sent the agent a bare 1008 with
+    # no reason at all. A wrong code is our bug, not a peer that went away, and
+    # only the latter is what the try below is for.
+    frame = ErrorFrame(code=code, message=message, retryable=retryable)
     try:
-        await sender(ErrorFrame(code=code, message=message, retryable=retryable))
+        await sender(frame)
     except Exception:
         # The peer may already be gone; the close below is what matters.
         logger.debug("could not deliver error frame", exc_info=True)
@@ -133,16 +139,46 @@ async def _mark_offline(identity: AgentIdentity) -> None:
         await session.commit()
 
 
-async def _touch_last_seen(identity: AgentIdentity) -> None:
+async def _touch_last_seen(identity: AgentIdentity) -> bool:
+    """Record the agent as alive, and answer whether it is still allowed to be.
+
+    Returns False once the device has been deleted or the token revoked.
+
+    The authorization re-check rides on this existing periodic write rather
+    than being a second query on its own timer, because the two answer the same
+    question — is this still a device we accept data from — and doing it in one
+    statement means the "yes" costs exactly what it did before.
+
+    Authentication happens once, at the handshake. Without this, revoking a
+    token or deleting a device had no effect on a socket that was *already
+    open*: the credential was dead and the session was not, so a removed device
+    kept ingesting metrics indefinitely — until the agent happened to
+    reconnect, which for a healthy desktop agent may be days. Found by removing
+    a phone from the app and watching its collector keep pushing, with the
+    device row soft-deleted and its token revoked. `DELETE /devices/{id}`
+    already says in its own docstring that a delete leaving a working
+    credential behind is not a delete; the same is true of a live session.
+    """
     import sqlalchemy as sa
 
+    from app.models import AgentToken
+
     async with AdminSessionLocal() as session:
-        await session.execute(
+        result = await session.execute(
             sa.update(Device)
-            .where(Device.id == identity.device_id, Device.user_id == identity.user_id)
+            .where(
+                Device.id == identity.device_id,
+                Device.user_id == identity.user_id,
+                Device.deleted_at.is_(None),
+                sa.exists().where(
+                    AgentToken.id == identity.token_id,
+                    AgentToken.revoked_at.is_(None),
+                ),
+            )
             .values(last_seen_at=datetime.now(UTC), status="online")
         )
         await session.commit()
+        return result.rowcount > 0
 
 
 @router.websocket("/ws/agent")
@@ -259,7 +295,18 @@ async def _run_session(websocket: WebSocket, identity: AgentIdentity, sender: _S
                     last_touch is None
                     or (now - last_touch).total_seconds() > LAST_SEEN_TOUCH_THROTTLE_SECONDS
                 ):
-                    await _touch_last_seen(identity)
+                    if not await _touch_last_seen(identity):
+                        # Not retryable: the agent should stop rather than
+                        # reconnect. Its token is gone, so a reconnect would
+                        # fail the handshake anyway — saying so plainly beats
+                        # letting it back off against a door that is locked.
+                        await _reject(
+                            sender,
+                            "unauthorized",
+                            "this device has been removed or its token revoked",
+                            retryable=False,
+                        )
+                        return
                     last_touch = now
 
                 # The durable write already happened; publishing is a
