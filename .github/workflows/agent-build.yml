@@ -36,7 +36,15 @@ jobs:
           - label: macos-arm64
             runner: macos-14
           - label: macos-x64
-            runner: macos-13
+            # macos-13 was GitHub's last x86_64 macOS image and has been
+            # retired: a job requesting it is accepted and then queues
+            # forever, which is what happened here — two runs sat pending for
+            # over two hours while the other three platforms finished in
+            # minutes. `macos-15-intel` is the current x86_64 label. Note this
+            # is NOT the "oldest supported runner" logic that pins linux to
+            # 22.04; macOS binaries do not carry the same glibc-style floor,
+            # and there is no older image left to pin to regardless.
+            runner: macos-15-intel
           - label: linux-x64
             # Pinned to the OLDEST supported runner on purpose. A PyInstaller
             # binary links against the glibc it was built on and will not run
