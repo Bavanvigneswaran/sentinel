@@ -25,6 +25,7 @@ interface SentinelCollectorNativeModule {
   stop(): Promise<void>
   status(): CollectorStatus
   requestBatteryOptimizationExemption(): Promise<boolean>
+  setHighFrequency(enabled: boolean): Promise<boolean>
   addListener<K extends keyof SentinelCollectorEvents>(
     event: K,
     listener: SentinelCollectorEvents[K],
@@ -55,6 +56,10 @@ export const UNSUPPORTED_STATUS: CollectorStatus = {
   lastError: null,
   unavailableProbes: [],
   batteryOptimizationExempt: false,
+  highFrequency: false,
+  // Not 0: zero would read as "sampling infinitely fast" wherever this is
+  // formatted, and nothing is sampling at all here.
+  sampleIntervalSeconds: 10,
 }
 
 function requireNative(): SentinelCollectorNativeModule {
@@ -101,6 +106,16 @@ export function status(): CollectorStatus {
 
 /** Opens the system dialog. Resolves true only if the exemption was already
  *  held — the user's answer arrives later, via the next `status()`. */
+/**
+ * Opt this phone into sampling every second all the time.
+ *
+ * Takes effect on a running collector immediately: the sample loop's wait is
+ * interruptible, so it does not sit out the rest of a 10s sleep first.
+ */
+export async function setHighFrequency(enabled: boolean): Promise<boolean> {
+  return requireNative().setHighFrequency(enabled)
+}
+
 export async function requestBatteryOptimizationExemption(): Promise<boolean> {
   return requireNative().requestBatteryOptimizationExemption()
 }

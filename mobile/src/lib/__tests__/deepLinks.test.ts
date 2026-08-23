@@ -44,3 +44,19 @@ describe("appUrlForPath", () => {
     assert.equal(appUrlForPath("toString"), null)
   })
 })
+
+describe("routes reachable from a push payload", () => {
+  it("maps every screen the backend could name", () => {
+    // These exist so a future payload does not need a client release to be
+    // routable. Each must also be in navigation/linking.ts's `screens` — a
+    // path here with no screen there resolves to nothing, and a tapped
+    // notification lands on whatever was already open.
+    for (const path of ["/incidents", "/anomalies", "/forecasts", "/reports", "/settings"]) {
+      assert.equal(appUrlForPath(path), `sentinel://${path.slice(1)}`)
+    }
+  })
+
+  it("still refuses a path nobody registered", () => {
+    assert.equal(appUrlForPath("/admin"), null)
+  })
+})

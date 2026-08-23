@@ -23,11 +23,11 @@ import {
   watchTokenRotation,
   type PushState,
 } from "@/lib/push"
-import type { RootTabScreenProps } from "@/navigation/types"
+import type { RootStackScreenProps } from "@/navigation/types"
 import { useAuth } from "@/stores/auth"
 import { spacing, text } from "@/theme"
 
-export function SettingsScreen({ navigation }: RootTabScreenProps<"Settings">) {
+export function SettingsScreen({ navigation }: RootStackScreenProps<"Settings">) {
   const user = useAuth((s) => s.user)
   const { status: collector } = useCollectorStatus()
   const logout = useAuth((s) => s.logout)

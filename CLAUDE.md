@@ -499,6 +499,35 @@ binary cannot be, so Gatekeeper checks it online and an air-gapped machine still
 Windows service via pywin32 if `services.msc` visibility ever matters more than the Task Scheduler
 trade-off documented in PACKAGING.md.
 
+Phase 12 (feature parity + real-time fixes), on request after using both halves:
+
+* **The live charts looked frozen and were not.** uPlot auto-fits x to whatever it holds and nothing
+  constrained it, so the visible span started at the primer's ~300s and grew towards the ring
+  buffer's 900 — one new sample per second moved the trace by 1/300th of the width, then less. A
+  direct WebSocket client measured steady 1.03s delivery throughout; the backend was never at fault.
+  `LiveChart` now pins x to `[newest - windowSeconds, newest]` so the scroll rate is constant however
+  long the screen is open, with a 1m/2m/5m/15m picker.
+* **Forecasts needed a full day before anything appeared**, which read as broken rather than
+  pending. The cause was the *window*, not the 24-point threshold: a flat 14-day plan made
+  `plan_series` choose hourly buckets, so an hour-old device had ~1 row. The window now starts at
+  `enrolled_at`, and `plan_series` already picks 10s buckets for a 20-minute span. What makes that
+  honest is `MAX_HORIZON_RATIO`: a forecast never projects further ahead than the history behind it,
+  so four minutes of data forecasts four minutes, and `history_seconds` (migration 0012) drives a
+  `confidence` computed field the history page captions.
+* **The Android app reached feature parity for viewing**: Anomalies, Forecasts, Incidents and
+  Reports, behind a **More** tab rather than four more bottom tabs. Settings moved onto the stack
+  with them — which silently broke its deep link until `navigation/linking.ts` moved too, since a
+  path under `Tabs` that is no longer a tab resolves to nothing.
+* **Android sampling cadence is now the user's choice.** `CollectorConfig.highFrequency` samples at
+  1s continuously instead of 10s-with-1s-on-demand. Off by default and stated plainly on screen: a
+  1s timer all day is the collector's dominant battery cost and nothing Android lets an app read
+  moves fast enough to need it. Live mode is unaffected either way — the preference is a floor on
+  resolution, never a ceiling.
+
+Still true, and not fixable: **Android denies apps `/proc/stat` and `/proc/diskstats`**, so global
+CPU% and disk I/O have no workaround short of root. They stay excluded from the health score rather
+than counted as zero — see docs/ANDROID_METRICS.md.
+
 ## Conventions
 
 - Files stay under ~400 lines; split rather than grow.

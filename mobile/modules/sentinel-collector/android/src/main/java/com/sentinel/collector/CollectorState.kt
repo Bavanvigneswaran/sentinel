@@ -22,6 +22,10 @@ data class CollectorStatus(
     val connected: Boolean = false,
     /** "normal" or "live" — the cadence the server has asked for. */
     val mode: String = "normal",
+    /** The cadence the sample loop is actually running at, which is not always
+     *  derivable from `mode`: a phone opted into high-frequency sampling runs
+     *  at 1s in normal mode too. */
+    val sampleIntervalSeconds: Int = CollectorConfig.NORMAL_SAMPLE_SECONDS,
     val pushIntervalSeconds: Int = CollectorConfig.DEFAULT_PUSH_SECONDS,
     val bufferedSamples: Int = 0,
     val lastPushAt: String? = null,

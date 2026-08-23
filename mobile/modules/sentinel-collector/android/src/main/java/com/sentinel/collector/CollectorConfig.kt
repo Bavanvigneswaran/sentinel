@@ -35,6 +35,28 @@ class CollectorConfig(context: Context) {
         get() = prefs.getBoolean(KEY_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_ENABLED, value).apply()
 
+    /**
+     * Sample every second all the time, not only while someone is watching.
+     *
+     * Off by default, and that default is a real decision rather than
+     * timidity: a 1s timer running all day is the collector's dominant battery
+     * cost, and every metric Android actually lets an app read (memory,
+     * storage, battery, throughput) moves far too slowly for 1s to tell you
+     * anything 10s does not. Live mode already upshifts to 1s on demand, which
+     * is where the resolution is genuinely useful.
+     *
+     * It is exposed anyway because "is this really real-time?" is a fair
+     * question to want answered on your own phone, and the cost is the user's
+     * to spend. The UI states it plainly rather than burying it.
+     */
+    var highFrequency: Boolean
+        get() = prefs.getBoolean(KEY_HIGH_FREQUENCY, false)
+        set(value) = prefs.edit().putBoolean(KEY_HIGH_FREQUENCY, value).apply()
+
+    /** The cadence the sample loop uses outside live mode. */
+    val normalSampleSeconds: Int
+        get() = if (highFrequency) LIVE_SAMPLE_SECONDS else NORMAL_SAMPLE_SECONDS
+
     fun clear() {
         prefs.edit().clear().apply()
     }
@@ -61,6 +83,7 @@ class CollectorConfig(context: Context) {
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_DEVICE_NAME = "device_name"
         private const val KEY_ENABLED = "enabled"
+        private const val KEY_HIGH_FREQUENCY = "high_frequency"
 
         /** Normal-mode cadence. See docs/ANDROID_METRICS.md on why a phone does
          *  not sample at 1s the way the desktop agent does. */

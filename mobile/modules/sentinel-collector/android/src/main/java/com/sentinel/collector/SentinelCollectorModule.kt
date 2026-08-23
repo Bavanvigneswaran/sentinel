@@ -108,6 +108,19 @@ class SentinelCollectorModule : Module() {
         Function("status") { statusPayload(unsealToken = true) }
 
         /**
+         * Sample every second all the time, rather than only while a viewer is
+         * watching. Takes effect immediately on a running collector — the
+         * sample loop's wait is interruptible (Phase 10b), so it does not sit
+         * out the remainder of a 10s sleep before switching.
+         */
+        AsyncFunction("setHighFrequency") { enabled: Boolean ->
+            CollectorConfig(context).highFrequency = enabled
+            CollectorService.applyCadence(context)
+            emitStatus()
+            enabled
+        }
+
+        /**
          * Android kills or defers background work under Doze unless the app is
          * exempt. The collector runs without the exemption — less reliably, with
          * pushes bunching up after an idle period — so this is offered, never
@@ -174,6 +187,8 @@ class SentinelCollectorModule : Module() {
             "lastError" to status.lastError,
             "unavailableProbes" to status.unavailableProbes,
             "batteryOptimizationExempt" to CollectorService.isIgnoringBatteryOptimizations(context),
+            "highFrequency" to config.highFrequency,
+            "sampleIntervalSeconds" to status.sampleIntervalSeconds,
         )
     }
 

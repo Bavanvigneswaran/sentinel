@@ -33,6 +33,15 @@ export interface CollectorStatus {
    */
   unavailableProbes: string[]
   batteryOptimizationExempt: boolean
+  /**
+   * Sample every second even outside live mode. Off by default — a 1s timer
+   * running all day is the collector's dominant battery cost, and every metric
+   * Android lets an app read moves far too slowly for 1s to add anything.
+   */
+  highFrequency: boolean
+  /** What the sample loop is actually running at right now. Not derivable from
+   *  `mode`: a high-frequency phone runs at 1s in normal mode too. */
+  sampleIntervalSeconds: number
 }
 
 export type CollectorStatusEvent = (status: CollectorStatus) => void

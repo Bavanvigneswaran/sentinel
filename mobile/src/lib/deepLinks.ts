@@ -25,6 +25,10 @@ const ROUTES = new Map<string, string>([
   ["/alerts", "alerts"],
   ["/devices", "devices"],
   ["/settings", "settings"],
+  ["/anomalies", "anomalies"],
+  ["/forecasts", "forecasts"],
+  ["/incidents", "incidents"],
+  ["/reports", "reports"],
 ])
 
 export function appUrlForPath(url: unknown): string | null {

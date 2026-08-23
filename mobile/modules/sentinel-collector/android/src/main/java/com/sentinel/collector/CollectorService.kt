@@ -29,9 +29,11 @@ class CollectorService : Service() {
     private lateinit var config: CollectorConfig
     private lateinit var tokens: TokenStore
     private var engine: CollectorEngine? = null
+        private set
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         config = CollectorConfig(this)
         tokens = TokenStore(this)
         CollectorNotification.ensureChannel(this)
@@ -119,6 +121,7 @@ class CollectorService : Service() {
 
     override fun onDestroy() {
         stopCollecting()
+        if (instance === this) instance = null
         super.onDestroy()
     }
 
@@ -128,12 +131,28 @@ class CollectorService : Service() {
 
     companion object {
         private const val TAG = "SentinelService"
+
+        /**
+         * The running service, so the Expo module can nudge a live engine
+         * without a restart. Safe as a plain reference because the service and
+         * the module share one process by design (Phase 10b: a `:collector`
+         * process would put incoherent SharedPreferences between them), and it
+         * is cleared in onDestroy.
+         */
+        @Volatile
+        private var instance: CollectorService? = null
         const val ACTION_START = "com.sentinel.collector.START"
         const val ACTION_STOP = "com.sentinel.collector.STOP"
 
         fun start(context: Context) {
             val intent = Intent(context, CollectorService::class.java).setAction(ACTION_START)
             context.startForegroundService(intent)
+        }
+
+        /** Push a changed cadence preference into a running collector.
+         *  A no-op when nothing is running — the next start seeds from config. */
+        fun applyCadence(@Suppress("UNUSED_PARAMETER") context: Context) {
+            instance?.engine?.applyCadencePreference()
         }
 
         fun stop(context: Context) {

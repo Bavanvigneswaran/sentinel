@@ -20,6 +20,11 @@ import { DeviceScreen } from "@/screens/DeviceScreen"
 import { DevicesScreen } from "@/screens/DevicesScreen"
 import { FleetScreen } from "@/screens/FleetScreen"
 import { LiveScreen } from "@/screens/LiveScreen"
+import { AnomaliesScreen } from "@/screens/AnomaliesScreen"
+import { ForecastsScreen } from "@/screens/ForecastsScreen"
+import { IncidentsScreen } from "@/screens/IncidentsScreen"
+import { MoreScreen } from "@/screens/MoreScreen"
+import { ReportsScreen } from "@/screens/ReportsScreen"
 import { SettingsScreen } from "@/screens/SettingsScreen"
 import { useAuth } from "@/stores/auth"
 import { colors, spacing } from "@/theme"
@@ -36,7 +41,7 @@ const TAB_GLYPHS: Record<keyof TabParamList, string> = {
   Fleet: "●",
   Devices: "■",
   Alerts: "▲",
-  Settings: "⚙",
+  More: "≡",
 }
 
 function TabsNavigator() {
@@ -58,7 +63,7 @@ function TabsNavigator() {
       <Tabs.Screen name="Fleet" component={FleetScreen} />
       <Tabs.Screen name="Devices" component={DevicesScreen} />
       <Tabs.Screen name="Alerts" component={AlertsScreen} />
-      <Tabs.Screen name="Settings" component={SettingsScreen} />
+      <Tabs.Screen name="More" component={MoreScreen} />
     </Tabs.Navigator>
   )
 }
@@ -93,6 +98,11 @@ export function RootNavigator() {
         component={DeviceScreen}
         options={({ route }) => ({ title: route.params.deviceName ?? "Device" })}
       />
+      <Stack.Screen name="Anomalies" component={AnomaliesScreen} />
+      <Stack.Screen name="Forecasts" component={ForecastsScreen} />
+      <Stack.Screen name="Incidents" component={IncidentsScreen} />
+      <Stack.Screen name="Reports" component={ReportsScreen} />
+      <Stack.Screen name="Settings" component={SettingsScreen} />
       <Stack.Screen
         name="Collector"
         component={CollectorScreen}

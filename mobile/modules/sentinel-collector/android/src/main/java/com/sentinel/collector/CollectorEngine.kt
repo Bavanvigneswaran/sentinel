@@ -79,9 +79,14 @@ class CollectorEngine(
     private var latencyProbe: Job? = null
 
     fun start() {
+        // Seed from config, not the constant: a phone the user has opted into
+        // 1s sampling must start at 1s rather than spending its first push
+        // interval at 10s and only correcting once the server states a mode.
+        sampleIntervalSeconds = config.normalSampleSeconds
         CollectorState.update {
             it.copy(
                 running = true,
+                sampleIntervalSeconds = sampleIntervalSeconds,
                 enrolled = tokens.read() != null,
                 deviceId = config.deviceId,
                 deviceName = config.deviceName,
@@ -209,17 +214,40 @@ class CollectorEngine(
         }
     }
 
+    /**
+     * Re-read the user's cadence preference on a running collector.
+     *
+     * Only meaningful outside live mode — while a viewer is watching, 1s is
+     * already in force and the server's mode wins. Wakes the sample loop
+     * rather than waiting out the current sleep, for the same reason applyMode
+     * does (Phase 10b: changing the interval does not shorten a sleep that has
+     * already started).
+     */
+    fun applyCadencePreference() {
+        if (CollectorState.current().mode == "live") return
+        val wanted = config.normalSampleSeconds
+        if (wanted == sampleIntervalSeconds) return
+        sampleIntervalSeconds = wanted
+        cadenceChanged.trySend(Unit)
+        CollectorState.update { it.copy(sampleIntervalSeconds = wanted) }
+        Log.i(TAG, "sampling every ${wanted}s (user preference)")
+    }
+
     /** Follow the server's cadence, including the sample loop's own interval:
      *  live monitoring is only meaningful if the samples are actually 1s apart. */
     private fun applyMode(socket: AgentSocket) {
         val wanted = if (socket.mode == "live") {
             CollectorConfig.LIVE_SAMPLE_SECONDS
         } else {
-            CollectorConfig.NORMAL_SAMPLE_SECONDS
+            // Not the constant: the user can opt this phone into sampling at
+            // 1s all the time. See CollectorConfig.highFrequency for why that
+            // is off by default rather than on.
+            config.normalSampleSeconds
         }
         if (wanted != sampleIntervalSeconds) {
             sampleIntervalSeconds = wanted
             cadenceChanged.trySend(Unit)
+            CollectorState.update { it.copy(sampleIntervalSeconds = wanted) }
             Log.i(TAG, "sampling every ${wanted}s (${socket.mode} mode)")
         }
         val status = CollectorState.current()

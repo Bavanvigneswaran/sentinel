@@ -29,6 +29,7 @@ import { colors, spacing, text } from "@/theme"
 import {
   enroll,
   requestBatteryOptimizationExemption,
+  setHighFrequency,
   start,
   stop,
   unenroll,
@@ -156,8 +157,14 @@ export function CollectorScreen({ navigation }: RootStackScreenProps<"Collector"
             <View style={styles.rows}>
               <Row label="Device" value={status.deviceName ?? "—"} />
               <Row label="Server" value={status.serverUrl || API_BASE_URL} />
+              {/* Sampling and pushing are separate cadences and can differ:
+                  a phone on high-frequency samples every second but still
+                  batches its pushes on the interval the server asked for. One
+                  row labelled "Cadence" read as a contradiction next to
+                  "Sampling every second". */}
+              <Row label="Samples" value={`every ${status.sampleIntervalSeconds}s`} />
               <Row
-                label="Cadence"
+                label="Pushes"
                 value={
                   status.connected
                     ? `every ${status.pushIntervalSeconds}s${status.mode === "live" ? " · live" : ""}`
@@ -211,6 +218,32 @@ export function CollectorScreen({ navigation }: RootStackScreenProps<"Collector"
           />
         )}
       </Card>
+
+      {status.enrolled && (
+        <Card>
+          <CardTitle>Sampling rate</CardTitle>
+          <Text style={text.small}>
+            {status.highFrequency
+              ? "Sampling every second, continuously."
+              : `Sampling every ${status.sampleIntervalSeconds}s, and every second while ` +
+                "Live Monitoring is open."}
+          </Text>
+          <Text style={text.small}>
+            A 1s timer running all day is this collector's largest battery cost, and every
+            metric Android lets an app read — memory, storage, battery, throughput — moves far
+            too slowly for 1s to show anything 10s does not. Live Monitoring already switches
+            to 1s on demand. Turn this on if you want it always, knowing the trade.
+          </Text>
+          <Button
+            title={status.highFrequency ? "Back to 10s sampling" : "Sample every second"}
+            variant="outline"
+            busy={busy === "cadence"}
+            onPress={() =>
+              void run("cadence", () => setHighFrequency(!status.highFrequency))
+            }
+          />
+        </Card>
+      )}
 
       {status.enrolled && !status.batteryOptimizationExempt && (
         <Card>
