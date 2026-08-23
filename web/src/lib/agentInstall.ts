@@ -25,6 +25,22 @@ export const ARCH_LABEL: Record<AgentBuild["arch"], string> = {
   universal: "Universal",
 }
 
+/**
+ * The architecture label for one build, which is not the same question as the
+ * architecture label in the abstract.
+ *
+ * ARCH_LABEL is written for the desktop chooser, where "arm64" needs to be
+ * recognisable as the thing Apple sells and "x64" as the thing Intel and AMD
+ * do — that phrasing is what makes the ambiguous-Mac card readable. Applied to
+ * the APK it produced "Android · Apple Silicon / ARM64", which is simply
+ * false. A phone's architecture is also not a choice anyone is making here:
+ * there is one APK.
+ */
+export function archLabelFor(build: AgentBuild): string {
+  if (build.os === "android") return build.arch === "arm64" ? "ARM64" : ARCH_LABEL[build.arch]
+  return ARCH_LABEL[build.arch]
+}
+
 export interface UnsignedWarning {
   /** Quoted from the OS, so the user can match it to the dialog in front of them. */
   dialog: string
@@ -89,6 +105,22 @@ export function isCliInstall(build: AgentBuild): boolean {
   return build.os !== "android"
 }
 
+/**
+ * Is this a desktop *agent* — a binary you install on the machine being
+ * watched — as opposed to the Android app?
+ *
+ * The distinction is the whole reason the download page has two sections. A
+ * macOS/Linux/Windows build is an agent and nothing else: it has no UI, it is
+ * not how you look at anything, and it is useless without this console. The
+ * Android APK is the console *and* the agent in one — you sign into it, browse
+ * your fleet from it, and optionally let it report itself. Listing it under
+ * "Install an agent" alongside the three binaries invited the reasonable
+ * conclusion that a phone needs an agent installed onto it, which it does not.
+ */
+export function isDesktopAgent(build: AgentBuild): boolean {
+  return build.os !== "android"
+}
+
 /** Getting from a downloaded file to a running, enrolled agent (desktop OSes — see isCliInstall). */
 export function installSteps(build: AgentBuild, code = "<YOUR-CODE>"): string[] {
   if (build.os === "windows") {
@@ -116,8 +148,8 @@ export function androidInstallSteps(): string[] {
   return [
     "Transfer the APK to your phone (email, a cable, or a private link — not the Play Store).",
     "On the phone: allow installs from this source when prompted, then open the APK to install it.",
-    "Open the Sentinel app and sign in with your account.",
-    'From the device list, choose "Monitor this device" — the app enrols itself with a one-tap code it mints internally. There is nothing to type.',
+    "Open the Sentinel app and sign in with your account. That alone makes it a viewer for every machine you have already enrolled.",
+    'To have the phone report itself too: More → Settings → "Monitor this phone". The app mints a one-tap code internally and hands it to its own collector — there is nothing to type, and nothing to paste from this page.',
   ]
 }
 

@@ -5,6 +5,8 @@ import {
   buildsFor,
   installSteps,
   isCliInstall,
+  archLabelFor,
+  isDesktopAgent,
   unsignedWarning,
   verifyCommand,
 } from "@/lib/agentInstall"
@@ -155,5 +157,32 @@ describe("androidInstallSteps", () => {
 
   it("says enrolment needs no pasted code, matching the app's real one-tap flow", () => {
     expect(androidInstallSteps().join(" ")).toMatch(/one-tap|nothing to type/)
+  })
+})
+
+describe("isDesktopAgent", () => {
+  it("separates the three headless binaries from the Android app", () => {
+    // The download page renders two sections off this. Everything the
+    // "Desktop agents" heading claims — headless, installed onto the machine
+    // you then watch from elsewhere — is false of the APK, and presenting it
+    // as a fourth agent implied a phone needs one installed onto it.
+    for (const os of ["macos", "linux", "windows"] as const) {
+      expect(isDesktopAgent(build({ os }))).toBe(true)
+    }
+    expect(isDesktopAgent(build({ os: "android" }))).toBe(false)
+  })
+})
+
+describe("archLabelFor", () => {
+  it("does not call an Android phone Apple Silicon", () => {
+    // ARCH_LABEL is written for the desktop chooser, where "arm64" has to read
+    // as the thing Apple sells. Applied to the APK it rendered
+    // "Android · Apple Silicon / ARM64".
+    expect(archLabelFor(build({ os: "android", arch: "arm64" }))).toBe("ARM64")
+  })
+
+  it("leaves the desktop wording alone, which the ambiguous-Mac card depends on", () => {
+    expect(archLabelFor(build({ os: "macos", arch: "arm64" }))).toBe("Apple Silicon / ARM64")
+    expect(archLabelFor(build({ os: "linux", arch: "x64" }))).toBe("Intel / AMD64")
   })
 })

@@ -7,9 +7,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import {
   androidInstallSteps,
   ARCH_LABEL,
+  archLabelFor,
   buildsFor,
   installSteps,
   isCliInstall,
+  isDesktopAgent,
   OS_LABEL,
   SERVICE_MECHANISM,
   unsignedWarning,
@@ -69,7 +71,7 @@ function BuildCard({ build }: { build: AgentBuild }) {
         <CardTitle className="flex flex-wrap items-center gap-2">
           {OS_LABEL[build.os]}
           <span className="text-sm font-normal text-muted-foreground">
-            {ARCH_LABEL[build.arch]}
+            {archLabelFor(build)}
           </span>
           <span className="rounded bg-muted px-2 py-0.5 font-mono text-xs font-normal">
             v{build.version}
@@ -224,6 +226,36 @@ function NoBuild({
 }
 
 /**
+ * The Android app, kept apart from the three agent binaries.
+ *
+ * Not a styling preference. Everything the "Desktop agents" heading says is
+ * false of this build: it is not headless, it is not installed onto a machine
+ * you then watch from somewhere else, and — the part that actually misled —
+ * a phone does not need an agent installed onto it at all. The collector is
+ * already inside the app, off by default, one tap away. Presented as a fourth
+ * row under "Install an agent" it read as a fourth agent to install.
+ */
+function AndroidSection({ builds }: { builds: AgentBuild[] }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div>
+        <h2 className="text-base font-semibold">The Android app</h2>
+        <p className="text-sm text-muted-foreground">
+          Not an agent — the console itself, for a phone. Sign in and it shows the same fleet,
+          alerts, incidents, forecasts and reports you are looking at now. It can also report
+          the phone's own metrics, but that is a switch inside the app rather than anything to
+          install: there is no separate Android agent, and nothing on this page to paste into
+          one.
+        </p>
+      </div>
+      {builds.map((build) => (
+        <BuildCard key={build.filename} build={build} />
+      ))}
+    </div>
+  )
+}
+
+/**
  * The download page.
  *
  * Detects the visitor's OS and leads with the build they need — except that a
@@ -270,15 +302,28 @@ export function DownloadPage() {
     [catalog, mine],
   )
 
+  // Two sections, not one list with the phone at the bottom of it. See
+  // isDesktopAgent() for why the distinction is real rather than cosmetic.
+  const myDesktop = useMemo(() => mine.filter(isDesktopAgent), [mine])
+  const otherDesktop = useMemo(() => others.filter(isDesktopAgent), [others])
+  const androidBuilds = useMemo(
+    () => (catalog ? catalog.builds.filter((b) => !isDesktopAgent(b)) : []),
+    [catalog],
+  )
+  const onAndroid = platform.os === "android"
+
   const ambiguousArch = mine.length > 1 && !platform.archCertain
 
   return (
     <AppLayout active="download">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Install an agent</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Downloads</h1>
         <p className="text-sm text-muted-foreground">
-          The agent collects this machine's real metrics and pushes them outbound over an
-          encrypted WebSocket. It opens no inbound ports and needs no elevated privileges.
+          Two different things live here: a headless <strong className="font-medium text-foreground">agent</strong>{" "}
+          for each desktop OS, and the{" "}
+          <strong className="font-medium text-foreground">Android app</strong>, which is a
+          console in its own right. You need neither to use this web console — it already runs
+          in any modern browser, on any OS.
         </p>
       </div>
 
@@ -312,20 +357,40 @@ export function DownloadPage() {
             </Card>
           )}
 
-          {mine.length > 0 ? (
-            mine.map((build) => <BuildCard key={build.filename} build={build} />)
-          ) : (
-            <NoBuild platform={platform} catalog={catalog} />
+          {/* Ordered by who is looking: a visitor on Android wants the app,
+              and everybody else wants the agent for the machine they are on. */}
+          {onAndroid && androidBuilds.length > 0 && (
+            <AndroidSection builds={androidBuilds} />
           )}
 
-          {others.length > 0 && (
-            <div className="flex flex-col gap-3">
-              <h2 className="text-sm font-medium">Other platforms</h2>
-              {others.map((build) => (
-                <BuildCard key={build.filename} build={build} />
-              ))}
+          <div className="flex flex-col gap-3">
+            <div>
+              <h2 className="text-base font-semibold">Desktop agents</h2>
+              <p className="text-sm text-muted-foreground">
+                A headless binary for the machine you want to watch. It collects that
+                machine's real metrics and pushes them outbound over an encrypted WebSocket —
+                it opens no inbound ports, needs no elevated privileges, and has no interface
+                of its own. You look at what it reports here.
+              </p>
             </div>
-          )}
+
+            {myDesktop.length > 0 ? (
+              myDesktop.map((build) => <BuildCard key={build.filename} build={build} />)
+            ) : (
+              !onAndroid && <NoBuild platform={platform} catalog={catalog} />
+            )}
+
+            {otherDesktop.length > 0 && (
+              <>
+                <h3 className="text-sm font-medium text-muted-foreground">Other platforms</h3>
+                {otherDesktop.map((build) => (
+                  <BuildCard key={build.filename} build={build} />
+                ))}
+              </>
+            )}
+          </div>
+
+          {!onAndroid && androidBuilds.length > 0 && <AndroidSection builds={androidBuilds} />}
 
           {catalog.builds.length > 0 && (
             <p className="text-xs text-muted-foreground">
