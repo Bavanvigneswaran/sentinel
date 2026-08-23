@@ -130,10 +130,10 @@ function DeviceHistoryView({ deviceId }: { deviceId: string }) {
   const hasPoints = series !== null && series.system.length > 0
 
   return (
-    <AppLayout active="dashboard">
+    <AppLayout active="devices">
       <div>
         <Link to="/" className="text-sm text-muted-foreground hover:text-foreground">
-          ← Fleet
+          ← Devices
         </Link>
       </div>
 

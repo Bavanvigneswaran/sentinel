@@ -1,4 +1,4 @@
-import { createBrowserRouter } from "react-router"
+import { Navigate, createBrowserRouter } from "react-router"
 
 import { ProtectedRoute } from "@/components/ProtectedRoute"
 import { PublicOnlyRoute } from "@/components/PublicOnlyRoute"
@@ -7,7 +7,6 @@ import { AlertsPage } from "@/pages/AlertsPage"
 import { AnomaliesPage } from "@/pages/AnomaliesPage"
 import { DashboardPage } from "@/pages/DashboardPage"
 import { DeviceHistoryPage } from "@/pages/DeviceHistoryPage"
-import { DevicesPage } from "@/pages/DevicesPage"
 import { DownloadPage } from "@/pages/DownloadPage"
 import { ForecastsPage } from "@/pages/ForecastsPage"
 import { IncidentDetailPage } from "@/pages/IncidentDetailPage"
@@ -31,7 +30,10 @@ export const router = createBrowserRouter([
     element: <ProtectedRoute />,
     children: [
       { path: "/", element: <DashboardPage /> },
-      { path: "/devices", element: <DevicesPage /> },
+      // /devices existed as a separate, thinner list before the two merged into one
+      // page at "/" — redirected rather than dropped so old links and bookmarks land
+      // somewhere real instead of the 404 page.
+      { path: "/devices", element: <Navigate to="/" replace /> },
       { path: "/devices/:deviceId/history", element: <DeviceHistoryPage /> },
       { path: "/devices/:deviceId/live", element: <LiveMonitoringPage /> },
       { path: "/download", element: <DownloadPage /> },

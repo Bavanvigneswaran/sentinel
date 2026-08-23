@@ -9,7 +9,6 @@ interface AppLayoutProps {
   children: ReactNode
   /** Highlights the active nav item. Undefined renders neither as active. */
   active?:
-    | "dashboard"
     | "devices"
     | "download"
     | "alerts"
@@ -21,8 +20,7 @@ interface AppLayoutProps {
 }
 
 const NAV_ITEMS = [
-  { key: "dashboard", to: "/", label: "Dashboard" },
-  { key: "devices", to: "/devices", label: "Devices" },
+  { key: "devices", to: "/", label: "Devices" },
   { key: "download", to: "/download", label: "Download" },
   { key: "alerts", to: "/alerts", label: "Alerts" },
   { key: "anomalies", to: "/anomalies", label: "Anomalies" },

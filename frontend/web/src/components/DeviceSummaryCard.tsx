@@ -1,27 +1,58 @@
+import { useState } from "react"
 import { Link } from "react-router"
 
 import { DeviceStatusBadge } from "@/components/DeviceStatusBadge"
 import { HealthScore } from "@/components/HealthScore"
 import { MetricValue } from "@/components/MetricValue"
 import { Sparkline } from "@/components/Sparkline"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { apiFetch } from "@/lib/api"
 import { formatBytes, formatBytesPerSecond } from "@/lib/formatters"
 import { formatDuration, formatRelative } from "@/lib/timeRanges"
 import { colorForIndex } from "@/lib/chartColors"
 import type { DeviceSummary } from "@/types/fleet"
 
 /**
- * One machine on the fleet page: its health, its headline numbers, and an hour
- * of CPU and memory.
+ * One machine on the merged Devices page: its health, its headline numbers,
+ * and an hour of CPU and memory.
  *
  * `latest` is null whenever nothing landed inside the server's freshness
  * window, and the card then shows no numbers at all. That is the honest render:
  * a figure from twenty minutes ago displayed next to a live status dot is a
  * claim about right now that the data does not support.
+ *
+ * Removal lives on the card itself, self-contained (own confirm state, own
+ * DELETE call), rather than plumbed through the page as a callback prop — the
+ * same shape the mobile app's DeviceScreen uses. `onRemoved` is the one thing
+ * the page needs to know: refetch the list.
  */
-export function DeviceSummaryCard({ summary }: { summary: DeviceSummary }) {
+export function DeviceSummaryCard({
+  summary,
+  onRemoved,
+}: {
+  summary: DeviceSummary
+  onRemoved?: () => void
+}) {
   const { device, health, latest, disks, sparkline } = summary
   const worstDisk = disks[0] ?? null
+
+  const [confirming, setConfirming] = useState(false)
+  const [removing, setRemoving] = useState(false)
+  const [removeError, setRemoveError] = useState<string | null>(null)
+
+  const remove = async () => {
+    setRemoving(true)
+    setRemoveError(null)
+    try {
+      await apiFetch(`/devices/${device.id}`, { method: "DELETE" })
+      setConfirming(false)
+      onRemoved?.()
+    } catch {
+      setRemoveError("Could not remove this device.")
+      setRemoving(false)
+    }
+  }
 
   return (
     <Card className="transition-colors hover:bg-accent/30">
@@ -89,12 +120,39 @@ export function DeviceSummaryCard({ summary }: { summary: DeviceSummary }) {
           {latest?.mem_total_bytes != null && <span>{formatBytes(latest.mem_total_bytes)} RAM</span>}
           <Link
             to={`/devices/${device.id}/live`}
-            className="ml-auto text-foreground hover:underline"
+            className="text-foreground hover:underline"
           >
             Live →
           </Link>
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            className="ml-auto text-muted-foreground hover:text-destructive"
+          >
+            Remove
+          </button>
         </div>
+
+        {removeError && <p className="text-xs text-destructive">{removeError}</p>}
       </CardContent>
+
+      {confirming && (
+        <CardContent className="flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
+          <span className="text-xs text-muted-foreground">
+            Remove <strong className="font-medium text-foreground">{device.name}</strong>? Its
+            agent token is revoked immediately, so the agent stops reporting. History already
+            collected is kept.
+          </span>
+          <div className="flex gap-2">
+            <Button size="sm" variant="destructive" disabled={removing} onClick={() => void remove()}>
+              {removing ? "Removing…" : "Remove device"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+          </div>
+        </CardContent>
+      )}
     </Card>
   )
 }

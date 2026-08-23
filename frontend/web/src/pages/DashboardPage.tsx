@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 
 import { AppLayout } from "@/components/AppLayout"
 import { DeviceSummaryCard } from "@/components/DeviceSummaryCard"
+import { NewDevicePanel } from "@/components/NewDevicePanel"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { apiFetch } from "@/lib/api"
 import { formatRelative } from "@/lib/timeRanges"
@@ -9,14 +11,22 @@ import { cn } from "@/lib/utils"
 import type { FleetOverview, FleetTotals } from "@/types/fleet"
 
 /**
- * The command centre: every device's health, headline numbers and last hour, in
- * one request.
+ * The Devices page: every machine's health, headline numbers and last hour,
+ * plus adding and removing devices, in one place.
+ *
+ * This used to be two pages — a rich "Dashboard" at `/` and a plain
+ * online/offline list at `/devices` — mirroring the redundancy the Android
+ * app had between its Fleet and Devices tabs before they merged. The plain
+ * list had nothing this view doesn't already show (name, hostname, OS,
+ * status, last seen), so rather than keep both, `/devices` now redirects
+ * here and this is the one page. See routes.tsx.
  *
  * A poll rather than a socket. The live pipeline exists to push an agent to 1s
  * sampling while somebody watches one machine; doing that for every device
- * because a dashboard is open would multiply every agent's push rate by the
+ * because this page is open would multiply every agent's push rate by the
  * number of open tabs. Thirty seconds is the right cadence for a page whose
- * job is "is anything wrong", and the per-device live view is one click away.
+ * job is "is anything wrong, and is there anything to add or remove", and the
+ * per-device live view is one click away.
  */
 const POLL_INTERVAL_MS = 30_000
 
@@ -26,11 +36,25 @@ const WINDOW_SECONDS = 3600
 export function DashboardPage() {
   const [overview, setOverview] = useState<FleetOverview | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
+
+  const load = useCallback(() => {
+    return apiFetch<FleetOverview>(`/fleet/overview?window_seconds=${WINDOW_SECONDS}`)
+      .then((data) => {
+        setOverview(data)
+        setError(null)
+      })
+      .catch(() => {
+        // Keep the last good payload on screen. A transient failure should
+        // not blank a page someone is watching; the banner says so.
+        setError("Could not refresh the fleet overview.")
+      })
+  }, [])
 
   useEffect(() => {
     let cancelled = false
 
-    const load = () => {
+    const poll = () => {
       apiFetch<FleetOverview>(`/fleet/overview?window_seconds=${WINDOW_SECONDS}`)
         .then((data) => {
           if (cancelled) return
@@ -38,14 +62,12 @@ export function DashboardPage() {
           setError(null)
         })
         .catch(() => {
-          // Keep the last good payload on screen. A transient failure should
-          // not blank a dashboard someone is watching; the banner says so.
           if (!cancelled) setError("Could not refresh the fleet overview.")
         })
     }
 
-    load()
-    const interval = setInterval(load, POLL_INTERVAL_MS)
+    poll()
+    const interval = setInterval(poll, POLL_INTERVAL_MS)
     return () => {
       cancelled = true
       clearInterval(interval)
@@ -53,20 +75,29 @@ export function DashboardPage() {
   }, [])
 
   return (
-    <AppLayout active="dashboard">
+    <AppLayout active="devices">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Fleet</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Devices</h1>
           <p className="text-sm text-muted-foreground">
             Health of every machine you've enrolled, from its own real telemetry.
           </p>
         </div>
-        {overview && (
-          <span className="text-xs text-muted-foreground">
-            updated {formatRelative(overview.generated_at)}
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          {overview && (
+            <span className="text-xs text-muted-foreground">
+              updated {formatRelative(overview.generated_at)}
+            </span>
+          )}
+          {!adding && (
+            <Button size="sm" onClick={() => setAdding(true)}>
+              New device
+            </Button>
+          )}
+        </div>
       </div>
+
+      {adding && <NewDevicePanel onClose={() => setAdding(false)} />}
 
       {error && (
         <Card>
@@ -78,15 +109,14 @@ export function DashboardPage() {
 
       {overview && <Totals totals={overview.totals} />}
 
-      {overview !== null && overview.devices.length === 0 && (
+      {overview !== null && overview.devices.length === 0 && !adding && (
         <Card>
           <CardHeader>
             <CardTitle>No devices yet</CardTitle>
             <CardDescription>
-              Generate an enrollment code, then run{" "}
-              <code className="font-mono text-xs">make agent-enroll code=…</code> followed by{" "}
-              <code className="font-mono text-xs">make agent</code> on the machine you want to
-              watch.
+              Press <strong className="font-medium text-foreground">New device</strong> to mint
+              an enrollment code, then redeem it from the agent on the machine you want to
+              monitor.
             </CardDescription>
           </CardHeader>
         </Card>
@@ -98,7 +128,7 @@ export function DashboardPage() {
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         {overview?.devices.map((summary) => (
-          <DeviceSummaryCard key={summary.device.id} summary={summary} />
+          <DeviceSummaryCard key={summary.device.id} summary={summary} onRemoved={load} />
         ))}
       </div>
     </AppLayout>
