@@ -355,6 +355,38 @@ already-working monitor over a transport choice its operator has already made
 would be the wrong trade — the refusal belongs where the credential is minted.
 Loopback is exempt, or every developer would simply turn the guard off.
 
+## Serving the console
+
+`make serve` builds `web/dist` and the API process serves it — see
+`backend/app/webapp.py`. One origin carries the console, the REST API and the
+viewer WebSocket, which is what makes "the address in the browser" and
+`EXPO_PUBLIC_API_URL` the same string, and removes CORS from a real deployment
+entirely.
+
+Two decisions there are worth keeping:
+
+* **`/api` is stripped by middleware, not by a second routing convention.**
+  Phase 1's invariant is that FastAPI mounts `/auth` and friends at the root and
+  that a production reverse proxy strips `/api` exactly as the Vite dev proxy
+  does. With no proxy in front, `ApiPrefixMiddleware` *is* that rewrite. It is
+  pure ASGI rather than a Starlette HTTP middleware because it must also cover
+  the `websocket` scope.
+* **The console is served by content negotiation, not a catch-all route.** The
+  obvious implementation cannot work: `/devices` is simultaneously a REST
+  endpoint (the Android app calls it) and a page in the console's client-side
+  router. A catch-all never sees it — the real route matches first, so a
+  browser typing that URL gets the API's 401 JSON. Blocking API prefixes from
+  the catch-all breaks the mirror image, 404ing a hard refresh on `/devices`.
+  `WebConsoleMiddleware` splits on `Sec-Fetch-Mode: navigate` instead, which
+  every current browser sends on a top-level navigation and no `fetch`/`XHR`
+  ever does. Real files under `dist/` are served whatever asked for them — the
+  bundle's own `<script>` is a subresource, not a navigation, and gating that
+  on the same header served 404s for the console's JS and CSS and rendered a
+  blank page.
+
+`SERVE_WEB_CONSOLE=false` turns it off for a deployment putting a CDN or a real
+reverse proxy in front of the static files.
+
 ## The download page
 
 `AGENT_DIST_DIR` unset is a fully supported state. The page then says no build

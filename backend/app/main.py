@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.db import dispose_engines
+from app.webapp import ApiPrefixMiddleware, WebConsoleMiddleware, resolve_dist
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,28 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Mirrors what a production reverse proxy does, and what the Vite dev proxy
+    # already does, so the console's `/api/...` calls reach routes mounted at
+    # the root. See app/webapp.py and Phase 1's "routes carry no /api prefix".
+    app.add_middleware(ApiPrefixMiddleware)
+
+    # Must run BEFORE the router: `/devices` is both a REST endpoint and a page
+    # in the console's client-side router, and a route registered on the app
+    # would always win the match. See WebConsoleMiddleware for the full
+    # reasoning. Added after ApiPrefixMiddleware so it runs first (Starlette
+    # applies middleware in reverse registration order) and never sees a
+    # rewritten path.
+    if settings.serve_web_console:
+        dist = resolve_dist(settings.web_dist_dir)
+        if dist is None:
+            logger.info(
+                "web console not served: no build found (run `make web-build`). "
+                "The API still serves only its own routes."
+            )
+        else:
+            app.add_middleware(WebConsoleMiddleware, dist=dist)
+            logger.info("serving the web console from %s", dist)
 
     from app.api.routes.alerts import router as alerts_router
     from app.api.routes.auth import router as auth_router

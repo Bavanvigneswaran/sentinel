@@ -1,5 +1,21 @@
 # Installing a Sentinel agent
 
+> **Start the server first.** `make serve` builds the web console and runs it
+> and the API together on one port, bound to every interface:
+>
+> ```
+> make serve
+> #   Console + API:  http://192.168.x.x:8000
+> ```
+>
+> That one URL is the whole product — console, REST API, and the live
+> WebSocket. Open it in a browser from any machine on the same network
+> (Windows, Linux, macOS — it is a web app, there is nothing to install), and
+> it is also the address an agent or the Android app is pointed at.
+>
+> `make dev-backend`/`make dev-frontend` are for developing Sentinel itself:
+> both bind to localhost, so nothing else on the network can reach them.
+
 An agent collects a machine's real metrics and pushes them **outbound** over an
 encrypted WebSocket. It opens no inbound ports, works behind NAT and corporate
 firewalls, and needs no elevated privileges.

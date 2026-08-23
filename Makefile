@@ -1,4 +1,4 @@
-.PHONY: up down dev dev-backend dev-frontend test agent logs install \
+.PHONY: up down dev dev-backend dev-frontend test agent logs install serve web-build \
         migrate migrate-down revision db-shell redis-shell reset-db lint typecheck \
         agent-enroll agent-sample agent-status agent-install-service agent-uninstall-service \
         agent-build agent-build-check agent-build-clean \
@@ -32,6 +32,31 @@ dev-frontend:
 
 dev:
 	@echo "Run 'make dev-backend' and 'make dev-frontend' in separate terminals."
+
+# --- running it for real ------------------------------------------------------
+# `make serve` is the one command that produces something usable from another
+# machine. `dev-frontend` is a Vite dev server bound to localhost: correct for
+# development, and no way to hand anyone a working install — a phone or a second
+# PC cannot reach it at all. This builds the console and lets the API process
+# serve it, so ONE origin is the whole product (console + REST + viewer socket)
+# and there is no CORS to configure.
+#
+# Binds 0.0.0.0 on purpose: the default `--port 8000` listens on loopback only,
+# which is why an Android device or another PC sees nothing. Print the LAN URL
+# rather than making the user work it out, since it is also the value that has
+# to go in mobile/.env before building an APK.
+web-build:
+	cd web && npm run build
+
+serve: web-build
+	@ip=$$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $$1}'); \
+	echo ""; \
+	echo "  Console + API:  http://$$ip:8000"; \
+	echo "  On this Mac:    http://localhost:8000"; \
+	echo ""; \
+	echo "  Point mobile/.env at http://$$ip:8000 before building an APK."; \
+	echo ""
+	cd backend && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 test:
 	cd backend && .venv/bin/pytest -q

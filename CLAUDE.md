@@ -26,7 +26,9 @@ react-native-svg for charts) in `mobile/`, plus a Kotlin collector module in Pha
 
 - `make install` — create backend venv + install deps, `npm install` for web
 - `make up` — start TimescaleDB + Redis via Docker
-- `make dev-backend` — FastAPI dev server on :8000 (reload)
+- `make serve` — **build the console and serve it + the API on one port, bound to 0.0.0.0.**
+  The only command that produces something reachable from another machine.
+- `make dev-backend` — FastAPI dev server on :8000 (reload, localhost only)
 - `make dev-frontend` — Vite dev server on :5173 (proxies `/api` → :8000, `/ws` → :8000)
 - `make migrate` — apply Alembic migrations · `make revision m="..."` — autogenerate a new one
 - `make test` — backend test suite (pytest) · `make lint` · `make typecheck`
@@ -450,6 +452,46 @@ loop is unaffected; the corrected, working APK was re-registered in the manifest
 (different — APK builds are not byte-reproducible) checksum. `mobile/README.md` now documents both
 gaps — the `--host 0.0.0.0` requirement and the release-only cleartext exception — since neither was
 written down anywhere before. 49 mobile JS tests (was 41).
+
+Asked to make both halves actually work rather than merely build, a full audit found the gap that
+made "just download it and it works" false for *both*: **there was nowhere to point anything at.**
+`vite dev` binds to localhost, so a second machine could not load the console at all, and the API
+bound to loopback by default, so a phone could not reach it either — Phase 10a/10b had only ever been
+exercised from this Mac, against `10.0.2.2`, an alias that exists solely inside the Android emulator.
+`backend/app/webapp.py` closes it: `make serve` builds the console and the API process serves it, so
+one origin (`http://<lan-ip>:8000`) is the console, the REST API and the viewer socket together —
+which is also what makes the browser's address bar and `EXPO_PUBLIC_API_URL` the same string, and
+removes CORS from a real deployment. `ApiPrefixMiddleware` performs the `/api` strip that Phase 1
+always said a reverse proxy would, as pure ASGI so it covers the WebSocket scope too.
+
+Getting the console served surfaced two design errors, both caught by running it rather than by
+review. The obvious implementation — a catch-all route returning index.html — **cannot** work here:
+`/devices` is simultaneously a REST endpoint (the Android app calls it, per Phase 10a's no-`/api`
+invariant) and a page in the client-side router, so a catch-all never sees it (the real route matches
+first, and a browser gets the API's 401 JSON), while blocking API prefixes from the catch-all breaks
+the mirror image and 404s a hard refresh on `/devices`. The test suite caught both, and the fix is to
+split on **what the client asked for**: `Sec-Fetch-Mode: navigate`, which every current browser sends
+on a top-level navigation and no `fetch`/`XHR` ever does. Then gating *file* serving on that same
+header 404ed the bundle's own `<script>` and `<link>` — subresources send `no-cors` — and rendered a
+blank page with two 404s, which only a browser could show. A third defect came from an existing
+download-API test once a built console made the middleware active: `%00` in a path makes
+`Path.resolve()` raise `ValueError`, which reached the client as a 500 rather than a 404.
+
+Verified end to end, over the LAN, on both halves. Web: all 11 routes render with zero console errors
+and zero failed requests, every client-side route survives a hard refresh (server-side SPA fallback),
+and Live Monitoring streams real 1s uPlot charts. Android: the release APK installed via `adb
+install`, signed in, listed the fleet, opened Live Monitoring on the *Mac* from the phone ("Streaming
+at 1s", real per-NIC throughput), and then enrolled the phone itself through "Monitor this phone" —
+the foreground service came up `isForeground=true types=0x40000000` (`specialUse`, the Phase 10b
+decision), reported health 92 from memory/disk/swap/network with **cpu and iowait excluded rather
+than zeroed**, and the web console's Android page said so in as many words. 517 backend tests (was
+482), 143 agent, 32 web, 49 mobile JS, 42 Kotlin.
+
+The honest remaining limit, unchanged by any of this: **there is no deployed backend.** `make serve`
+binds to the LAN, so the APK and the console work from any device on the same network as this Mac,
+and the APK has that machine's address baked in at build time. Reaching it from cellular or another
+network needs the backend deployed somewhere public with a domain and TLS — at which point the
+`https://` path needs no cleartext exception and `ApiPrefixMiddleware` keeps working unchanged.
 
 Still to come in Phase 11, if picked back up: run the CI matrix and publish real Windows and Linux
 binaries (and find out what breaks); a `.dmg` so a notarized macOS build can be *stapled* — a bare

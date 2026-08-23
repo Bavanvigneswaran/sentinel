@@ -171,6 +171,15 @@ class Settings(BaseSettings):
     # handful of installs and wrong at any scale.
     agent_download_base_url: str | None = None
 
+    # --- Web console (Phase 11) ------------------------------------------------
+    # When `web/dist` has been built (`make web-build`), the API process serves
+    # the console too, so one origin is the whole product and a second machine
+    # on the network can actually load it — `vite dev` binds to localhost and
+    # is not a way to hand anyone a working install. Unset/unbuilt is a
+    # supported state: the API serves only its own routes, exactly as before.
+    serve_web_console: bool = True
+    web_dist_dir: str | None = None
+
     # NOTE: pydantic-settings parses complex types as JSON, so this must be
     # written as CORS_ORIGINS=["http://localhost:5173"] — a bare URL fails.
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
