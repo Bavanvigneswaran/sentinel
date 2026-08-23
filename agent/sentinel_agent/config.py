@@ -145,7 +145,14 @@ class AgentConfig:
         # The file is private before a single byte of the token is written, and
         # what gets written to is the descriptor whose permissions were checked
         # — never the path re-resolved a second time. See paths.open_private().
-        with os.fdopen(open_private(self.path), "w") as handle:
+        # encoding="utf-8" is load-bearing, not tidiness. Without it Python
+        # writes in the locale encoding, which is cp1252 on a default Windows
+        # install, and the em-dash in the header comment above lands as a bare
+        # 0x97 byte. tomllib only accepts UTF-8, so `enroll` would write a
+        # config that `run` could never read back — the agent bricked itself on
+        # the one platform this project cannot test locally. Found by the CI
+        # matrix's first Windows run.
+        with os.fdopen(open_private(self.path), "w", encoding="utf-8") as handle:
             handle.write("\n".join(lines))
 
     def require_token(self) -> str:

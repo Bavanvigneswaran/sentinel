@@ -1,5 +1,6 @@
 """Agent configuration and the transport's backoff."""
 
+import platform
 import stat
 
 import pytest
@@ -9,6 +10,14 @@ from sentinel_agent.transport.client import (
     INITIAL_BACKOFF_SECONDS,
     MAX_BACKOFF_SECONDS,
     next_backoff,
+)
+
+#: NTFS has no POSIX mode bits — `save()` locks the file down with icacls there
+#: instead, and `stat().st_mode` reports a meaningless 0o666. Only the mode
+#: assertions are skipped; everything about what `save()` *writes* still has to
+#: hold on Windows, which is where the UTF-8 encoding bug surfaced.
+posix_only = pytest.mark.skipif(
+    platform.system() == "Windows", reason="POSIX file modes; Windows locks the file with icacls"
 )
 
 
@@ -36,6 +45,7 @@ def test_a_saved_config_round_trips(tmp_path):
     assert loaded.latency_targets == ["1.1.1.1:443", "gateway:80"]
 
 
+@posix_only
 def test_the_config_file_is_not_readable_by_others(tmp_path):
     """It holds the agent token."""
     config = AgentConfig(agent_token="sag_secret", path=tmp_path / "agent.toml")  # noqa: S106
@@ -45,14 +55,41 @@ def test_the_config_file_is_not_readable_by_others(tmp_path):
     assert mode == 0o600, f"expected 0600, got {oct(mode)}"
 
 
-def test_saving_twice_keeps_the_restrictive_mode(tmp_path):
+def test_saving_twice_rotates_the_token(tmp_path):
+    """Re-saving over an existing config has to leave the new token readable
+    back — the truncate-and-rewrite path, not just the create path."""
     config = AgentConfig(agent_token="sag_secret", path=tmp_path / "agent.toml")  # noqa: S106
     config.save()
     config.agent_token = "sag_rotated"  # noqa: S105
     config.save()
 
-    assert stat.S_IMODE(config.path.stat().st_mode) == 0o600
     assert AgentConfig.load(config.path).agent_token == "sag_rotated"  # noqa: S105
+
+
+def test_the_config_is_written_as_utf8_whatever_the_locale(tmp_path):
+    """`save()` must name its encoding rather than inherit the locale's.
+
+    The header comment it writes contains an em-dash, so on a default Windows
+    install (cp1252) an unqualified text write emits a bare 0x97 byte — and
+    tomllib accepts UTF-8 only, so `enroll` produced a config `run` could never
+    read back. This guard is trivially true on a UTF-8 host and is the whole
+    test on Windows, which is exactly where it has to hold.
+    """
+    config = AgentConfig(agent_token="sag_secret", path=tmp_path / "agent.toml")  # noqa: S106
+    config.save()
+
+    raw = config.path.read_bytes()
+    assert "—".encode() in raw, "the header's em-dash was not written as UTF-8"
+    raw.decode("utf-8")  # raises if anything else slipped in
+
+
+@posix_only
+def test_saving_twice_keeps_the_restrictive_mode(tmp_path):
+    config = AgentConfig(agent_token="sag_secret", path=tmp_path / "agent.toml")  # noqa: S106
+    config.save()
+    config.save()
+
+    assert stat.S_IMODE(config.path.stat().st_mode) == 0o600
 
 
 def test_websocket_urls_follow_the_server_scheme():

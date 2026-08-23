@@ -12,7 +12,10 @@ unit test.
 from __future__ import annotations
 
 import asyncio
+import platform
 import signal
+
+import pytest
 
 
 async def _install_handlers(loop, agent_stop, *, add_signal_handler_supported: bool) -> None:
@@ -27,9 +30,18 @@ async def _install_handlers(loop, agent_stop, *, add_signal_handler_supported: b
             signal.signal(sig, lambda *_: loop.call_soon_threadsafe(agent_stop))
 
 
+@pytest.mark.skipif(
+    platform.system() == "Windows",
+    reason="add_signal_handler raises NotImplementedError on Windows — the fallback below is the "
+    "whole reason this module exists",
+)
 async def test_add_signal_handler_is_tried_first():
-    """On a platform that supports it (every platform this suite runs on),
-    the real asyncio handler is used, not the signal.signal fallback."""
+    """On a platform that supports it, the real asyncio handler is used, not
+    the signal.signal fallback.
+
+    Windows is not such a platform, which the original "every platform this
+    suite runs on" wording asserted and the first Windows CI run disproved.
+    """
     loop = asyncio.get_running_loop()
     stopped = []
     try:

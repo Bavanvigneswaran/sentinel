@@ -89,7 +89,13 @@ class SystemCollector:
         cpu_times = _safe(lambda: psutil.cpu_times_percent(interval=None))
         vmem = _safe(psutil.virtual_memory)
         swap = _safe(psutil.swap_memory)
-        freq = _safe(psutil.cpu_freq)
+        # Called through a lambda, not passed as `psutil.cpu_freq`: psutil
+        # defines the function only `if cext.has_cpu_freq()`, which is false on
+        # some Apple Silicon Macs, and the attribute lookup in an argument is
+        # evaluated *before* _safe() can catch anything. Same psutil version
+        # (7.2.2) has it on this Mac and not on GitHub's macos-14 arm64 runner,
+        # which is how the AttributeError was found.
+        freq = _safe(lambda: psutil.cpu_freq())  # noqa: PLW0108
         load = _safe(psutil.getloadavg)  # Unix only
         stats = _safe(psutil.cpu_stats)
         boot = _safe(psutil.boot_time)

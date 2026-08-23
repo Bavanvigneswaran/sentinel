@@ -54,12 +54,27 @@ def test_a_packaged_build_is_its_own_executable(monkeypatch):
     monkeypatch.setattr(base.sys, "frozen", True, raising=False)
     monkeypatch.setattr(base.sys, "executable", "/opt/sentinel/sentinel-agent")
 
-    assert base.agent_executable() == ["/opt/sentinel/sentinel-agent"]
+    argv = base.agent_executable()
+    # The claim is "one element, and it is the binary itself" — not the exact
+    # string, which agent_executable() resolve()s and Windows renders as
+    # D:\opt\sentinel\sentinel-agent.
+    assert len(argv) == 1
+    assert Path(argv[0]).name == "sentinel-agent"
 
 
 def test_a_source_install_uses_the_console_script(monkeypatch):
+    """Strict on purpose: the `-m` fallback is silent, so a test that accepted
+    it could not tell "found the console script" from "gave up looking". That
+    is precisely how Windows went unnoticed: a venv's scripts live in a
+    Scripts directory, not beside python.exe, so the lookup always missed and
+    always fell back.
+    """
     monkeypatch.setattr(base.sys, "frozen", False, raising=False)
-    assert base.agent_executable()[0].endswith(("sentinel-agent", "cli"))
+    argv = base.agent_executable()
+
+    assert len(argv) == 1, f"fell back to the -m form instead of the console script: {argv}"
+    # .stem, not .name: the Windows console script is sentinel-agent.exe.
+    assert Path(argv[0]).stem == "sentinel-agent"
 
 
 def test_a_binary_left_in_downloads_is_flagged(monkeypatch, tmp_path):
@@ -159,8 +174,8 @@ def test_restarts_are_throttled():
 
 
 def test_the_user_unit_and_system_unit_go_to_different_paths():
-    assert str(systemd.unit_path("system")).startswith("/etc/systemd/system")
-    assert "systemd/user" in str(systemd.unit_path("user"))
+    assert systemd.unit_path("system").as_posix().startswith("/etc/systemd/system")
+    assert "systemd/user" in systemd.unit_path("user").as_posix()
 
 
 # --- Windows Task Scheduler -------------------------------------------------
@@ -335,10 +350,13 @@ def test_the_other_platforms_do_not_pass_a_log_file():
 
 
 def test_a_log_file_still_leaves_the_config_before_the_subcommand():
-    args = _parse_agent_argv(agent_command(CONFIG, Path("/var/log/sentinel/agent.log")))
+    log_file = Path("/var/log/sentinel/agent.log")
+    args = _parse_agent_argv(agent_command(CONFIG, log_file))
     assert args.command == "run"
     assert args.config == str(CONFIG)
-    assert args.log_file == "/var/log/sentinel/agent.log"
+    # str(), like agent_command() itself uses — asserting the literal would be
+    # asserting the host's path separator, which is not what this is about.
+    assert args.log_file == str(log_file)
 
 
 
@@ -396,14 +414,22 @@ def test_the_unit_does_not_cite_documentation_that_does_not_exist():
 def test_a_windows_venv_console_script_is_preferred_over_the_module_form(
     tmp_path, monkeypatch
 ):
-    """A venv's script is Scripts\\sentinel-agent.exe; checking only the
+    """A venv's script is Scripts/sentinel-agent.exe; checking only the
     extensionless name falls through to `python -m`, which works but is not
-    what a service should be pointed at."""
+    what a service should be pointed at.
+
+    The layout here is load-bearing and was wrong before: this test used to put
+    python.exe *inside* Scripts/, which made the script a sibling of the
+    interpreter and passed against a lookup that only ever searched that one
+    directory. A real Windows venv has python.exe at the root with Scripts/
+    beside it, so the lookup missed on every actual Windows install and the
+    test could not see it.
+    """
     scripts = tmp_path / "Scripts"
     scripts.mkdir()
     (scripts / "sentinel-agent.exe").write_text("")
     monkeypatch.setattr(base.sys, "frozen", False, raising=False)
-    monkeypatch.setattr(base.sys, "executable", str(scripts / "python.exe"))
+    monkeypatch.setattr(base.sys, "executable", str(tmp_path / "python.exe"))
 
     assert base.agent_executable() == [str(scripts / "sentinel-agent.exe")]
 

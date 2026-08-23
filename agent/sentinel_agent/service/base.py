@@ -40,13 +40,19 @@ def agent_executable() -> list[str]:
     if is_frozen():
         return [str(Path(sys.executable).resolve())]
 
-    # `.exe` first: on Windows a venv's console script is
-    # Scripts\sentinel-agent.exe, and checking only the extensionless name
-    # would silently fall through to the `-m` form.
-    for name in ("sentinel-agent.exe", "sentinel-agent"):
-        script = Path(sys.executable).parent / name
-        if script.exists():
-            return [str(script)]
+    # Two directories, not one. On POSIX the console script sits beside the
+    # interpreter in `bin/`; on Windows `python.exe` is at the venv root and
+    # scripts go to `Scripts\` next to it, so looking only beside the
+    # interpreter never finds it there. Adding the `.exe` name alone — which is
+    # as far as the earlier fix went — was not enough, and the fallthrough to
+    # the `-m` form is silent, so nothing said the console script had been
+    # missed until a Windows runner asserted on it.
+    interpreter_dir = Path(sys.executable).parent
+    for directory in (interpreter_dir, interpreter_dir / "Scripts"):
+        for name in ("sentinel-agent.exe", "sentinel-agent"):
+            script = directory / name
+            if script.exists():
+                return [str(script)]
     return [sys.executable, "-m", "sentinel_agent.cli"]
 
 

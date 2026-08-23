@@ -6,6 +6,7 @@ placement decisions for platforms it cannot run.
 """
 
 import os
+import platform
 import stat
 
 import pytest
@@ -13,6 +14,14 @@ import pytest
 from sentinel_agent import paths
 from sentinel_agent.config import AgentConfig
 from sentinel_agent.paths import ConfigPermissionError, config_dir, secure_file, windows_acl_argv
+
+#: These tests do real filesystem work whose semantics are POSIX. The rendering
+#: tests above them stay cross-platform on purpose — `config_dir(system="X")` is
+#: pure — but chmod/fchmod/st_mode mean nothing on NTFS, where the Windows ACL
+#: branch is the code that actually runs.
+posix_only = pytest.mark.skipif(
+    platform.system() == "Windows", reason="POSIX file modes; Windows uses the icacls branch"
+)
 
 
 def test_the_existing_unix_user_location_did_not_move(monkeypatch, tmp_path):
@@ -37,7 +46,10 @@ def test_the_existing_unix_user_location_did_not_move(monkeypatch, tmp_path):
 def test_system_scope_leaves_home_behind(system, scope, expected):
     """A systemd system unit runs as root and a LaunchDaemon before login;
     neither has the HOME the person who enrolled the agent was typing in."""
-    assert str(config_dir(scope, system=system)) == expected
+    # as_posix(), not str(): config_dir() returns a Path, and a Path built on
+    # Windows renders "/etc/sentinel" as "\etc\sentinel". The separator is the
+    # host's; the placement is what this test is about.
+    assert config_dir(scope, system=system).as_posix() == expected
 
 
 def test_windows_user_config_is_local_not_roaming(monkeypatch):
@@ -99,6 +111,7 @@ def test_the_windows_acl_survives_no_username(monkeypatch):
     assert argv[-1].startswith("*S-1-5-32-544")
 
 
+@posix_only
 def test_secure_file_makes_it_owner_only(tmp_path):
     target = tmp_path / "agent.toml"
     target.write_text("x")
@@ -110,6 +123,7 @@ def test_secure_file_makes_it_owner_only(tmp_path):
     assert paths.is_private(target, system="Linux")
 
 
+@posix_only
 def test_open_private_hands_back_a_file_that_is_already_locked_down(tmp_path):
     """The token is written through this descriptor, so the permissions have to
     be right before the caller ever sees it."""
@@ -123,6 +137,7 @@ def test_open_private_hands_back_a_file_that_is_already_locked_down(tmp_path):
         os.close(fd)
 
 
+@posix_only
 def test_open_private_does_not_leak_the_descriptor_when_it_cannot_secure_it(
     tmp_path, monkeypatch
 ):
