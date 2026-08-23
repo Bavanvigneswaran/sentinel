@@ -81,15 +81,12 @@ async def test_a_removed_devices_forecast_is_not_returned(client, two_forecast_d
     live_id = str(two_forecast_devices["live"].id)
     gone_id = str(two_forecast_devices["gone"].id)
 
-    response = await client.get("/forecasts", headers=_headers(user_id))
-    assert response.status_code == 200
-    device_ids = {row["device_id"] for row in response.json()}
-    assert device_ids == {live_id}, f"a removed device's forecast leaked: {device_ids}"
-
-    response = await client.get("/forecasts/exhaustion", headers=_headers(user_id))
-    assert response.status_code == 200
-    device_ids = {row["device_id"] for row in response.json()}
-    assert device_ids == {live_id}, f"a removed device's projection leaked: {device_ids}"
+    for path in ("/forecasts", "/forecasts/exhaustion"):
+        response = await client.get(path, headers=_headers(user_id))
+        assert response.status_code == 200
+        device_ids = {row["device_id"] for row in response.json()}
+        assert gone_id not in device_ids, f"{path} returned a removed device"
+        assert device_ids == {live_id}, f"{path} returned {device_ids}"
 
 
 async def test_the_live_devices_rows_still_come_back(client, two_forecast_devices):

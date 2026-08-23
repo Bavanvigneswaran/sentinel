@@ -39,7 +39,7 @@ here, so the URL is absolute and carries **no `/api` prefix** — FastAPI mounts
 only because the dev proxy strips it again.
 
 ```bash
-cp mobile/.env.example mobile/.env
+cp frontend/mobile/.env.example frontend/mobile/.env
 ```
 
 | Where you're running | `EXPO_PUBLIC_API_URL` |
@@ -94,7 +94,7 @@ through FCM HTTP v1. Nothing goes through Expo's push service.
 
 Three things must line up, and each one missing degrades rather than breaks:
 
-1. **`mobile/google-services.json`** — from the Firebase console, for an Android
+1. **`frontend/mobile/google-services.json`** — from the Firebase console, for an Android
    app whose package name is `com.sentinel.viewer`. Without it, `app.config.ts`
    omits `googleServicesFile` entirely (so the build still works) and Settings
    says push is unavailable instead of offering a dead toggle.
@@ -114,7 +114,7 @@ be a lie the UI would happily render. Signing out unregisters this phone.
 ```bash
 npm test        # node --test over the pure logic (ring buffer, chart frame, deep links,
                 # per-platform readings grid)
-npm run lint    # oxlint, same config as web/
+npm run lint    # oxlint, same config as frontend/web/
 npm run typecheck
 ```
 
@@ -125,9 +125,9 @@ payload's `url` is matched against an allow-list rather than navigated to on
 trust. They run in plain Node with no React Native runtime, no jest, and no
 transform.
 
-## Relationship to `web/`
+## Relationship to `frontend/web/`
 
-`src/types/` is copied byte-for-byte from `web/src/types/`; the backend's
+`src/types/` is copied byte-for-byte from `frontend/web/src/types/`; the backend's
 Pydantic schemas are the single source of truth and both clients hand-write
 against them. `lib/api.ts`, `lib/liveSocket.ts`, `stores/auth.ts`,
 `lib/ringBuffer.ts` and `lib/streamBuffers.ts` are ports kept deliberately

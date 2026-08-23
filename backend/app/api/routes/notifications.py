@@ -120,7 +120,7 @@ async def register_fcm_token(
     the existing row would be exactly the kind of cross-tenant write the
     policies exist to stop. It surfaces as an actionable 409 instead of a 500,
     and the Android app avoids reaching it at all by unregistering on sign-out
-    (see mobile/src/stores/auth.ts).
+    (see frontend/mobile/src/stores/auth.ts).
     """
     stmt = pg_insert(FcmToken).values(
         user_id=user.id,

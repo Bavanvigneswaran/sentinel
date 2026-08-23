@@ -1,7 +1,7 @@
 # What an Android device can honestly report
 
 **Decided before the collector was written, not discovered afterwards.** This file is the
-authority for `mobile/modules/sentinel-collector`; if a collector and this table disagree, the
+authority for `frontend/mobile/modules/sentinel-collector`; if a collector and this table disagree, the
 collector is wrong.
 
 CLAUDE.md's hard rule applies without exception: *a value the platform cannot measure is `null` on

@@ -13,7 +13,7 @@ WebSocket. That removes CORS from the picture entirely for a real deployment,
 and it is what makes `EXPO_PUBLIC_API_URL` and the browser's address bar the
 same string.
 
-Unset degrades visibly rather than breaking: with no `web/dist` built, the API
+Unset degrades visibly rather than breaking: with no `frontend/web/dist` built, the API
 serves exactly what it always did and says so once at startup, the same posture
 as unset SMTP/VAPID/FCM/AGENT_DIST_DIR.
 """
@@ -32,7 +32,7 @@ _REPO_ROOT = _BACKEND_DIR.parent
 
 #: Where `npm run build` puts it. Resolved from this file, not the CWD, for the
 #: same reason app/config.py resolves its env files that way.
-DEFAULT_WEB_DIST = _REPO_ROOT / "web" / "dist"
+DEFAULT_WEB_DIST = _REPO_ROOT / "frontend" / "web" / "dist"
 
 INDEX = "index.html"
 

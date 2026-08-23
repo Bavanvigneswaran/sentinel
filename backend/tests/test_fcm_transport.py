@@ -80,7 +80,7 @@ def test_the_message_carries_both_a_notification_and_a_data_block():
 
 
 def test_the_message_names_the_channel_the_app_creates():
-    """mobile/src/lib/push.ts creates exactly this channel; Android silently
+    """frontend/mobile/src/lib/push.ts creates exactly this channel; Android silently
     drops a message naming one the app never created."""
     message = fcm.build_message("tok", title="t", body="b", data={})["message"]
     assert message["android"]["notification"]["channel_id"] == "alerts"

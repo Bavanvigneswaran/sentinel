@@ -129,7 +129,7 @@ async def _send_fcm(session: AsyncSession, user_id: uuid.UUID, payload: dict) ->
         # Every FCM data value must be a string. `url` is the same "/alerts"
         # the web push payload already carries, so one notification body serves
         # both channels; the app maps it through an allow-list rather than
-        # navigating to whatever arrives (mobile/src/navigation/linking.ts).
+        # navigating to whatever arrives (frontend/mobile/src/navigation/linking.ts).
         data={"url": payload["url"]},
     )
     if dead:

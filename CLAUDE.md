@@ -40,7 +40,7 @@ react-native-svg for charts) in `mobile/`, plus a Kotlin collector module in Pha
 - `make agent-build` — PyInstaller binary **for this machine only** · `agent-build-check` — say which
 - `make mobile-apk` — release APK; refuses without a real keystore. See `docs/PACKAGING.md`.
 - `make mobile-android` — build/install/launch the Android dev build · `make mobile` — Metro only
-- `make mobile-prebuild` — regenerate `mobile/android/` from `app.config.ts` · `make mobile-test`
+- `make mobile-prebuild` — regenerate `frontend/mobile/android/` from `app.config.ts` · `make mobile-test`
 
 Phase 5 status: alerts, the evaluator, and notifications complete on top of Phase 4's dashboard.
 Continuous aggregates at 1m/5m/1h behind a tenant-scoped wrapper view, a time-range query planner,
@@ -199,7 +199,7 @@ HTTP v1 behind `asyncio.to_thread` for google-auth's blocking refresh — a logg
 `fcm_project_id`/`fcm_service_account_file` are unset, exactly as SMTP and VAPID already are. One
 push payload (`{title, body, url}`) now feeds both channels. 437 backend tests green.
 
-The app reuses `web/src` rather than reinventing it: `src/types/` is copied byte-for-byte,
+The app reuses `frontend/web/src` rather than reinventing it: `src/types/` is copied byte-for-byte,
 and `lib/api.ts`, `stores/auth.ts`, `lib/liveSocket.ts`, `lib/ringBuffer.ts` and
 `lib/streamBuffers.ts` are ports kept deliberately recognisable against their web counterparts.
 What genuinely differs: no `window` (an absolute base URL and **no `/api` prefix** — that prefix is
@@ -233,7 +233,7 @@ alert-rule CRUD, all of which stay in the web console.
 Phase 10b status: the Android collector is complete — the phone reports its own real metrics to the
 same backend, over the same agent protocol, with **no protocol change**: `PROTOCOL_VERSION` stays at
 1, `Device.platform` already carried `"android"` end-to-end, and `POST /enroll` already accepted it.
-A Kotlin foreground service in `mobile/modules/sentinel-collector/` samples locally and pushes
+A Kotlin foreground service in `frontend/mobile/modules/sentinel-collector/` samples locally and pushes
 outbound over the same WSS ingest endpoint the Python agent uses; an Expo native module exposes
 `enroll`/`start`/`stop`/`status` to the RN app so a phone can enrol itself.
 
@@ -341,7 +341,7 @@ is an actionable error pointing at INSTALL.md's hand-written plist.
 
 Frontend: `/download` is a new authenticated page. `AGENT_DIST_DIR` unset is a supported state — the
 page says no build exists and gives the from-source command rather than offering a link that 404s,
-the same posture as unset SMTP/VAPID/FCM/ANTHROPIC_API_KEY. `web/src/lib/platform.ts` is pure and
+the same posture as unset SMTP/VAPID/FCM/ANTHROPIC_API_KEY. `frontend/web/src/lib/platform.ts` is pure and
 tested, and its load-bearing field is `archCertain`: Safari and Chrome both report Apple Silicon as
 `Intel Mac OS X`, permanently, so a Mac's architecture is *not derivable* from a user agent and the
 page offers both builds with an explanation instead of guessing. Chromium's
@@ -402,7 +402,7 @@ runs outside the event loop and cannot call `agent.stop` directly, so it hands o
 `loop.call_soon_threadsafe()`. 143 agent tests (was 139).
 
 A real Android release build followed, at the user's request: a self-generated release keystore
-(`~/.sentinel-keys/`, outside the repo), `mobile/plugins/withReleaseSigning.js` swapping it into
+(`~/.sentinel-keys/`, outside the repo), `frontend/mobile/plugins/withReleaseSigning.js` swapping it into
 `android/app/build.gradle` in place of React Native's public debug key, `make mobile-apk`, and the
 resulting APK registered into the same manifest `/download` already reads — `os: "android"` was
 already a first-class citizen there, not a special case. Verified past "it built": `apksigner
@@ -436,7 +436,7 @@ only re-enables it for the **debug** build variant
 "verified end-to-end on a real emulator" claim in this file — Phase 10a, Phase 10b — was against a
 *debug* build, and nobody had ever produced a release build before this session to find out it
 silently could not talk to `http://` at all. A signed-in screen with a red "Could not reach the
-backend" banner is what surfaced it. `mobile/plugins/withDevBackendCleartext.js` fixes this the
+backend" banner is what surfaced it. `frontend/mobile/plugins/withDevBackendCleartext.js` fixes this the
 narrow way: a Network Security Config scoped to exactly `EXPO_PUBLIC_API_URL`'s host, generated at
 `expo prebuild` time — not `usesCleartextTraffic="true"` app-wide, which would silently accept
 plaintext to *any* host the app ever talks to, forever. A `https://` backend needs no exception and
@@ -449,7 +449,7 @@ installed fresh via `adb install`, launched, and signed in through the real UI a
 plaintext through the new exception. `mobile/.env` and `android/` (generated, gitignored) were
 reverted to the documented emulator-default state afterward so the normal `make mobile-android` dev
 loop is unaffected; the corrected, working APK was re-registered in the manifest with its real
-(different — APK builds are not byte-reproducible) checksum. `mobile/README.md` now documents both
+(different — APK builds are not byte-reproducible) checksum. `frontend/mobile/README.md` now documents both
 gaps — the `--host 0.0.0.0` requirement and the release-only cleartext exception — since neither was
 written down anywhere before. 49 mobile JS tests (was 41).
 
@@ -532,7 +532,7 @@ than counted as zero — see docs/ANDROID_METRICS.md.
 
 - Files stay under ~400 lines; split rather than grow.
 - SQLAlchemy ORM models in `backend/app/models/`; Pydantic wire schemas in `backend/app/schemas/`.
-  The schemas are the contract — TS types in `web/src/types/` are hand-written for now and generated
+  The schemas are the contract — TS types in `frontend/web/src/types/` are hand-written for now and generated
   from OpenAPI later.
 - All timestamps UTC, `timestamptz`, ISO-8601 on the wire.
 - Async everywhere in the backend; nothing blocking on the event loop.
@@ -550,7 +550,7 @@ than counted as zero — see docs/ANDROID_METRICS.md.
   scoping survives a mid-request commit.
 - **The frontend must single-flight `/auth/refresh`.** The backend treats a replayed refresh token as
   theft and revokes the whole family. Two concurrent calls — which is what a `useEffect` bootstrap
-  would produce under React 19 StrictMode — log the user out. See `web/src/lib/api.ts`.
+  would produce under React 19 StrictMode — log the user out. See `frontend/web/src/lib/api.ts`.
 - **The access token never leaves memory.** Not localStorage, not sessionStorage, not a cookie. The
   refresh cookie is HttpOnly with `Path=/` (the Vite proxy strips `/api`, so a narrower path is never
   sent back) and `secure` is off in dev because Safari drops Secure cookies over http://localhost.
@@ -618,7 +618,7 @@ than counted as zero — see docs/ANDROID_METRICS.md.
   constructed with empty data — real samples haven't arrived yet — so passing `false` to preserve
   zoom/pan leaves the y-scale stuck at `[null, null]` forever, even once real data lands. Found the
   hard way verifying against the real agent: the chart held correct data throughout and simply never
-  learned to scale to it. See `web/src/components/charts/LiveChart.tsx`.
+  learned to scale to it. See `frontend/web/src/components/charts/LiveChart.tsx`.
 
 ## Phase 4 invariants — don't break these
 
@@ -861,7 +861,7 @@ than counted as zero — see docs/ANDROID_METRICS.md.
 
 ## Phase 10a invariants — don't break these
 
-- **The access token never touches disk on the phone either.** `mobile/src/stores/auth.ts` is a
+- **The access token never touches disk on the phone either.** `frontend/mobile/src/stores/auth.ts` is a
   plain zustand store, deliberately *not* wrapped in `zustand/middleware/persist` and never written
   to AsyncStorage or SecureStore. "Kill the app and stay signed in" works the same way "hard-refresh
   and stay logged in" works in the browser: the HttpOnly refresh cookie is replayed by the platform
@@ -887,7 +887,7 @@ than counted as zero — see docs/ANDROID_METRICS.md.
   root. There is no proxy on a device, so `src/config.ts` points at the origin directly. It is also
   absolute, because `window.location` does not exist — which is where the WS URL comes from too.
 - **`null` is still a gap, in a renderer that has no `spanGaps` option.**
-  `mobile/src/lib/chartFrame.ts` emits one polyline per unbroken run of readings and never bridges a
+  `frontend/mobile/src/lib/chartFrame.ts` emits one polyline per unbroken run of readings and never bridges a
   hole, and the y-scale is recomputed from the visible window every tick. The maths lives in that
   pure module rather than in the component precisely so it can be tested without a React Native
   runtime — `src/lib/__tests__/chartFrame.test.ts` is the guard.
@@ -897,7 +897,7 @@ than counted as zero — see docs/ANDROID_METRICS.md.
   "unavailable" check and reaches the value formatter. It crashed the Live screen on resume from
   background — the exact moment the buffer is reset into that state.
 - **A push payload's `url` is matched against an allow-list, never navigated to.**
-  `mobile/src/lib/deepLinks.ts` maps the backend's `"/alerts"` to a route through a `Map` — a `Map`
+  `frontend/mobile/src/lib/deepLinks.ts` maps the backend's `"/alerts"` to a route through a `Map` — a `Map`
   and not an object literal, because an object lookup walks `Object.prototype` and a payload of
   `{"url": "constructor"}` would resolve to a "route". `data.url` arrives over the network; this is
   the same "observed content is data, not instructions" reflex CLAUDE.md already applies to metric
@@ -917,7 +917,7 @@ than counted as zero — see docs/ANDROID_METRICS.md.
   `app.config.ts` omits `android.googleServicesFile` entirely when the file is missing — naming a
   file that does not exist fails `expo prebuild` outright — and `src/config.ts` surfaces that as
   Settings saying push is unavailable. Same graceful-absence posture as unset SMTP/VAPID/API keys.
-- **`mobile/android/` is generated, not authored.** It is gitignored and rebuilt by
+- **`frontend/mobile/android/` is generated, not authored.** It is gitignored and rebuilt by
   `make mobile-prebuild` from `app.config.ts`. Editing it by hand is work that disappears on the
   next prebuild; config plugins are where native changes belong.
 
@@ -994,7 +994,7 @@ than counted as zero — see docs/ANDROID_METRICS.md.
   ARCHITECTURE.md's "agents never see the user's password" separation while removing the copying;
   the collector never touches the access token.
 - **The per-device screen is chosen by `device.platform`, and the gap is stated rather than left
-  blank.** `mobile/src/lib/deviceReadings.ts` is pure and tested for the same reason
+  blank.** `frontend/mobile/src/lib/deviceReadings.ts` is pure and tested for the same reason
   `chartFrame.ts` is. The distinction it encodes: a key stays on the grid when the platform *could*
   report it and happens to be null right now (real information — nothing measured inside the
   freshness window), and is dropped only when there is never going to be anything to draw. Both the
@@ -1103,7 +1103,7 @@ than counted as zero — see docs/ANDROID_METRICS.md.
 - **No APK is published, and the release build must never fall back to the debug key.** `expo
   prebuild` points the release buildType at React Native's *public* debug keystore, which would let
   anyone forge an update Android accepts as the same app. `plugins/withReleaseSigning.js` swaps in a
-  real key when configured — a config plugin, because `mobile/android/` is generated and gitignored
+  real key when configured — a config plugin, because `frontend/mobile/android/` is generated and gitignored
   and hand-edits vanish at the next prebuild — and `make mobile-apk` **refuses to build** when it is
   not, rather than warning and proceeding. Its gradle rewrite is split at `buildTypes` for a reason:
   a single lazy regex over the whole file starts inside the injected `signingConfigs.release` block

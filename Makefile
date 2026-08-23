@@ -9,8 +9,8 @@
 install:
 	cd backend && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 	cd agent && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-	cd web && npm install
-	cd mobile && npm install
+	cd frontend/web && npm install
+	cd frontend/mobile && npm install
 
 up:
 	docker compose up -d
@@ -28,7 +28,7 @@ dev-backend:
 	cd backend && .venv/bin/uvicorn app.main:app --reload --port 8000
 
 dev-frontend:
-	cd web && npm run dev
+	cd frontend/web && npm run dev
 
 dev:
 	@echo "Run 'make dev-backend' and 'make dev-frontend' in separate terminals."
@@ -44,9 +44,9 @@ dev:
 # Binds 0.0.0.0 on purpose: the default `--port 8000` listens on loopback only,
 # which is why an Android device or another PC sees nothing. Print the LAN URL
 # rather than making the user work it out, since it is also the value that has
-# to go in mobile/.env before building an APK.
+# to go in frontend/mobile/.env before building an APK.
 web-build:
-	cd web && npm run build
+	cd frontend/web && npm run build
 
 serve: web-build
 	@ip=$$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $$1}'); \
@@ -54,15 +54,15 @@ serve: web-build
 	echo "  Console + API:  http://$$ip:8000"; \
 	echo "  On this Mac:    http://localhost:8000"; \
 	echo ""; \
-	echo "  Point mobile/.env at http://$$ip:8000 before building an APK."; \
+	echo "  Point frontend/mobile/.env at http://$$ip:8000 before building an APK."; \
 	echo ""
 	cd backend && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 test:
 	cd backend && .venv/bin/pytest -q
 	cd agent && .venv/bin/pytest -q
-	cd web && npm test
-	cd mobile && npm test
+	cd frontend/web && npm test
+	cd frontend/mobile && npm test
 	$(MAKE) mobile-collector-test
 
 # --- database ---------------------------------------------------------------
@@ -93,12 +93,12 @@ reset-db:
 lint:
 	cd backend && .venv/bin/ruff check .
 	cd agent && .venv/bin/ruff check .
-	cd web && npm run lint
-	cd mobile && npm run lint
+	cd frontend/web && npm run lint
+	cd frontend/mobile && npm run lint
 
 typecheck:
-	cd web && npx tsc -b --noEmit
-	cd mobile && npx tsc --noEmit
+	cd frontend/web && npx tsc -b --noEmit
+	cd frontend/mobile && npx tsc --noEmit
 
 # --- agent ------------------------------------------------------------------
 # Enrol first: mint a code in the UI (or POST /enrollment-codes), then
@@ -148,26 +148,26 @@ agent-build-clean:
 		.venv/bin/python build/build.py --clean
 
 # --- mobile (Phase 10a Android viewer) ---------------------------------------
-# Point mobile/.env at a backend the *device* can reach before the first run:
+# Point frontend/mobile/.env at a backend the *device* can reach before the first run:
 # an Android emulator sees this machine as 10.0.2.2, a physical phone needs
-# your LAN IP. See mobile/README.md.
+# your LAN IP. See frontend/mobile/README.md.
 
 # Metro, for an already-installed dev build.
 mobile:
-	cd mobile && npx expo start --dev-client
+	cd frontend/mobile && npx expo start --dev-client
 
 # Build, install and launch the dev build on the running emulator/device.
 # The first run compiles the Android project and takes a while.
 mobile-android:
-	cd mobile && npx expo run:android
+	cd frontend/mobile && npx expo run:android
 
 # Regenerate android/ from app.config.ts. Needed after changing a config
 # plugin, the package name, or adding google-services.json.
 mobile-prebuild:
-	cd mobile && npx expo prebuild --platform android --clean
+	cd frontend/mobile && npx expo prebuild --platform android --clean
 
 mobile-test:
-	cd mobile && npm test
+	cd frontend/mobile && npm test
 
 # A distributable release APK. Refuses to build without a real keystore rather
 # than falling back to React Native's *public* debug key, which the generated
@@ -191,15 +191,15 @@ mobile-apk:
 		echo "public debug key — see docs/PACKAGING.md."; \
 		exit 1; \
 	fi; \
-	cd mobile && npx expo prebuild --platform android --clean && \
+	cd frontend/mobile && npx expo prebuild --platform android --clean && \
 		cd android && ./gradlew assembleRelease && \
-		echo "APK: mobile/android/app/build/outputs/apk/release/app-release.apk" && \
+		echo "APK: frontend/mobile/android/app/build/outputs/apk/release/app-release.apk" && \
 		echo "Publish it with: python agent/build/register_build.py --os android \\" && \
 		echo "  --arch arm64 --version 0.1.0 --signed --signing '<your key>' \\" && \
-		echo "  --file mobile/android/app/build/outputs/apk/release/app-release.apk"
+		echo "  --file frontend/mobile/android/app/build/outputs/apk/release/app-release.apk"
 
 # --- collector (Phase 10b: the phone as a monitored device) -------------------
-# The Kotlin foreground-service collector lives in mobile/modules/sentinel-collector.
+# The Kotlin foreground-service collector lives in frontend/mobile/modules/sentinel-collector.
 # Its JVM unit tests need no emulator: everything they cover is deliberately pure
 # (aggregation, batching, counter differentiation, /proc parsing, JSON encoding).
 #
@@ -214,7 +214,7 @@ mobile-collector-test:
 		echo "SKIP mobile-collector-test: no Android SDK at $(ANDROID_SDK)."; \
 		echo "     Set ANDROID_HOME to run the Kotlin collector tests."; \
 	else \
-		cd mobile/android && ANDROID_HOME="$(ANDROID_SDK)" ./gradlew :sentinel-collector:testDebugUnitTest; \
+		cd frontend/mobile/android && ANDROID_HOME="$(ANDROID_SDK)" ./gradlew :sentinel-collector:testDebugUnitTest; \
 	fi
 
 # Follow the collector on a connected device. The service logs under its own

@@ -1,7 +1,7 @@
 """Add an already-built artifact to the download manifest.
 
-    python build/register_build.py --os android --arch arm64 \
-        --version 0.1.0 --file ../mobile/android/app/build/outputs/apk/release/app-release.apk
+    python build/register_build.py --os android --arch arm64 --version 0.1.0 \
+        --file ../frontend/mobile/android/app/build/outputs/apk/release/app-release.apk
 
 `build.py` handles the three PyInstaller targets itself. This exists for the
 one artifact PyInstaller will never produce: Phase 10b's Android collector,

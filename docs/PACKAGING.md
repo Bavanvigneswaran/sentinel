@@ -318,7 +318,7 @@ every RN checkout on earth. An APK signed with it lets anybody build an
 "update" that Android accepts as the same app and installs straight over it.
 That is worse than shipping nothing.
 
-So `plugins/withReleaseSigning.js` (a config plugin, because `mobile/android/`
+So `plugins/withReleaseSigning.js` (a config plugin, because `frontend/mobile/android/`
 is generated and gitignored and hand-edits vanish at the next prebuild) swaps in
 a real keystore when one is configured, and `make mobile-apk` **refuses to build
 at all** when it is not — never falling back to the debug key with a warning.
@@ -334,7 +334,7 @@ export SENTINEL_ANDROID_KEY_PASSWORD=…
 make mobile-apk
 ```
 
-Note that the app also needs `mobile/google-services.json` for push, and
+Note that the app also needs `frontend/mobile/google-services.json` for push, and
 `mobile/.env` pointing at a backend the *phone* can reach — neither is in the
 repo, and both are already handled by `app.config.ts`'s graceful-absence logic.
 
@@ -357,7 +357,7 @@ Loopback is exempt, or every developer would simply turn the guard off.
 
 ## Serving the console
 
-`make serve` builds `web/dist` and the API process serves it — see
+`make serve` builds `frontend/web/dist` and the API process serves it — see
 `backend/app/webapp.py`. One origin carries the console, the REST API and the
 viewer WebSocket, which is what makes "the address in the browser" and
 `EXPO_PUBLIC_API_URL` the same string, and removes CORS from a real deployment
@@ -406,7 +406,7 @@ without an enrollment code, and minting one requires signing in.
 ### A Mac's architecture is not detectable from a browser
 
 Safari and Chrome both report `Intel Mac OS X 10_15_7` on Apple Silicon,
-permanently, for compatibility. `web/src/lib/platform.ts` therefore returns
+permanently, for compatibility. `frontend/web/src/lib/platform.ts` therefore returns
 `archCertain: false` and the page offers **both** Mac builds with an
 explanation, rather than guessing and handing half of all Mac users a binary
 that cannot run. Chromium's `navigator.userAgentData.getHighEntropyValues()`

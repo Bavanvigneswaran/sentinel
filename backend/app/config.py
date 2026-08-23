@@ -172,7 +172,7 @@ class Settings(BaseSettings):
     agent_download_base_url: str | None = None
 
     # --- Web console (Phase 11) ------------------------------------------------
-    # When `web/dist` has been built (`make web-build`), the API process serves
+    # When `frontend/web/dist` has been built (`make web-build`), the API process serves
     # the console too, so one origin is the whole product and a second machine
     # on the network can actually load it — `vite dev` binds to localhost and
     # is not a way to hand anyone a working install. Unset/unbuilt is a

@@ -54,14 +54,14 @@ scheduled email reports.
 
 ### Phase 10a — Android viewer  ·  Opus 5  ·  ~1 session  ·  **DONE**
 React Native dev-build viewer in `mobile/` (login/signup, device list, fleet + per-device health,
-Live Monitoring over the viewer WS, alerts triage, push via FCM). Reuses `web/src`'s API client,
+Live Monitoring over the viewer WS, alerts triage, push via FCM). Reuses `frontend/web/src`'s API client,
 auth store shape and types; renders the existing API/WS as-is. The one backend addition was the FCM
 registration surface — the server had no way to reach a phone at all.
 **Done when:** real telemetry from a real agent streaming at 1s on a real Android device. Verified.
 Known gap: FCM is untested against a live Firebase project (none configured).
 
 ### Phase 10b — Android as a monitored device  ·  Opus 5  ·  ~2 sessions  ·  **DONE**
-Kotlin foreground-service collector in `mobile/modules/sentinel-collector/` plus an Expo native
+Kotlin foreground-service collector in `frontend/mobile/modules/sentinel-collector/` plus an Expo native
 module, so a phone enrols itself and reports its own metrics over the existing agent protocol —
 `PROTOCOL_VERSION` unchanged at 1, and the only backend addition was exposing three battery/thermal
 columns that were already stored. What Android can honestly measure was decided up front and written

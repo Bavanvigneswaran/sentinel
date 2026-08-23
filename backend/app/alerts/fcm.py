@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
 FCM_ENDPOINT = "https://fcm.googleapis.com/v1/projects/{project_id}/messages:send"
 
-#: Must match CHANNEL_ID in mobile/src/lib/push.ts. Android silently drops a
+#: Must match CHANNEL_ID in frontend/mobile/src/lib/push.ts. Android silently drops a
 #: message naming a channel the app never created, so these two strings are one
 #: contract in two files.
 ANDROID_CHANNEL_ID = "alerts"
@@ -85,7 +85,7 @@ def build_message(
     Both a `notification` block and a `data` block are sent on purpose. The
     notification block is what Android displays when the app is backgrounded or
     dead (the app is not running to render anything itself); the data block is
-    what survives to the tap handler so mobile/src/navigation/linking.ts knows
+    what survives to the tap handler so frontend/mobile/src/navigation/linking.ts knows
     where to go. Sending only one of the two loses one of those behaviours.
     """
     return {
