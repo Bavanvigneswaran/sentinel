@@ -9,7 +9,7 @@ import { apiFetch } from "@/lib/api"
 import { formatDaysUntil } from "@/lib/formatters"
 import type { AlertEvent, EventStatus } from "@/types/alerts"
 import type { Device } from "@/types/api"
-import type { ExhaustionForecast } from "@/types/forecast"
+import type { ExhaustionForecast, MetricForecast } from "@/types/forecast"
 
 const POLL_INTERVAL_MS = 10_000
 
@@ -41,6 +41,12 @@ function formatRelativeTime(iso: string): string {
  */
 export function ForecastsPage() {
   const [exhaustion, setExhaustion] = useState<ExhaustionForecast[] | null>(null)
+  /** Only ever read for `computed_at`. The worker upserts a row per
+   * (device, metric) even when it found too little history to fit anything
+   * (Phase 7's invariant), so the presence of rows is what distinguishes
+   * "nothing has been computed yet" from "computed, and nothing is trending
+   * towards a limit" — which are opposite pieces of news. */
+  const [forecasts, setForecasts] = useState<MetricForecast[] | null>(null)
   const [devicesById, setDevicesById] = useState<Record<string, Device>>({})
   const [exhaustionError, setExhaustionError] = useState<string | null>(null)
 
@@ -60,6 +66,14 @@ export function ForecastsPage() {
     apiFetch<ExhaustionForecast[]>("/forecasts/exhaustion")
       .then((data) => setExhaustion(sortBySoonest(data)))
       .catch(() => setExhaustionError("Could not load capacity projections."))
+  }, [])
+
+  useEffect(() => {
+    apiFetch<MetricForecast[]>("/forecasts")
+      .then(setForecasts)
+      .catch(() => {
+        // Non-fatal: the list below just cannot say when it was last computed.
+      })
   }, [])
 
   useEffect(() => {
@@ -84,6 +98,15 @@ export function ForecastsPage() {
     }
   }, [filter])
 
+  // The newest computed_at across every stored row, empty fits included.
+  const lastComputedAt =
+    forecasts && forecasts.length > 0
+      ? forecasts.reduce(
+          (newest, f) => (f.computed_at > newest ? f.computed_at : newest),
+          forecasts[0].computed_at,
+        )
+      : null
+
   return (
     <AppLayout active="forecasts">
       <div>
@@ -98,15 +121,27 @@ export function ForecastsPage() {
         <CardHeader>
           <CardTitle className="text-base">Time to capacity</CardTitle>
           <CardDescription>
-            Soonest first. A device needs enough real history for a trustworthy projection —
-            newly enrolled devices simply don't appear yet.
+            Soonest first, and only memory and disk — they are the two that fill up. A device
+            appears here when its own trend is heading somewhere, so an empty list is usually
+            good news rather than a missing feature.
+            {lastComputedAt
+              ? ` Last recomputed ${formatRelativeTime(lastComputedAt)}.`
+              : ""}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {exhaustionError && <p className="text-sm text-destructive">{exhaustionError}</p>}
           {exhaustion !== null && exhaustion.length === 0 && !exhaustionError && (
             <p className="text-sm text-muted-foreground">
-              No devices have enough history for a projection yet.
+              {lastComputedAt === null
+                ? // No rows at all means the worker has not looked yet, which is
+                  // a wait with an end rather than a bar to clear. Saying "not
+                  // enough history" here was the wrong explanation *and* the
+                  // discouraging one: a device qualifies within a few minutes
+                  // of reporting, and what it is actually waiting for is the
+                  // next sweep.
+                  "Nothing has been projected yet. Forecasts are recomputed on a timer rather than on every reading, so a freshly enrolled device shows up at the next sweep — within about a quarter of an hour, not a day."
+                : "No device is currently trending towards its memory or disk limit."}
             </p>
           )}
           {exhaustion?.map((e) => (

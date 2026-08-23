@@ -77,6 +77,17 @@ export function ForecastsScreen({ route }: RootStackScreenProps<"Forecasts">) {
 
   const fitted = (forecasts.data ?? []).filter((f) => f.points.length > 0)
 
+  /* The worker upserts a row per (device, metric) even when it found too
+   * little history to fit anything, so "are there any rows at all" tells the
+   * two empty states apart — nothing computed yet, versus computed and nothing
+   * is heading for a limit. They are opposite pieces of news and were sharing
+   * one message. */
+  const stored = forecasts.data ?? []
+  const lastComputedAt =
+    stored.length > 0
+      ? stored.reduce((newest, f) => (f.computed_at > newest ? f.computed_at : newest), stored[0].computed_at)
+      : null
+
   return (
     <Screen
       title="Forecasts"
@@ -100,8 +111,12 @@ export function ForecastsScreen({ route }: RootStackScreenProps<"Forecasts">) {
 
       {exhaustion.data && rows.length === 0 && (
         <EmptyState
-          title="Nothing projected yet"
-          body="A projection needs a little real history first. It appears within minutes of a device starting to report."
+          title={lastComputedAt === null ? "Nothing projected yet" : "Nothing filling up"}
+          body={
+            lastComputedAt === null
+              ? "Forecasts are recomputed on a timer rather than on every reading, so a freshly enrolled device appears at the next sweep — within about a quarter of an hour."
+              : `No device is trending towards its memory or disk limit. Last recomputed ${formatRelative(lastComputedAt)}.`
+          }
         />
       )}
 
