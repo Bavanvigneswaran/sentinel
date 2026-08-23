@@ -2,19 +2,23 @@
  * Forecasts — soonest-to-exhaust first. Ported from
  * web/src/pages/ForecastsPage.tsx.
  *
- * The exhaustion list is the half worth carrying on a phone: "this disk fills
- * in four days" is actionable away from a desk in a way a 24h prediction-
- * interval chart is not. The chart overlay stays on the web console's history
- * page, where there is room to read it.
+ * Every card below the days-until number now carries a small chart —
+ * ForecastChart, the react-native-svg counterpart of web's HistoryChart used
+ * with no real series (uPlot does not run here). "This disk fills in four
+ * days" as text alone is what a phone showed for a while; the actual
+ * predicted trend and its confidence band are real numbers the backend
+ * already stores and were simply never drawn on this screen.
  */
 
 import { useEffect, useState } from "react"
 import { StyleSheet, Text, View } from "react-native"
 
+import { ForecastChart } from "@/components/charts/ForecastChart"
 import { EmptyState, Screen } from "@/components/Screen"
 import { Card, ErrorNote } from "@/components/ui"
 import { usePolledResource } from "@/hooks/usePolledResource"
 import { apiFetch } from "@/lib/api"
+import { colorForIndex } from "@/lib/chartColors"
 import { withDeviceScope } from "@/lib/deviceScope"
 import { formatDaysUntil } from "@/lib/formatters"
 import { formatRelative } from "@/lib/timeRanges"
@@ -40,6 +44,17 @@ const CONFIDENCE_NOTE: Record<string, string | undefined> = {
   provisional: "Provisional — not much history behind this yet.",
   medium: "Will steady as more history accumulates.",
   high: undefined,
+}
+
+/** Matches the colour each metric already has on the fleet card / web's
+ * ForecastsPage — the same series should look like itself everywhere. */
+const METRIC_COLOR: Record<string, string> = {
+  cpu_percent: colorForIndex(0),
+  mem_percent: colorForIndex(1),
+  disk_percent: colorForIndex(2),
+  swap_percent: colorForIndex(3),
+  packet_loss_percent: colorForIndex(4),
+  cpu_iowait_percent: colorForIndex(5),
 }
 
 export function ForecastsScreen({ route }: RootStackScreenProps<"Forecasts">) {
@@ -120,31 +135,48 @@ export function ForecastsScreen({ route }: RootStackScreenProps<"Forecasts">) {
         />
       )}
 
-      {rows.map((row) => (
-        <Card key={`${row.device_id}-${row.metric}-${row.entity ?? ""}`}>
-          <View style={styles.header}>
-            <Text style={text.heading}>
-              {METRIC_LABEL[row.metric] ?? row.metric}
-              {row.entity ? ` · ${row.entity}` : ""}
+      {rows.map((row) => {
+        // Theil-Sen (this ETA) and Holt-Winters (the plotted trend) are
+        // separate fits off the same underlying samples — see
+        // ForecastsPage.tsx's identical match on web. A row can have a real
+        // ETA a tick or two before the trend has enough points to plot.
+        const matchingForecast = (forecasts.data ?? []).find(
+          (f) =>
+            f.device_id === row.device_id && f.metric === row.metric && f.entity === row.entity,
+        )
+        return (
+          <Card key={`${row.device_id}-${row.metric}-${row.entity ?? ""}`}>
+            <View style={styles.header}>
+              <Text style={text.heading}>
+                {METRIC_LABEL[row.metric] ?? row.metric}
+                {row.entity ? ` · ${row.entity}` : ""}
+              </Text>
+              <Text
+                style={[
+                  styles.days,
+                  { color: row.projected_at == null ? colors.muted : colors.degraded },
+                ]}
+              >
+                {/* Null is "not heading for a limit on any horizon worth acting
+                    on" — see analysis/forecast.py. Saying so beats an em dash. */}
+                {row.projected_at ? formatDaysUntil(row.projected_at) : "not trending up"}
+              </Text>
+            </View>
+            <Text style={text.small}>{devices[row.device_id]?.name ?? row.device_id}</Text>
+            <Text style={text.tiny}>
+              now {row.current_value.toFixed(1)}% · {row.slope_per_day >= 0 ? "+" : ""}
+              {row.slope_per_day.toFixed(2)}%/day · checked {formatRelative(row.computed_at)}
             </Text>
-            <Text
-              style={[
-                styles.days,
-                { color: row.projected_at == null ? colors.muted : colors.degraded },
-              ]}
-            >
-              {/* Null is "not heading for a limit on any horizon worth acting
-                  on" — see analysis/forecast.py. Saying so beats an em dash. */}
-              {row.projected_at ? formatDaysUntil(row.projected_at) : "not trending up"}
-            </Text>
-          </View>
-          <Text style={text.small}>{devices[row.device_id]?.name ?? row.device_id}</Text>
-          <Text style={text.tiny}>
-            now {row.current_value.toFixed(1)}% · {row.slope_per_day >= 0 ? "+" : ""}
-            {row.slope_per_day.toFixed(2)}%/day · checked {formatRelative(row.computed_at)}
-          </Text>
-        </Card>
-      ))}
+            <ForecastChart
+              points={matchingForecast?.points ?? []}
+              color={METRIC_COLOR[row.metric] ?? colorForIndex(0)}
+              domain={[0, 100]}
+              ceiling={100}
+              valueFormatter={(v) => `${v.toFixed(0)}%`}
+            />
+          </Card>
+        )
+      })}
 
       {fitted.length > 0 && (
         <>
@@ -171,6 +203,13 @@ export function ForecastsScreen({ route }: RootStackScreenProps<"Forecasts">) {
                   </Text>
                 </Text>
                 {note && <Text style={text.tiny}>{note}</Text>}
+                <ForecastChart
+                  points={f.points}
+                  color={METRIC_COLOR[f.metric] ?? colorForIndex(0)}
+                  domain={[0, 100]}
+                  ceiling={100}
+                  valueFormatter={(v) => `${v.toFixed(0)}%`}
+                />
               </Card>
             )
           })}
