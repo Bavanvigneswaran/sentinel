@@ -1,0 +1,7 @@
+{
+  "name": "sentinel-collector",
+  "version": "0.1.0",
+  "description": "Kotlin foreground-service metrics collector: the phone as a monitored device.",
+  "main": "index.ts",
+  "private": true
+}

@@ -92,7 +92,8 @@ be a lie the UI would happily render. Signing out unregisters this phone.
 ## Tests and checks
 
 ```bash
-npm test        # node --test over the pure logic (ring buffer, chart frame, deep links)
+npm test        # node --test over the pure logic (ring buffer, chart frame, deep links,
+                # per-platform readings grid)
 npm run lint    # oxlint, same config as web/
 npm run typecheck
 ```
@@ -113,3 +114,39 @@ against them. `lib/api.ts`, `lib/liveSocket.ts`, `stores/auth.ts`,
 recognisable against their web counterparts, so a fix to one is obviously
 applicable to the other. What genuinely differs is documented in each file's
 header — mostly: no `window`, no DOM, and an app that gets suspended.
+
+
+## `modules/sentinel-collector` — the phone as a monitored device
+
+Everything above is the app as a **viewer** of other machines. Phase 10b added
+the other half: a Kotlin foreground service that reports *this phone's own*
+metrics over the same agent protocol as the Python desktop agent.
+
+It is a local Expo module, autolinked from `modules/` on the native side and
+mapped by name in `metro.config.js` + `tsconfig.json` on the JS side. The
+TypeScript surface is a remote control only — `enroll`, `start`, `stop`,
+`status` — and nothing in it is on the data path. That is the whole point: the
+JS runtime is torn down when the app is backgrounded and gone entirely when it
+is closed, which is exactly when monitoring has to continue.
+
+```bash
+make mobile-collector-test   # JVM unit tests; no emulator needed
+make mobile-collector-logs   # follow the service on a connected device
+```
+
+The unit tests cover the parts where a wrong answer would be silent rather than
+loud: window aggregation and its null handling, the batching rule that stops a
+10s sample being relabelled a 1s one across a live upshift, counter
+differentiation across a reboot, `/proc` parsing (including rejecting the
+emulator's stub CPU frequency), and the JSON encoding rule that an unmeasurable
+field is an explicit `null` and not a missing key.
+
+**What the phone can honestly measure is decided in `docs/ANDROID_METRICS.md`,
+not here.** Read it before touching a collector. The short version: memory,
+storage, battery, temperature, network throughput, latency and uptime are real;
+CPU of any kind is not readable by any app since API 26 and is never attempted.
+
+To try it: sign in, then **Settings → Monitor this phone**. The app mints a
+short-lived enrollment code with your own session and hands it to the native
+module, which redeems it for an opaque device-scoped agent token sealed in the
+Android Keystore. The collector never sees your access token.

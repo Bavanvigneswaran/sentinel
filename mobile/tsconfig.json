@@ -9,6 +9,9 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "sentinel-collector": [
+        "./modules/sentinel-collector/index.ts"
       ]
     }
   },

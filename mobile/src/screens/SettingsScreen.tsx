@@ -14,6 +14,7 @@ import { StyleSheet, Text, View } from "react-native"
 import { Screen } from "@/components/Screen"
 import { Button, Card, CardTitle, ErrorNote } from "@/components/ui"
 import { API_BASE_URL } from "@/config"
+import { useCollectorStatus } from "@/hooks/useCollectorStatus"
 import {
   PushPermissionDeniedError,
   currentPushState,
@@ -22,11 +23,13 @@ import {
   watchTokenRotation,
   type PushState,
 } from "@/lib/push"
+import type { RootTabScreenProps } from "@/navigation/types"
 import { useAuth } from "@/stores/auth"
 import { spacing, text } from "@/theme"
 
-export function SettingsScreen() {
+export function SettingsScreen({ navigation }: RootTabScreenProps<"Settings">) {
   const user = useAuth((s) => s.user)
+  const { status: collector } = useCollectorStatus()
   const logout = useAuth((s) => s.logout)
 
   const [push, setPush] = useState<PushState | null>(null)
@@ -106,6 +109,22 @@ export function SettingsScreen() {
             </Text>
           </View>
         )}
+      </Card>
+
+      <Card>
+        <CardTitle>This phone as a device</CardTitle>
+        <Text style={text.small}>
+          {collector.enrolled
+            ? collector.running
+              ? "This phone is reporting its own metrics."
+              : "Enrolled, but the collector is stopped."
+            : "This phone can report its own memory, storage, battery and network alongside your other machines."}
+        </Text>
+        <Button
+          title={collector.enrolled ? "Collector settings" : "Monitor this phone"}
+          variant="outline"
+          onPress={() => navigation.navigate("Collector")}
+        />
       </Card>
 
       <Card>

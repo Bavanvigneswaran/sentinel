@@ -1,0 +1,36 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.sentinel'
+version = '0.1.0'
+
+android {
+  namespace 'com.sentinel.collector'
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+    buildConfigField "String", "COLLECTOR_VERSION", "\"0.1.0\""
+  }
+  buildFeatures {
+    buildConfig true
+  }
+  testOptions {
+    unitTests {
+      includeAndroidResources = true
+    }
+  }
+}
+
+dependencies {
+  // React Native already puts OkHttp 4.x on the classpath; declaring it keeps
+  // this module buildable on its own terms and lets Gradle align the versions.
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+  testImplementation 'junit:junit:4.13.2'
+  // android.jar stubs org.json with methods that throw. The real artifact on
+  // the unit-test classpath is what makes Protocol's JSON encoding testable on
+  // the JVM without an emulator.
+  testImplementation 'org.json:json:20231013'
+}

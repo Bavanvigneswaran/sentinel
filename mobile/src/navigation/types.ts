@@ -16,6 +16,8 @@ export type RootStackParamList = {
   Tabs: undefined
   Device: { deviceId: string; deviceName?: string }
   Live: { deviceId: string; deviceName?: string }
+  /** Phase 10b: this phone as a monitored device, not as a viewer of others. */
+  Collector: undefined
 }
 
 export type TabParamList = {

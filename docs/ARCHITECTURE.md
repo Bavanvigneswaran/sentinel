@@ -85,6 +85,7 @@ State machine per rule per device: `OK → PENDING → FIRING → RESOLVED`. `PE
 ## Known constraints (decide now, not in month three)
 
 - **Android global CPU% is not readable** since API 26 — `/proc/stat` is blocked to apps. You get: per-app CPU, memory, battery/thermal, network per-uid, storage, uptime. Design the Android device page to show *those* rather than pretending it matches a Linux box.
+  *Resolved in Phase 10b:* the full field-by-field decision lives in **`docs/ANDROID_METRICS.md`**, which is the authority for the Kotlin collector. Two findings worth carrying forward: "per-app CPU" turns out to mean *this app only*, so `processes[]` is sent empty rather than putting a true number under a "top processes on this machine" heading; and `TrafficStats` is device-wide rather than per-interface, so the single NIC entity is named `device-total` rather than guessing `wlan0`.
 - **Unsigned agent binaries** trigger SmartScreen (Windows) and Gatekeeper (macOS). Fine locally; budget for an Apple Developer ID (~$99/yr) and a Windows code-signing cert before anyone else installs it.
 - **Seasonality-aware ML needs history.** For the first two weeks, forecasts and seasonal anomalies will be weak no matter how good the code is. The adaptive baseline (layer 2) is what carries the demo.
 - **macOS temperature/fan** requires elevated helpers; treat as optional/missing.

@@ -60,11 +60,17 @@ registration surface — the server had no way to reach a phone at all.
 **Done when:** real telemetry from a real agent streaming at 1s on a real Android device. Verified.
 Known gap: FCM is untested against a live Firebase project (none configured).
 
-### Phase 10b — Android as a monitored device  ·  Opus 5  ·  ~2 sessions
-Kotlin foreground-service collector plus an Expo native module so a phone can enrol itself and
-report its own metrics over the existing agent protocol. Read ARCHITECTURE.md's Known Constraints
-first: global CPU% is not readable since API 26, so decide up front what Android can *honestly*
-measure and send `null` for the rest.
+### Phase 10b — Android as a monitored device  ·  Opus 5  ·  ~2 sessions  ·  **DONE**
+Kotlin foreground-service collector in `mobile/modules/sentinel-collector/` plus an Expo native
+module, so a phone enrols itself and reports its own metrics over the existing agent protocol —
+`PROTOCOL_VERSION` unchanged at 1, and the only backend addition was exposing three battery/thermal
+columns that were already stored. What Android can honestly measure was decided up front and written
+down in **`docs/ANDROID_METRICS.md`**; global CPU% is never attempted, so a phone gets a health score
+with the CPU and iowait components excluded and the rest renormalised.
+**Done when:** a real phone's own telemetry appears beside a desktop in the same fleet, and keeps
+arriving with the app closed. Verified — including survival of a task swipe and a full reboot.
+Known gap: re-enrolling after "Forget this phone" creates a new device row rather than reattaching
+to the old one's history.
 
 ### Phase 11 — Packaging + distribution  ·  Sonnet 5  ·  ~1–2 sessions
 PyInstaller builds per OS, OS-detecting download page, install docs, signing (when you're ready to pay for certs),

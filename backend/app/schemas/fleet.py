@@ -73,6 +73,15 @@ class LatestReadingsOut(BaseModel):
     load1: float | None = None
     uptime_seconds: int | None = None
     process_count: int | None = None
+    #: Present on every platform that has a battery and a thermistor to read.
+    #: A desktop reports null for all three; an Android device reports all
+    #: three and null for most of the CPU fields above, which is the whole
+    #: point of surfacing them here — the per-device screen shows what the
+    #: platform actually measures rather than a fixed desktop-shaped grid.
+    #: The Android temperature is the battery sensor; see docs/ANDROID_METRICS.md.
+    battery_percent: float | None = None
+    battery_plugged: bool | None = None
+    temperature_celsius: float | None = None
     #: Summed across every NIC the agent reported at that timestamp.
     net_rx_bytes_per_s: float | None = None
     net_tx_bytes_per_s: float | None = None

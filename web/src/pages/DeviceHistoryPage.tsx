@@ -115,9 +115,17 @@ function DeviceHistoryView({ deviceId }: { deviceId: string }) {
     }
   }, [deviceId])
 
+  // Which charts exist depends on the platform, and the summary that carries it
+  // is a separate request from the series. Building them before it lands would
+  // briefly draw an Android device the desktop set — an empty CPU chart and no
+  // battery chart — which is the exact impression this page exists to avoid,
+  // even for one paint. `summaryError` is a resolved answer too: if the summary
+  // will never arrive, fall back rather than withholding the charts forever.
+  const platformKnown = summary !== null || summaryError !== null
+  const platform = summary?.device.platform ?? "desktop"
   const charts = useMemo(
-    () => (series ? buildCharts(series, forecasts) : null),
-    [series, forecasts],
+    () => (series && platformKnown ? buildCharts(series, forecasts, platform) : null),
+    [series, forecasts, platform, platformKnown],
   )
   const hasPoints = series !== null && series.system.length > 0
 
@@ -228,6 +236,17 @@ function DeviceHistoryView({ deviceId }: { deviceId: string }) {
           )}
         </div>
       )}
+
+      {charts && hasPoints && platform === "android" && (
+        // The page is shorter for a phone than for a server, and that is the
+        // honest outcome rather than a rendering bug. Saying so is what stops
+        // it reading as one.
+        <p className="text-xs text-muted-foreground">
+          No CPU or disk-I/O charts: Android denies an app <code>/proc/stat</code> and{" "}
+          <code>/proc/diskstats</code>, so this device measures neither. They are excluded
+          from its health score rather than counted as healthy.
+        </p>
+      )}
     </AppLayout>
   )
 }
@@ -267,7 +286,26 @@ function sortedEntities<T>(points: T[], key: keyof T): string[] {
   return [...new Set(points.map((p) => String(p[key])))].sort((a, b) => a.localeCompare(b))
 }
 
-function buildCharts(series: Series, forecasts: MetricForecast[]): ChartSpec[] {
+/**
+ * Which charts a device's platform can actually fill.
+ *
+ * Phase 10b: an Android device measures a different set than a Linux box
+ * (docs/ANDROID_METRICS.md). Drawing it a permanently blank CPU chart and a
+ * permanently blank Disk I/O chart — while the battery and thermal readings it
+ * *does* report appear nowhere — reads as a broken agent rather than a
+ * different kind of machine. The charts it cannot fill are dropped and named in
+ * a caption; the ones only it can fill are added.
+ *
+ * Note the asymmetry with a *missing* reading: a desktop keeps its CPU chart
+ * even when the window happens to be empty, because an empty window there means
+ * "the agent reported nothing over this range" — real information. Android has
+ * no CPU chart at all, because there is never going to be anything to draw.
+ */
+function buildCharts(
+  series: Series,
+  forecasts: MetricForecast[],
+  platform: "desktop" | "android",
+): ChartSpec[] {
   const cpu = pivotColumns(series.system, [
     { key: "cpu_percent", label: "total" },
     { key: "cpu_user_percent", label: "user" },
@@ -296,10 +334,29 @@ function buildCharts(series: Series, forecasts: MetricForecast[]): ChartSpec[] {
       ? toForecastOverlay(diskForecastRow, diskForecastRow!.entity!, colorForIndex(mountIndex))
       : undefined
 
+  const isAndroid = platform === "android"
+
+  const battery = pivotColumns(series.system, [
+    { key: "battery_percent", label: "charge" },
+    // The battery thermistor, not a CPU package temperature — the only
+    // thermometer an unprivileged Android app can read. Labelled for what it is.
+    { key: "temperature_celsius", label: "battery °C" },
+  ])
+
   return [
     // Percentages get a fixed 0–100 domain: autoscaling makes a machine idling
     // between 3% and 5% look exactly like one swinging from 20% to 90%.
-    { title: "CPU", ...cpu, format: percent, domain: [0, 100], forecast: cpuForecast },
+    ...(isAndroid
+      ? []
+      : [
+          {
+            title: "CPU",
+            ...cpu,
+            format: percent,
+            domain: [0, 100] as [number, number],
+            forecast: cpuForecast,
+          },
+        ]),
     { title: "Memory", ...memory, format: percent, domain: [0, 100], forecast: memForecast },
     {
       title: "Disk usage",
@@ -318,18 +375,33 @@ function buildCharts(series: Series, forecasts: MetricForecast[]): ChartSpec[] {
       ...pivotByEntity(series.net, "nic", "tx_bytes_per_s"),
       format: formatBytesPerSecond,
     },
-    {
-      title: "Disk I/O",
-      ...mergePivots(
-        pivotByEntity(series.disk_io, "disk", "read_bytes_per_s", "read "),
-        pivotByEntity(series.disk_io, "disk", "write_bytes_per_s", "write "),
-      ),
-      format: formatBytesPerSecond,
-    },
+    // /proc/diskstats is denied to Android apps, so there is no per-block-device
+    // counter to draw and the chart would never have a series in it.
+    ...(isAndroid
+      ? []
+      : [
+          {
+            title: "Disk I/O",
+            ...mergePivots(
+              pivotByEntity(series.disk_io, "disk", "read_bytes_per_s", "read "),
+              pivotByEntity(series.disk_io, "disk", "write_bytes_per_s", "write "),
+            ),
+            format: formatBytesPerSecond,
+          },
+        ]),
     {
       title: "Latency",
       ...pivotByEntity(series.latency, "target", "rtt_ms_avg"),
       format: formatMs,
     },
+    // Only a device with a battery has one of these. It goes last because it is
+    // the slowest-moving series on the page.
+    ...(isAndroid ? [{ title: "Battery", ...battery, format: batteryAxis }] : []),
   ]
+}
+
+/** Two different units on one axis — a percentage and degrees Celsius — so the
+ *  tick itself cannot carry a unit. Each series is labelled instead. */
+function batteryAxis(value: number): string {
+  return value.toFixed(0)
 }

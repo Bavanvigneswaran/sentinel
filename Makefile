@@ -1,7 +1,8 @@
 .PHONY: up down dev dev-backend dev-frontend test agent logs install \
         migrate migrate-down revision db-shell redis-shell reset-db lint typecheck \
         agent-enroll agent-sample agent-status agent-install-service agent-uninstall-service \
-        mobile mobile-android mobile-prebuild mobile-test
+        mobile mobile-android mobile-prebuild mobile-test mobile-collector-test \
+        mobile-collector-logs
 
 install:
 	cd backend && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
@@ -34,6 +35,7 @@ test:
 	cd backend && .venv/bin/pytest -q
 	cd agent && .venv/bin/pytest -q
 	cd mobile && npm test
+	$(MAKE) mobile-collector-test
 
 # --- database ---------------------------------------------------------------
 # Alembic runs as the owner role (ADMIN_DATABASE_URL); the app itself connects
@@ -114,3 +116,27 @@ mobile-prebuild:
 
 mobile-test:
 	cd mobile && npm test
+
+# --- collector (Phase 10b: the phone as a monitored device) -------------------
+# The Kotlin foreground-service collector lives in mobile/modules/sentinel-collector.
+# Its JVM unit tests need no emulator: everything they cover is deliberately pure
+# (aggregation, batching, counter differentiation, /proc parsing, JSON encoding).
+#
+# Gradle still needs an Android SDK to compile against, so this falls back to the
+# usual macOS location when ANDROID_HOME is unset and *skips loudly* when there
+# is no SDK at all — `make test` must stay runnable on a machine that has never
+# built the app, rather than failing on a toolchain the other suites do not need.
+ANDROID_SDK ?= $(or $(ANDROID_HOME),$(HOME)/Library/Android/sdk)
+
+mobile-collector-test:
+	@if [ ! -d "$(ANDROID_SDK)" ]; then \
+		echo "SKIP mobile-collector-test: no Android SDK at $(ANDROID_SDK)."; \
+		echo "     Set ANDROID_HOME to run the Kotlin collector tests."; \
+	else \
+		cd mobile/android && ANDROID_HOME="$(ANDROID_SDK)" ./gradlew :sentinel-collector:testDebugUnitTest; \
+	fi
+
+# Follow the collector on a connected device. The service logs under its own
+# tags, which are the only view of it once the app's task has been swiped away.
+mobile-collector-logs:
+	adb logcat -s SentinelCollector:V SentinelSocket:V SentinelService:V SentinelBoot:V

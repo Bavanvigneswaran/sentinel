@@ -9,8 +9,17 @@
  * Deliberately not a port of DeviceHistoryPage: the time-range history view is
  * outside the Phase 10a viewer's scope, and this screen exists to answer "how
  * is this machine right now" before you tap through to Live.
+ *
+ * Phase 10b: the readings grid is chosen by `device.platform`, because an
+ * Android device honestly reports a different set of metrics than a Linux box
+ * (docs/ANDROID_METRICS.md) and a fixed desktop-shaped grid would render as a
+ * column of "unavailable" with the phone's real signals — battery, temperature
+ * — missing entirely. That reads as a broken agent rather than a different
+ * platform. The rows a phone cannot fill are not silently dropped either: the
+ * card names them, so the absence is stated rather than hidden.
  */
 
+import type { ReactNode } from "react"
 import { StyleSheet, Text, View } from "react-native"
 
 import { DeviceStatusBadge } from "@/components/Badges"
@@ -19,11 +28,16 @@ import { MetricValue } from "@/components/MetricValue"
 import { Screen } from "@/components/Screen"
 import { Button, Card, CardTitle, ErrorNote } from "@/components/ui"
 import { usePolledResource } from "@/hooks/usePolledResource"
+import {
+  readingKeysFor,
+  unmeasurableNoteFor,
+  type ReadingKey,
+} from "@/lib/deviceReadings"
 import { formatBytes, formatBytesPerSecond, formatMs } from "@/lib/formatters"
 import { formatDuration, formatRelative } from "@/lib/timeRanges"
 import type { RootStackScreenProps } from "@/navigation/types"
 import { colors, radius, spacing, text } from "@/theme"
-import type { DeviceSummary } from "@/types/fleet"
+import type { DeviceSummary, LatestReadings } from "@/types/fleet"
 
 const POLL_INTERVAL_MS = 15_000
 
@@ -36,6 +50,7 @@ export function DeviceScreen({ route, navigation }: RootStackScreenProps<"Device
   )
 
   const latest = data?.latest ?? null
+  const unmeasurableNote = data ? unmeasurableNoteFor(data.device.platform) : null
 
   return (
     <Screen refreshing={refreshing} onRefresh={refresh}>
@@ -94,51 +109,21 @@ export function DeviceScreen({ route, navigation }: RootStackScreenProps<"Device
                 current numbers to show.
               </Text>
             ) : (
-              <View style={styles.stats}>
-                <Stat label="CPU">
-                  <MetricValue value={latest.cpu_percent} format={(v) => v.toFixed(1)} unit="%" />
-                </Stat>
-                <Stat label="Memory">
-                  <MetricValue value={latest.mem_percent} format={(v) => v.toFixed(1)} unit="%" />
-                </Stat>
-                <Stat label="Swap">
-                  <MetricValue value={latest.swap_percent} format={(v) => v.toFixed(1)} unit="%" />
-                </Stat>
-                <Stat label="Load (1m)">
-                  <MetricValue value={latest.load1} format={(v) => v.toFixed(2)} />
-                </Stat>
-                <Stat label="Net in">
-                  <MetricValue value={latest.net_rx_bytes_per_s} format={formatBytesPerSecond} />
-                </Stat>
-                <Stat label="Net out">
-                  <MetricValue value={latest.net_tx_bytes_per_s} format={formatBytesPerSecond} />
-                </Stat>
-                <Stat label="Disk read">
-                  <MetricValue value={latest.disk_read_bytes_per_s} format={formatBytesPerSecond} />
-                </Stat>
-                <Stat label="Disk write">
-                  <MetricValue
-                    value={latest.disk_write_bytes_per_s}
-                    format={formatBytesPerSecond}
-                  />
-                </Stat>
-                <Stat label="RTT">
-                  <MetricValue value={latest.rtt_ms_avg} format={formatMs} />
-                </Stat>
-                <Stat label="Packet loss">
-                  <MetricValue
-                    value={latest.packet_loss_percent}
-                    format={(v) => v.toFixed(1)}
-                    unit="%"
-                  />
-                </Stat>
-                <Stat label="Processes">
-                  <MetricValue value={latest.process_count} format={(v) => v.toFixed(0)} />
-                </Stat>
-                <Stat label="Uptime">
-                  <MetricValue value={latest.uptime_seconds} format={formatDuration} />
-                </Stat>
-              </View>
+              <>
+                <View style={styles.stats}>
+                  {readingKeysFor(data.device.platform).map((key) => (
+                    <Stat key={key} label={RENDERERS[key].label}>
+                      {RENDERERS[key].render(latest)}
+                    </Stat>
+                  ))}
+                </View>
+                {/* Stated, not silently omitted. The reader should know these
+                    are absent because Android does not expose them, rather
+                    than wonder whether the agent is broken. */}
+                {unmeasurableNote && (
+                  <Text style={[text.tiny, styles.footnote]}>{unmeasurableNote}</Text>
+                )}
+              </>
             )}
           </Card>
 
@@ -179,6 +164,78 @@ export function DeviceScreen({ route, navigation }: RootStackScreenProps<"Device
   )
 }
 
+/**
+ * How to draw each reading. Which of these appear is decided by
+ * `readingKeysFor()` in @/lib/deviceReadings — a pure module, so the
+ * platform decision is tested without a React Native runtime.
+ */
+const RENDERERS: Record<ReadingKey, { label: string; render: (l: LatestReadings) => ReactNode }> = {
+  cpu: {
+    label: "CPU",
+    render: (l) => <MetricValue value={l.cpu_percent} format={(v) => v.toFixed(1)} unit="%" />,
+  },
+  memory: {
+    label: "Memory",
+    render: (l) => <MetricValue value={l.mem_percent} format={(v) => v.toFixed(1)} unit="%" />,
+  },
+  swap: {
+    label: "Swap",
+    render: (l) => <MetricValue value={l.swap_percent} format={(v) => v.toFixed(1)} unit="%" />,
+  },
+  load1: {
+    label: "Load (1m)",
+    render: (l) => <MetricValue value={l.load1} format={(v) => v.toFixed(2)} />,
+  },
+  battery: {
+    label: "Battery",
+    render: (l) => (
+      <MetricValue
+        value={l.battery_percent}
+        format={(v) => `${v.toFixed(0)}%${l.battery_plugged ? " charging" : ""}`}
+      />
+    ),
+  },
+  temperature: {
+    // Named for what it actually is: Android exposes no CPU package
+    // temperature to an app, only the battery thermistor.
+    label: "Battery temp",
+    render: (l) => (
+      <MetricValue value={l.temperature_celsius} format={(v) => v.toFixed(1)} unit="°C" />
+    ),
+  },
+  netIn: {
+    label: "Net in",
+    render: (l) => <MetricValue value={l.net_rx_bytes_per_s} format={formatBytesPerSecond} />,
+  },
+  netOut: {
+    label: "Net out",
+    render: (l) => <MetricValue value={l.net_tx_bytes_per_s} format={formatBytesPerSecond} />,
+  },
+  diskRead: {
+    label: "Disk read",
+    render: (l) => <MetricValue value={l.disk_read_bytes_per_s} format={formatBytesPerSecond} />,
+  },
+  diskWrite: {
+    label: "Disk write",
+    render: (l) => <MetricValue value={l.disk_write_bytes_per_s} format={formatBytesPerSecond} />,
+  },
+  rtt: { label: "RTT", render: (l) => <MetricValue value={l.rtt_ms_avg} format={formatMs} /> },
+  packetLoss: {
+    label: "Packet loss",
+    render: (l) => (
+      <MetricValue value={l.packet_loss_percent} format={(v) => v.toFixed(1)} unit="%" />
+    ),
+  },
+  processes: {
+    label: "Processes",
+    render: (l) => <MetricValue value={l.process_count} format={(v) => v.toFixed(0)} />,
+  },
+  uptime: {
+    label: "Uptime",
+    render: (l) => <MetricValue value={l.uptime_seconds} format={formatDuration} />,
+  },
+}
+
 function Stat({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <View style={styles.stat}>
@@ -196,6 +253,7 @@ const styles = StyleSheet.create({
   headRight: { alignItems: "flex-end", gap: spacing.xs },
   stats: { flexDirection: "row", flexWrap: "wrap", rowGap: spacing.md },
   stat: { width: "50%", gap: 2, paddingRight: spacing.sm },
+  footnote: { marginTop: spacing.sm },
   diskHead: { flexDirection: "row", justifyContent: "space-between", gap: spacing.sm },
   mount: { flex: 1, fontVariant: ["tabular-nums"] },
   track: {

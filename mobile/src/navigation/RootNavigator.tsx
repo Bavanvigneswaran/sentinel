@@ -15,6 +15,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from "react-native"
 
 import { AlertsScreen } from "@/screens/AlertsScreen"
 import { AuthScreen } from "@/screens/AuthScreen"
+import { CollectorScreen } from "@/screens/CollectorScreen"
 import { DeviceScreen } from "@/screens/DeviceScreen"
 import { DevicesScreen } from "@/screens/DevicesScreen"
 import { FleetScreen } from "@/screens/FleetScreen"
@@ -91,6 +92,11 @@ export function RootNavigator() {
         name="Device"
         component={DeviceScreen}
         options={({ route }) => ({ title: route.params.deviceName ?? "Device" })}
+      />
+      <Stack.Screen
+        name="Collector"
+        component={CollectorScreen}
+        options={{ title: "Monitor this phone" }}
       />
       <Stack.Screen
         name="Live"

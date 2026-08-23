@@ -1,0 +1,68 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+  <!--
+    specialUse, not dataSync.
+
+    dataSync is the obvious-looking choice for "uploads data to a server", and
+    it is the wrong one: from Android 15 a dataSync foreground service is capped
+    at roughly 6 hours of runtime per day, after which the system stops it and
+    refuses to let it start again until the app is brought to the foreground.
+    A monitoring agent that goes deaf every afternoon is not a monitoring agent.
+
+    specialUse carries no such cap. It requires declaring a subtype string
+    (below) and, for Play Store distribution, a written justification —
+    continuous device telemetry is exactly the category it exists for.
+  -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+  <!-- Restart the collector after a reboot. Delivered post-unlock, which is
+       what TokenStore needs: the Keystore is unavailable before first unlock. -->
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+  <!-- Only used to *offer* the exemption dialog; the collector runs without it,
+       just less reliably under Doze. -->
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+  <!--
+    The collector runs in the app's own process, not a :collector one.
+
+    What the phase requires is that the collector never depends on the React
+    Native runtime — and that is a property of the code, not of the process: no
+    class under com.sentinel.collector touches the JS bridge except the Expo
+    module surface itself, and the sampling and socket loops run on their own
+    coroutine dispatchers. A foreground service keeps the process at
+    IMPORTANCE_FOREGROUND_SERVICE, so it stays alive with the JS runtime idle or
+    torn down, and android:stopWithTask="false" keeps it alive when the task is
+    swiped away.
+
+    A separate process would add isolation but would also put a process boundary
+    between the service and the Expo module that reports its status, and
+    SharedPreferences is explicitly not coherent across processes — status would
+    need a bound Messenger or a ContentProvider. That is real machinery bought
+    for an isolation guarantee the code structure already provides.
+  -->
+  <application>
+    <service
+      android:name=".CollectorService"
+      android:exported="false"
+      android:foregroundServiceType="specialUse"
+      android:stopWithTask="false">
+      <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="Continuous infrastructure telemetry: this device reports its own memory, storage, battery, thermal and network metrics to the user's own Sentinel monitoring server, in the same way the desktop agent does. Monitoring must continue while the app is backgrounded or closed, which is precisely when a device problem goes unnoticed." />
+    </service>
+
+    <receiver
+      android:name=".BootReceiver"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+      </intent-filter>
+    </receiver>
+  </application>
+</manifest>

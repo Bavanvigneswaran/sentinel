@@ -55,6 +55,11 @@ export interface LatestReadings {
   load1: number | null
   uptime_seconds: number | null
   process_count: number | null
+  /** Null on a desktop, real on a phone. The Android temperature is the
+   *  battery sensor — see docs/ANDROID_METRICS.md. */
+  battery_percent: number | null
+  battery_plugged: boolean | null
+  temperature_celsius: number | null
   net_rx_bytes_per_s: number | null
   net_tx_bytes_per_s: number | null
   disk_read_bytes_per_s: number | null
