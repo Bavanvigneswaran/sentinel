@@ -528,6 +528,171 @@ Still true, and not fixable: **Android denies apps `/proc/stat` and `/proc/disks
 CPU% and disk I/O have no workaround short of root. They stay excluded from the health score rather
 than counted as zero — see docs/ANDROID_METRICS.md.
 
+Phase 13 (device management, the real CI matrix, and a frontend/ regrouping):
+
+**The repo is now `backend/ · agent/ · frontend/{web,mobile}`.** Moved with `git mv`, so 201 files
+keep their history. One line in the move was load-bearing rather than cosmetic:
+`webapp.py`'s `DEFAULT_WEB_DIST`, because a stale one fails *silently* — `make serve` starts, the
+API answers, and only the console 404s, a state no test covers since the middleware tests point at
+a temp directory rather than the repo's own. The Kotlin leg of `make test` did break, and only
+running it found it: `frontend/mobile/android/` is generated and bakes in **absolute** paths, so it
+went on pointing at the old `node_modules` and failed configuring `:react-native-screens`, a
+project unrelated to the move. `make mobile-prebuild` is the fix, which is what "android/ is
+generated, not authored" already implied for anyone who moves or re-clones.
+
+**Adding and removing devices exists on both surfaces now.** The backend had supported both since
+Phase 1 and nothing called either — `/download` even told the user to "mint a code on the Devices
+page", pointing at a button that did not exist. The web console gets `NewDevicePanel` (mint, show
+once, live expiry countdown) and a two-step inline confirm per row. The phone gets **removal only**,
+on the device's own screen rather than the list, and that is a decision rather than an omission: a
+minted code's only destination is a terminal on some other machine, and nothing about a phone
+screen beats opening the console on that machine — while the phone enrols *itself* with one tap and
+needs no code at all.
+
+**Fleet and Devices merged into one phone tab.** The fleet card was already a superset of the plain
+list's row; the only things the list had to itself were "last seen" (which the card also showed)
+and a Live shortcut (now a button on it). A bottom bar has about four usable slots. The web console
+keeps `/` and `/devices` separate — a sidebar has room a bottom bar does not.
+
+**Anomalies/Forecasts/Incidents/Reports are reachable per device**, from the device screen, while
+More keeps the fleet-wide entry. This needed **no backend change**: every one of those endpoints
+already took `device_id`. `lib/deviceScope.ts` makes the `?`/`&` choice once and tests it, because
+getting it wrong yields a URL the server reads as unfiltered — a *wrong list*, not an error.
+
+**Reports download on the phone.** `File.downloadFileAsync` streams to disk in native code and
+throws on a non-2xx rather than saving the error body as `report.pdf`; the share sheet is what
+"download" means where there is no downloads bar. Cache, not documents — Phase 9 stores no rendered
+report and this must not become the exception. Verified by pulling the files back off the device: a
+27,218-byte `PDF document, version 1.7` containing the device name, and a CSV whose CPU row is
+*empty* rather than zero.
+
+Four real defects, each found by running the thing rather than reading it:
+
+* **A revoked token did not close the socket it had already opened.** An agent authenticates once,
+  at the handshake, and nothing re-checked; a soft-deleted device kept ingesting until the agent
+  happened to reconnect, which for a desktop agent may be days. Found by removing a phone in the
+  app and watching its collector report "Collecting and connected — last push just now" into a
+  device that no longer existed. The re-check now rides on the throttled `last_seen` write in
+  `ingest/ws.py` — same question, so the "yes" path costs what it did before, and a revoked agent
+  has at most one 15s window left. Writing it also exposed that `_reject` built its `ErrorFrame`
+  *inside* a try/except: `code` is a closed Literal, `"revoked"` is not one of its values, and the
+  resulting ValidationError was swallowed as "the peer may already be gone", sending a bare 1008
+  with no reason. The frame is built outside the try now, and the code sent is the existing
+  `"unauthorized"` — adding a Literal value would be a protocol change every deployed agent
+  validates against.
+* **The dev build could not reach Metro at all.** Phase 12's Network Security Config went into
+  `src/main/res`, which every variant inherits, and a networkSecurityConfig outranks
+  `usesCleartextTraffic` — so it silently revoked the blanket permission the RN template gives
+  *debug*, and `expo run:android` (which serves the bundle from the machine's LAN address, not the
+  backend host) died on launch. A second config in `src/debug/res` wins for that variant only.
+  Last session asserted the dev loop was unaffected without re-running it.
+* **Removing this phone left its own collector running** — server-side revoked and forgotten, while
+  the foreground service kept sampling and Settings kept saying "this phone is reporting its own
+  metrics". Remove now stops and unenrols the collector when the device is the one holding the app.
+* **The list still showed the device you just removed** for up to a 30s poll. `AppState` covers
+  backgrounding and says nothing about moving between screens, so the merged tab reloads on focus,
+  via a new `reload()` that skips the pull-to-refresh spinner nobody gestured for.
+
+**Forecasts were never history-gated; they were sweep-gated.** Reproduced before changing anything:
+a phone enrolled at 20:47:59Z got its first row at 20:59:31Z — **11m32s** — and that row carried 68
+points fitted on 680s of history, i.e. every second the device had been alive. So Phase 12's
+adaptive early forecasting works exactly as intended; the device qualified after ~4 minutes (24
+buckets at 10s) and then waited out the forecast worker's 15-minute cadence. The page said the
+opposite — "newly enrolled devices simply don't appear yet" names the one thing that is not the
+constraint and describes an open-ended bar rather than a timer. The page now also reads
+`/forecasts`, whose rows exist even when the fit was empty, which separates two states that were
+sharing one message and are opposite news: *nothing computed yet* (appears at the next sweep) from
+*computed, and nothing is trending towards a limit* (good news, previously rendered as a failure to
+qualify). Lower `forecast_worker_interval_seconds` if 15 minutes is too long to wait.
+
+Looking at that real page found a bug it was not about: it listed four **removed** phones as "full
+in 22h", each a bare UUID, because the forecast endpoints never filtered soft-deleted devices while
+`/devices` correctly does, so there was no name to render. A forecast is a claim about where a
+machine is *heading*; keeping one for a machine the user removed states a future for something that
+does not exist. `test_forecast_api.py` is new — the worker was covered and the *reading* of what it
+wrote was not, which is how a forecast outliving its device went unnoticed.
+
+**`/download` no longer presents the Android app as a fourth agent.** Two sections now — "Desktop
+agents" (a headless binary for the machine you watch) and "The Android app" (not an agent; the
+console itself, whose collector is a switch inside it, not an install). The page also says up front
+that you need none of it to use the web console, which was always true and stated nowhere.
+Rendering it turned up a smaller lie: the APK's card read "Android · Apple Silicon / ARM64", so
+`archLabelFor()` keeps that desktop phrasing where the ambiguous-Mac card needs it and gives the
+phone a plain "ARM64".
+
+**This Mac is now a real launchd service**, not a foreground process someone started by hand. It
+had been running `sentinel-agent run` from source against a scratch config for 11 hours; the
+working config moved to the canonical `~/.config/sentinel/agent.toml` (same `device_id`, so history
+is continuous) and `install-service` registered a LaunchAgent pointing at the venv console script.
+
+### The CI matrix, and what its first real run cost
+
+`.github/workflows/agent-build.yml` had **never been indexed by GitHub**, so `gh workflow run`
+404'd while the file sat on master, byte-identical, with Actions enabled. A push to the default
+branch is not enough: GitHub indexes workflows on a push that actually *changes* a file under
+`.github/workflows/`.
+
+The first run then did exactly what docs/PACKAGING.md said it would — it was the real test, and
+three defects fell out of it that nothing here could have caught:
+
+* **The Windows agent bricked its own config.** `AgentConfig.save()` opened its descriptor with no
+  `encoding=`, so Python wrote in the locale encoding — cp1252 on a default Windows install — and
+  the em-dash in the header comment save() itself writes landed as a bare 0x97 byte. tomllib
+  accepts UTF-8 only, so `enroll` wrote a file `run` could never read back.
+* **`psutil.cpu_freq` may not exist at all on Apple Silicon.** psutil defines it only
+  `if cext.has_cpu_freq()`, and `_safe(psutil.cpu_freq)` evaluates the attribute lookup while
+  building the argument, before `_safe` can catch anything. Same psutil (7.2.2) has it on this Mac
+  and lacks it on GitHub's macos-14 runner, so no version pin would have found this — only another
+  machine. Same family as Phase 2's `cpu_freq == 4`: the platform lying about frequency, this time
+  by omission.
+* **A Windows service registered `python -m`, never the console script.** `agent_executable()`
+  searched only beside the interpreter, and on Windows python.exe sits at the venv root with
+  scripts in `Scripts/`. Phase 11 added the `.exe` *name* but not the directory, and its test put
+  python.exe *inside* `Scripts/` — a layout no real venv has — so it passed against the broken
+  lookup. The test now models the real layout and no longer accepts the `-m` fallback, because that
+  fallthrough is silent and a test tolerating it cannot tell "found it" from "gave up looking".
+
+The remaining Windows failures were tests asserting POSIX truths on NTFS (`chmod`/`fchmod`/`st_mode`
+where the icacls branch is what runs) and `str(Path)` comparisons rendering `/etc/sentinel` as
+`\etc\sentinel`, because a Path takes the *host's* flavour, not the one `config_dir()` was asked to
+render. Placement assertions compare `as_posix()` now; the mode ones skip on Windows, as does
+`test_add_signal_handler_is_tried_first`, whose docstring claimed every platform this suite runs on
+supports `add_signal_handler` — Windows does not, which is the entire reason the fallback beside it
+exists.
+
+`macos-13` was retired by GitHub and a job requesting a retired label is *accepted and then queues
+forever*: two runs sat pending over two hours while the other three finished in minutes.
+`macos-15-intel` is the current x86_64 label. `fail-fast: false` did its job throughout.
+
+**All four platforms now build and are published**, and each was verified rather than assumed:
+macOS arm64 run natively on this Mac (`cpu_iowait_percent`/`cpu_freq_mhz` correctly null), macOS
+x64 run under Rosetta, Linux x64 run in `ubuntu:22.04` *and* `debian:12` — confirming the
+oldest-runner glibc pin forward-compatible — with real `iowait` and `cpu_freq` where macOS reports
+neither, and Windows via its own CI step, which runs under `bash -e -o pipefail` and so proves both
+`--version` and `sample` exited 0 on a real Windows runner. `sample`, not `--version`, is the
+check that matters: it is what proves psutil's compiled extension made it into the bundle. Every
+checksum and byte-count was matched against its manifest, and the Windows binary was then pulled
+through the real authenticated download route and matched again, byte for byte.
+
+One thing observed while verifying and deliberately not fixed, because it is worth a decision
+rather than a patch: **a device whose clock is skewed by more than `FRESH_WINDOW_SECONDS` (90s)
+renders as "Online · last seen just now" with every headline reading "unavailable"**, while its
+health score and sparklines — which read rollups over a wider window — are fine. The emulator's
+clock drifted 1m43s behind this Mac and reproduced it exactly. Nothing is wrong: `last_seen_at` is
+stamped server-side at ingest and is current, while the sample's own `ts` comes from the agent and
+falls outside the window, so Phase 4's "a reading older than 90s is not current" rule correctly
+refuses to present it. But the combination reads as a broken agent, and nothing anywhere says
+"this machine's clock is wrong" — the skew is measurable at ingest (`ts` versus server `now()`)
+and currently nothing looks.
+
+Still to come, if picked back up: **no code-signing certificates exist**, so all four desktop
+builds are unsigned and Gatekeeper/SmartScreen will interrupt every install — the page quotes the
+dialog before the click rather than leaving the user alone with it. Alert events and incidents
+still return rows for soft-deleted devices and render them as bare UUIDs; unlike a forecast that is
+arguably *history worth keeping*, so it needs a decision about whether to filter them or snapshot a
+device name onto the event the way `rule_name` already is. And **there is still no deployed
+backend** — everything above is reachable over the LAN from this Mac and nowhere else.
+
 ## Conventions
 
 - Files stay under ~400 lines; split rather than grow.
