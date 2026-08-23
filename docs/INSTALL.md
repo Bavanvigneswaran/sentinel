@@ -24,14 +24,25 @@ have some of them.
 
 ### Running from source instead
 
-Works everywhere, needs Python 3.11+, and is the same code:
+Works everywhere, needs Python 3.11+, and is the same code. On Windows,
+replace `.venv/bin/` with `.venv\Scripts\`:
 
 ```
 cd agent
-python3 -m venv .venv && .venv/bin/pip install -e .
-.venv/bin/sentinel-agent enroll --code X4T9-K2QM-7PDR
-.venv/bin/sentinel-agent run
+python -m venv .venv
+.venv\Scripts\pip install -e .
+.venv\Scripts\sentinel-agent enroll --code X4T9-K2QM-7PDR
+.venv\Scripts\sentinel-agent run
 ```
+
+**No packaged `.exe` exists yet.** No Windows binary has ever been built or
+run — PyInstaller does not cross-compile, and this project has been developed
+entirely on a Mac. Running from source is currently the only way to try this
+on Windows, and even that has had exactly one bug already found and fixed by
+static reading rather than by testing on a real Windows machine (see
+[PACKAGING.md](PACKAGING.md)) — treat the first real run as the actual test,
+report anything else that goes wrong, and expect it might be the first time
+this exact code path has executed anywhere.
 
 ---
 

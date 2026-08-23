@@ -389,6 +389,16 @@ at somebody else's project was removed, and then its `man:` replacement too, sin
 installed either; and a `platform.os as BuildOs` cast in `DownloadPage` was a lie that happened to work
 for `"ios"`. 482 backend, 139 agent, 28 web, 41 mobile JS, 36 Kotlin.
 
+A second pass, prompted by being asked "can I actually try this on Windows", found one more —
+worse than the seven above, because it is not an edge case: **`sentinel-agent run` would crash
+immediately on Windows**, every time. `loop.add_signal_handler(sig, agent.stop)` was called
+unconditionally; Windows's asyncio event loop does not implement it and raises `NotImplementedError`
+unconditionally, before the agent connects. Nothing in this project's own testing could have caught
+it — there is no Windows machine here — and it is exactly the gap `docs/PACKAGING.md` exists to be
+honest about. Fixed with a fallback to `signal.signal()`, which itself needs care: a signal handler
+runs outside the event loop and cannot call `agent.stop` directly, so it hands off through
+`loop.call_soon_threadsafe()`. 143 agent tests (was 139).
+
 Still to come in Phase 11, if picked back up: run the CI matrix and publish real Windows and Linux
 binaries (and find out what breaks); a `.dmg` so a notarized macOS build can be *stapled* — a bare
 binary cannot be, so Gatekeeper checks it online and an air-gapped machine still warns; and a real

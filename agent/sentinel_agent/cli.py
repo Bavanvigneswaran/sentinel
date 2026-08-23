@@ -156,8 +156,18 @@ def cmd_run(args: argparse.Namespace) -> int:
     async def main() -> None:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
-            # Graceful stop, so launchd's SIGTERM flushes rather than truncates.
-            loop.add_signal_handler(sig, agent.stop)
+            # Graceful stop, so launchd's/systemd's/Task Scheduler's own signal
+            # flushes rather than truncates. loop.add_signal_handler() is not
+            # implemented on Windows's asyncio event loop — it raises
+            # NotImplementedError unconditionally, which would otherwise crash
+            # `run` before the agent connects at all, on every Windows install.
+            # signal.signal() is the portable fallback; it cannot run agent.stop
+            # (a coroutine-adjacent call unsafe from a signal handler) directly,
+            # so it hands the loop a thread-safe callback instead.
+            try:
+                loop.add_signal_handler(sig, agent.stop)
+            except NotImplementedError:
+                signal.signal(sig, lambda *_: loop.call_soon_threadsafe(agent.stop))
         await agent.run()
 
     try:

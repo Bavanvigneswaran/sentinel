@@ -55,6 +55,23 @@ maintaining alongside it.
 `dist/` into one directory with `merge_manifests.py`. Same script, same
 manifest, no second code path.
 
+### A real bug this uncovered
+
+`sentinel-agent run` called `loop.add_signal_handler(sig, agent.stop)`
+unconditionally. Windows's asyncio event loop does not implement that method —
+every call raises `NotImplementedError`, unconditionally, on every Windows
+install — which would have crashed the agent with a traceback before it ever
+connected. Nothing in this session's testing could have caught it: it only
+reproduces on a real Windows event loop, and there is no Windows machine here.
+It was found by re-reading the code with "would this actually run on Windows"
+as the question, not by running it. Fixed with a `try`/`except
+NotImplementedError` falling back to `signal.signal()`, which needs its own
+care — a signal handler runs outside the event loop and cannot call
+`agent.stop` directly, so it hands off via `loop.call_soon_threadsafe()`. This
+is the kind of defect this whole document exists to keep from being described
+as "should work" instead of "was verified" or "was reasoned through and here
+is the reasoning."
+
 ### What was actually built and run in this session
 
 One macOS arm64 binary, on this Mac. It was built, run (`--version`, `sample`
