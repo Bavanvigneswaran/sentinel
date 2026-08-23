@@ -719,6 +719,39 @@ the actual running app rather than the summary:
   through the real authenticated route and matched SHA-256 against the manifest. `frontend/mobile/.env`
   was reverted to the emulator default afterward, same as Phase 11 documented doing.
 
+### Forecasts, drawn rather than just described
+
+Two more rounds after the correction pass above: the user first reported still seeing no forecasts
+at all, which turned out to be my own leftover scratch test agent and device from the timing
+measurement, still running and cluttering the account — real forecasts existed the whole time for
+the real devices once that was cleaned up. Then, once forecasts were visible, the actual ask: "full
+in 3.8 days" as text was not what "graphical representation" meant.
+
+**Web's `/forecasts` now draws each row** — the predicted trend, its confidence band, and a dashed
+line at the 100% ceiling — reusing `HistoryChart` with no real series behind it (fetching a live
+series for every device×metric on a fleet page would be one API call per row; the forecast alone
+needs none). `toForecastOverlay()`/`forecastCaption()` moved out of `DeviceHistoryPage` into
+`lib/forecastOverlay.ts` so a device's own chart and the fleet-wide one can never disagree about the
+same stored row. Building this surfaced a real bug: the first pass's reference line used
+`ctx.strokeStyle = "color-mix(in srgb, currentColor 35%, transparent)"`, and a canvas 2D context
+never resolves CSS — `currentColor`/`color-mix()` are DOM/SVG concepts, and assigning either to
+`strokeStyle` is silently a no-op, no exception, nothing drawn. Found by reading the canvas's own
+pixel data rather than trusting a screenshot; fixed by resolving `--muted-foreground` via
+`getComputedStyle` and using `globalAlpha` for the transparency canvas actually implements.
+
+**Android got the same treatment on request**, since uPlot does not run in React Native: a small
+hand-built `ForecastChart` (react-native-svg) plus `forecastChartFrame.ts`, the pure geometry split
+out the same way `chartFrame.ts` already is — except this one is a one-shot transform over a stored
+`points` array, not something read off a `RingBuffer` on a timer. Verified against the real backend's
+actual forecast rows first (mem_percent predicted ~60.8%, confirmed by `curl`), then checked the
+rendered app against that known-correct number — which is how a second real bug surfaced: the
+ceiling reference line at `y=0` coincided exactly with the plot `View`'s own top border, so it was
+genuinely being drawn, just visually indistinguishable from a border already occupying that pixel
+row. Confirmed by cropping and upscaling a real screenshot rather than glancing at the full page —
+the predicted line was correct all along. `EDGE_PADDING` (6px) fixes it, mirroring uPlot's own
+`padding: [12, 12, 0, 0]` on the web chart this mirrors. 65 mobile JS tests (was 58), verified live
+via Metro fast refresh against the real emulator both before and after the fix.
+
 Still to come, if picked back up: **no code-signing certificates exist**, so all four desktop
 builds are unsigned and Gatekeeper/SmartScreen will interrupt every install — the page quotes the
 dialog before the click rather than leaving the user alone with it. Alert events and incidents
