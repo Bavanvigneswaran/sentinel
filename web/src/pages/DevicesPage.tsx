@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Link } from "react-router"
 
 import { AppLayout } from "@/components/AppLayout"
 import { DeviceStatusBadge } from "@/components/DeviceStatusBadge"
+import { NewDevicePanel } from "@/components/NewDevicePanel"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { apiFetch } from "@/lib/api"
 import type { Device } from "@/types/api"
@@ -23,11 +25,26 @@ function formatLastSeen(iso: string | null): string {
 export function DevicesPage() {
   const [devices, setDevices] = useState<Device[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
+  /** Which row is mid-confirmation. There is no dialog primitive in this
+   * codebase, and a two-step inline confirm needs no new dependency while
+   * still making a destructive click deliberate. */
+  const [confirming, setConfirming] = useState<string | null>(null)
+  const [removing, setRemoving] = useState<string | null>(null)
+
+  const load = useCallback(() => {
+    return apiFetch<Device[]>("/devices")
+      .then((data) => {
+        setDevices(data)
+        setError(null)
+      })
+      .catch(() => setError("Could not load your devices."))
+  }, [])
 
   useEffect(() => {
     let cancelled = false
 
-    const load = () => {
+    const poll = () => {
       apiFetch<Device[]>("/devices")
         .then((data) => {
           if (!cancelled) {
@@ -40,22 +57,45 @@ export function DevicesPage() {
         })
     }
 
-    load()
-    const interval = setInterval(load, POLL_INTERVAL_MS)
+    poll()
+    const interval = setInterval(poll, POLL_INTERVAL_MS)
     return () => {
       cancelled = true
       clearInterval(interval)
     }
   }, [])
 
+  const remove = async (id: string) => {
+    setRemoving(id)
+    setError(null)
+    try {
+      await apiFetch(`/devices/${id}`, { method: "DELETE" })
+      setConfirming(null)
+      await load()
+    } catch {
+      setError("Could not remove that device.")
+    } finally {
+      setRemoving(null)
+    }
+  }
+
   return (
     <AppLayout active="devices">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Devices</h1>
-        <p className="text-sm text-muted-foreground">
-          Every machine you've enrolled an agent on, with its live connection status.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">Devices</h1>
+          <p className="text-sm text-muted-foreground">
+            Every machine you've enrolled an agent on, with its live connection status.
+          </p>
+        </div>
+        {!adding && (
+          <Button size="sm" onClick={() => setAdding(true)}>
+            New device
+          </Button>
+        )}
       </div>
+
+      {adding && <NewDevicePanel onClose={() => setAdding(false)} />}
 
       {error && (
         <Card>
@@ -63,15 +103,13 @@ export function DevicesPage() {
         </Card>
       )}
 
-      {devices !== null && devices.length === 0 && (
+      {devices !== null && devices.length === 0 && !adding && (
         <Card>
           <CardHeader>
             <CardTitle>No devices yet</CardTitle>
             <CardDescription>
-              Enrol a machine with{" "}
-              <code className="font-mono text-xs">make agent-enroll code=X4T9-K2QM-7PDR</code>{" "}
-              after generating a code, then <code className="font-mono text-xs">make agent</code>{" "}
-              to start pushing real metrics.
+              Press <strong className="font-medium text-foreground">New device</strong> to mint an
+              enrollment code, then redeem it from the agent on the machine you want to monitor.
             </CardDescription>
           </CardHeader>
         </Card>
@@ -100,7 +138,7 @@ export function DevicesPage() {
                   <span className="text-xs text-muted-foreground">
                     last seen {formatLastSeen(device.last_seen_at)}
                   </span>
-                  <div className="flex gap-3 text-xs">
+                  <div className="flex items-center gap-3 text-xs">
                     <Link
                       to={`/devices/${device.id}/history`}
                       className="text-muted-foreground hover:text-foreground"
@@ -113,9 +151,39 @@ export function DevicesPage() {
                     >
                       Live
                     </Link>
+                    <button
+                      type="button"
+                      onClick={() => setConfirming(device.id)}
+                      className="text-muted-foreground hover:text-destructive"
+                    >
+                      Remove
+                    </button>
                   </div>
                 </div>
               </CardContent>
+
+              {confirming === device.id && (
+                <CardContent className="flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
+                  <span className="text-xs text-muted-foreground">
+                    Remove <strong className="font-medium text-foreground">{device.name}</strong>?
+                    Its agent token is revoked immediately, so the agent stops reporting. History
+                    already collected is kept.
+                  </span>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      disabled={removing === device.id}
+                      onClick={() => remove(device.id)}
+                    >
+                      {removing === device.id ? "Removing…" : "Remove device"}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setConfirming(null)}>
+                      Cancel
+                    </Button>
+                  </div>
+                </CardContent>
+              )}
             </Card>
           ))}
         </div>

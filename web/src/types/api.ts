@@ -52,3 +52,12 @@ export interface Device {
   enrolled_at: string | null
   created_at: string
 }
+
+/** Mirrors app/schemas/devices.py:EnrollmentCodeOut. `code` is the plaintext,
+ * returned exactly once — only its sha256 is stored server-side, so a code the
+ * user did not copy is gone and a new one has to be minted. */
+export interface EnrollmentCode {
+  id: string
+  code: string
+  expires_at: string
+}
