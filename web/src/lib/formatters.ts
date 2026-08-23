@@ -18,6 +18,18 @@ export function formatMs(ms: number): string {
   return `${ms.toFixed(1)} ms`
 }
 
+/** A span of seconds as a rough "Nh Nm" duration, for things like mean time
+ * to resolve rather than a countdown to a future moment. */
+export function formatDurationSeconds(seconds: number | null): string {
+  if (seconds === null) return "—"
+  const total = Math.round(seconds)
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  if (hours) return `${hours}h ${minutes}m`
+  if (minutes) return `${minutes}m`
+  return `${total}s`
+}
+
 /** A future ISO timestamp as a rough "in N days/hours" duration from now. */
 export function formatDaysUntil(iso: string): string {
   const seconds = (new Date(iso).getTime() - Date.now()) / 1000

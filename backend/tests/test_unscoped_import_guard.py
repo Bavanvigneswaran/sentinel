@@ -62,6 +62,13 @@ ALLOWED: dict[str, str] = {
         "and every subsequent read or write uses a session scoped to that user "
         "via scope_to_user()"
     ),
+    "app.workers.report_worker": (
+        "same posture as app.workers.forecast_worker and app.workers.insights_worker: "
+        "a periodic background task with no request and no JWT to derive a tenant GUC "
+        "from. The one unscoped query enumerates which users currently have an "
+        "enabled report schedule, and every subsequent read or write uses a session "
+        "scoped to that user via scope_to_user()"
+    ),
 }
 
 

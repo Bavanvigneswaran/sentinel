@@ -124,6 +124,14 @@ class Settings(BaseSettings):
     # app/ai/insights_service.py's fingerprint cache).
     insights_worker_interval_seconds: int = 60
 
+    # --- Reports -----------------------------------------------------------
+    # An hourly sweep is plenty: a schedule's own cadence is daily at the
+    # finest (weekly/monthly), so the worker only needs to notice a due
+    # schedule sometime during the day it becomes due, not the instant it does.
+    report_worker_interval_seconds: int = 3600
+    reports_default_period_days: int = 30
+    reports_max_period_days: int = 366
+
     # --- Notifications: email ------------------------------------------------
     # All optional. Email dispatch is a no-op (logged, not an error) whenever
     # smtp_host is unset, matching anthropic_api_key's graceful-absence pattern.

@@ -125,6 +125,59 @@ incident detail page (no digest email, no push notification carrying it); the si
 include cross-device context (e.g. "three other devices are also degraded right now"), which would need
 a deliberate decision about whether an incident can ever span more than one device.
 
+Phase 9 status: historical trend analytics, availability/reliability stats, PDF/CSV report export, and
+scheduled email reports complete. `app/services/report_service.py`'s `build_report()` is the one
+computation every surface renders from — the JSON `/reports/analytics` endpoint, the `/reports/export.csv`
+and `/reports/export.pdf` downloads, and `ReportWorker`'s scheduled emails — exactly Phase 4's
+`fleet_service.build_summaries()` "one computation, several callers" shape, so a downloaded PDF and one
+emailed the same morning can never disagree about a device's numbers. It reuses rather than reimplements:
+`series_service.plan_series`/`fetch_series` at a small `max_points` budget (asking the planner for the
+*coarsest* bucket that still covers the whole period, since a report wants a handful of period aggregates,
+not a plotted series) for the current-vs-previous-period trend math (`app/analysis/analytics.py`), and
+`metrics_read.worst_entity_per_device()` for which mount/target represents a device's `disk_percent`/
+`packet_loss_percent`, the same resolution Phase 7's forecast worker uses. Availability
+(`app/analysis/availability.py`'s `compute_uptime()`) is *measured*, not inferred from `Device.status`
+(which carries no history): it sums the SYSTEM rollup's own `sample_weight` — the real seconds of the
+period the agent was actually reporting — as a fraction of the period. Reliability
+(`compute_reliability()`) summarises the `Incident`/`AlertEvent` rows already in the period: count,
+resolved count, mean time to resolve, alerts fired. PDF rendering (`app/reports/pdf.py`,
+`app/reports/templates.py`) is Jinja2 → WeasyPrint; CSV (`app/reports/csv_export.py`) is one flat,
+denormalized table via the stdlib `csv` module. `ReportSchedule` (migration `0010_report_schedules`)
+carries a `cadence` discriminator (`"weekly"`/`"monthly"`) with a DB CHECK pairing it exclusively with
+`day_of_week`/`day_of_month`, mirroring `AlertRule.rule_type`'s discriminator-plus-CHECK pattern from
+Phase 6/7. `app/analysis/report_schedule.py`'s pure `is_due()` — given `cadence`, the day fields,
+`last_sent_at`, and `now` — decides whether a schedule should fire today; the new periodic `ReportWorker`
+(`app/workers/report_worker.py`, hourly cadence, same one-unscoped-enumeration-query shape as the other
+three workers) calls it for every enabled schedule and emails whichever are due via
+`app/reports/mailer.py`'s `send_report_email()` (SMTP, with a PDF/CSV attachment — same graceful-no-op-
+when-unconfigured and best-effort-per-recipient posture as `alerts/notify.py`). There is no
+`GeneratedReport` history table: nothing is ever stored server-side, matching that same best-effort,
+nothing-to-replay philosophy — a report is rendered fresh on every download or send. 404 backend tests
+green. Frontend: `/reports` is a new fleet-wide page — a device/period picker, Download CSV/PDF buttons,
+a per-device card (uptime, incident count, mean time to resolve, alerts fired, and a current/min/max/
+previous/change trend table), and a "Scheduled reports" section (create/edit/delete, plus a "Send now"
+that bypasses `is_due()` the same deliberate way Phase 8's incident "Regenerate insights" bypasses its own
+cache check). Verified in-browser end-to-end against a device seeded with real (sparse) history: the CPU/
+Memory trend numbers matched the seeded values exactly, Swap/IO wait correctly showed "—" (never
+measured, never synthesized) rather than a fabricated zero, `disk_percent`/`packet_loss_percent` were
+correctly *omitted* (not zeroed) because the seeded data had no reading inside the 90s freshness window,
+uptime% reflected the seeded data's genuinely sparse real coverage rather than being rounded up, both
+downloads returned 200 with real content (`%PDF-...` magic bytes; a real CSV header row), and creating a
+schedule then pressing "Send now" round-tripped `last_sent_at` through the real worker code path with SMTP
+unset (graceful no-op on the actual send, matching `notify.py`'s posture, while still confirming state
+was updated). One environment note, not a code issue: **WeasyPrint needs system libraries** (Pango,
+cairo, gdk-pixbuf, HarfBuzz — `brew install pango` on macOS pulls in all four) that `pip install` alone
+does not provide; without them the import itself fails before any report can render. One real surprise,
+re-confirming Phase 7's finding rather than a new one: a bulk-backfilled device's history needed a manual
+`CALL refresh_continuous_aggregate(...)` on *all three* rollup tiers (1m/5m/1h), not just 1m — because a
+report's `plan_series` call can land on whichever tier is coarse enough for the requested period, and each
+tier's continuous aggregate is refreshed independently.
+
+Still to come in Phase 9, if picked back up: a filled prediction-interval-style visual on the trend table
+(currently numbers only, no chart); the report's AI-insights context (Phase 8's incident summaries) isn't
+pulled into the emailed report, which would need a decision about how much of that per-incident text
+belongs in a periodic fleet-wide digest versus staying scoped to one incident's own page.
+
 ## Conventions
 
 - Files stay under ~400 lines; split rather than grow.
@@ -407,3 +460,51 @@ a deliberate decision about whether an incident can ever span more than one devi
   same "periodic sweep has no JWT to derive a tenant GUC from" justification Phase 5's evaluator and
   Phase 7's forecast worker already established — every subsequent read or write goes through a
   session scoped via `scope_to_user()`.
+
+## Phase 9 invariants — don't break these
+
+- **Availability is measured from real reporting, never inferred from `Device.status`.**
+  `Device.status` is present-tense with no history — there is nowhere to read "was this device online
+  at 3pm last Tuesday" from directly. `app/analysis/availability.py`'s `compute_uptime()` instead sums
+  the SYSTEM rollup's own `sample_weight` for the period — the real seconds the agent was actually
+  reporting — as a fraction of the period's width, capped at 100% to absorb bucket-alignment slop. A
+  device that never reported in the period gets 0%, never an unmeasured gap presented as either
+  "online" or "offline."
+- **One `build_report()` bundle feeds every surface.** `app/services/report_service.py`'s
+  `ReportBundle` is rendered four different ways — the JSON analytics endpoint, the CSV export, the
+  PDF export, and `ReportWorker`'s scheduled email — but computed exactly once per call, the same
+  "one computation, several callers" shape Phase 4's `fleet_service.build_summaries()` established.
+  Adding a fifth report surface means rendering this bundle differently, not recomputing the
+  analytics a second way.
+- **PDF rendering is synchronous, CPU-bound work and is always wrapped in `asyncio.to_thread`.**
+  `app/reports/pdf.py`'s `render_report_pdf()` (Jinja2 render + WeasyPrint layout/rasterization) is
+  not fast, and every caller — the `/reports/export.pdf` route and `ReportWorker._send_one()` —
+  wraps it, the same "nothing blocking on the event loop" posture Phase 7's forecast worker
+  established for its ETS fit. CSV rendering is cheap enough (string formatting only) that it does
+  not need the same treatment.
+- **A `ReportSchedule.cadence` is a discriminator with a paired DB CHECK**, exactly
+  `AlertRule.rule_type`'s pattern from Phase 6/7: `"weekly"` requires `day_of_week` set and
+  `day_of_month` null, `"monthly"` the reverse, enforced by both `ReportScheduleCreate`/
+  `ReportScheduleUpdate`'s Pydantic validators at the API boundary and the DB's `cadence_fields`
+  CHECK as the backstop. `day_of_month` is capped at 1–28 so a schedule can never silently skip
+  February.
+- **`is_due()` is pure and takes `now`/`last_sent_at` as parameters, never reads the clock itself.**
+  `app/analysis/report_schedule.py`'s `is_due()` is what lets `ReportWorker`'s hourly sweep call it
+  repeatedly through the day without resending: a schedule stops being due the moment `last_sent_at`
+  lands on the same UTC calendar date as `now`, and becomes due again only on its next scheduled
+  weekday/day-of-month. A caller that instead tracked "already sent" with its own timer would drift
+  from this the first time the worker missed a tick.
+- **No report is ever stored server-side.** There is no `GeneratedReport` table — a PDF or CSV is
+  rendered fresh on every download and every scheduled send, the same best-effort,
+  nothing-to-replay philosophy `app/alerts/notify.py` already applies to alert notifications. The
+  source data (metrics, alerts, incidents) is the durable record; a rendered snapshot of it is not.
+- **The report worker's one unscoped query only enumerates; it never reads report content.**
+  `app.workers.report_worker`'s entry in `tests/test_unscoped_import_guard.py`'s `ALLOWED` dict
+  covers exactly `SELECT DISTINCT user_id FROM report_schedules WHERE enabled`, the same "periodic
+  sweep has no JWT to derive a tenant GUC from" justification every prior worker's exemption used —
+  every subsequent read or write goes through a session scoped via `scope_to_user()`.
+- **WeasyPrint needs system libraries `pip install` does not provide.** Pango, cairo, gdk-pixbuf, and
+  HarfBuzz must be installed at the OS level (`brew install pango` on macOS pulls in all four) before
+  `import weasyprint` succeeds at all — a missing dependency here fails at import time, not at
+  render time, so it surfaces as the whole backend refusing to start rather than a report-specific
+  error.

@@ -21,6 +21,8 @@ dependencies = [
     "scipy>=1.13",
     "statsmodels>=0.14",
     "anthropic>=0.40",
+    "weasyprint>=62",
+    "jinja2>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -58,3 +60,6 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
 # Every value here is a module constant or a Settings field validated against
 # ROLE_PASSWORD_RE before use — see 0001_bootstrap_roles.
 "migrations/*" = ["E501", "S608"]
+# The report's HTML/CSS template is a single string constant; wrapping its
+# lines would only make the markup harder to read, not the Python around it.
+"app/reports/templates.py" = ["E501"]

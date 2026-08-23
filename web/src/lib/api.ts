@@ -138,3 +138,40 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   if (response.status === 204) return undefined as T
   return (await response.json()) as T
 }
+
+const FILENAME_RE = /filename="?([^";]+)"?/
+
+/**
+ * GET a binary response (a report PDF/CSV) rather than JSON. Shares
+ * apiFetch's auth-header-plus-401-retry logic rather than duplicating it,
+ * since a download is otherwise an ordinary authenticated GET.
+ */
+export async function apiDownload(
+  path: string,
+  params?: Record<string, string>,
+): Promise<{ blob: Blob; filename: string }> {
+  const query = params ? `?${new URLSearchParams(params).toString()}` : ""
+
+  const send = (token: string | null): Promise<Response> => {
+    const headers = new Headers()
+    if (token) headers.set("Authorization", `Bearer ${token}`)
+    return fetch(`${API_PREFIX}${path}${query}`, { headers, credentials: "include" })
+  }
+
+  let response = await send(bridge?.getAccessToken() ?? null)
+  if (response.status === 401) {
+    const session = await refreshSession()
+    if (session) {
+      bridge?.onRefreshed(session)
+      response = await send(session.access_token)
+    } else {
+      bridge?.onUnauthenticated()
+    }
+  }
+
+  if (!response.ok) throw await toApiError(response)
+
+  const disposition = response.headers.get("Content-Disposition") ?? ""
+  const filename = FILENAME_RE.exec(disposition)?.[1] ?? "report"
+  return { blob: await response.blob(), filename }
+}

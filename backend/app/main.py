@@ -20,20 +20,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.alerts.evaluator import AlertEvaluator
     from app.workers.forecast_worker import ForecastWorker
     from app.workers.insights_worker import InsightsWorker
+    from app.workers.report_worker import ReportWorker
 
     evaluator_task = asyncio.create_task(AlertEvaluator().run())
     forecast_task = asyncio.create_task(ForecastWorker().run())
     insights_task = asyncio.create_task(InsightsWorker().run())
+    report_task = asyncio.create_task(ReportWorker().run())
     yield
     evaluator_task.cancel()
     forecast_task.cancel()
     insights_task.cancel()
+    report_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await evaluator_task
     with contextlib.suppress(asyncio.CancelledError):
         await forecast_task
     with contextlib.suppress(asyncio.CancelledError):
         await insights_task
+    with contextlib.suppress(asyncio.CancelledError):
+        await report_task
 
     # Without this, `uvicorn --reload` leaks an asyncpg pool on every restart and
     # pytest emits unclosed-connection warnings.
@@ -84,6 +89,7 @@ def create_app() -> FastAPI:
     from app.api.routes.incidents import router as incidents_router
     from app.api.routes.live import router as live_router
     from app.api.routes.notifications import router as notifications_router
+    from app.api.routes.reports import router as reports_router
     from app.api.routes.series import router as series_router
     from app.ingest.ws import router as ingest_router
     from app.live.viewer_ws import router as viewer_router
@@ -97,6 +103,7 @@ def create_app() -> FastAPI:
     app.include_router(forecasts_router)
     app.include_router(incidents_router)
     app.include_router(notifications_router)
+    app.include_router(reports_router)
     app.include_router(ingest_router)
     app.include_router(viewer_router)
 

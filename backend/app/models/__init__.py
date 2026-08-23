@@ -23,6 +23,7 @@ from app.models.metrics import (
 )
 from app.models.notifications import NotificationSettings, WebPushSubscription
 from app.models.refresh_token import RefreshToken
+from app.models.reports import ReportSchedule
 from app.models.user import User
 
 __all__ = [
@@ -46,6 +47,7 @@ __all__ = [
     "NotificationSettings",
     "ProcessSample",
     "RefreshToken",
+    "ReportSchedule",
     "User",
     "WebPushSubscription",
 ]

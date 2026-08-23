@@ -14,6 +14,7 @@ import { IncidentsPage } from "@/pages/IncidentsPage"
 import { LiveMonitoringPage } from "@/pages/LiveMonitoringPage"
 import { LoginPage } from "@/pages/LoginPage"
 import { NotFoundPage } from "@/pages/NotFoundPage"
+import { ReportsPage } from "@/pages/ReportsPage"
 import { SettingsPage } from "@/pages/SettingsPage"
 import { SignupPage } from "@/pages/SignupPage"
 
@@ -38,6 +39,7 @@ export const router = createBrowserRouter([
       { path: "/forecasts", element: <ForecastsPage /> },
       { path: "/incidents", element: <IncidentsPage /> },
       { path: "/incidents/:incidentId", element: <IncidentDetailPage /> },
+      { path: "/reports", element: <ReportsPage /> },
       { path: "/settings", element: <SettingsPage /> },
     ],
   },

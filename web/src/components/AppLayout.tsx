@@ -15,6 +15,7 @@ interface AppLayoutProps {
     | "anomalies"
     | "forecasts"
     | "incidents"
+    | "reports"
     | "settings"
 }
 
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { key: "anomalies", to: "/anomalies", label: "Anomalies" },
   { key: "forecasts", to: "/forecasts", label: "Forecasts" },
   { key: "incidents", to: "/incidents", label: "Incidents" },
+  { key: "reports", to: "/reports", label: "Reports" },
   { key: "settings", to: "/settings", label: "Settings" },
 ] as const
 
