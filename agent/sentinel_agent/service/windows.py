@@ -151,16 +151,20 @@ elevated privileges.</Description>
 """
 
 
-def build_create_argv(xml_file: Path, scope: Scope = "user") -> list[str]:
-    """The `schtasks /Create` invocation. Pure, so the flags can be asserted."""
-    argv = ["schtasks", "/Create", "/TN", TASK_NAME, "/XML", str(xml_file), "/F"]
-    if scope == "system":
-        # A BootTrigger task running as LocalSystem must be registered by an
-        # administrator; without /RU the XML's principal is honoured but the
-        # registration itself still needs the elevation, so this fails with a
-        # clear "Access is denied" rather than a silent no-op.
-        argv += ["/RU", LOCAL_SYSTEM_SID]
-    return argv
+def build_create_argv(xml_file: Path, scope: Scope = "user") -> list[str]:  # noqa: ARG001
+    """The `schtasks /Create` invocation. Pure, so the flags can be asserted.
+
+    Deliberately no `/RU`, for either scope. With `/XML` the principal in the
+    document is authoritative, and the document already names LocalSystem by
+    SID with `LogonType=ServiceAccount` — which the Task Scheduler schema
+    documents as valid and which needs no password. `/RU`, by contrast,
+    documents only `""`, `"NT AUTHORITY\\SYSTEM"` and `"SYSTEM"` for the
+    system account: a raw SID is not a documented value there, so passing one
+    risks "The user name or password is incorrect" on a machine this project
+    has never been able to test against. Registering a LocalSystem task still
+    requires an elevated prompt; Windows enforces that with or without the flag.
+    """
+    return ["schtasks", "/Create", "/TN", TASK_NAME, "/XML", str(xml_file), "/F"]
 
 
 def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:

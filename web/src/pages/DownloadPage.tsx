@@ -235,11 +235,13 @@ export function DownloadPage() {
     }
   }, [])
 
+  // platform.os may be "ios", which is not a BuildOs — buildsFor takes a plain
+  // string for exactly that reason and returns nothing, so NoBuild renders the
+  // "there is no agent for iOS" card. Casting it to BuildOs here would be a
+  // lie that happens to work.
   const mine = useMemo(
     () =>
-      catalog
-        ? buildsFor(catalog.builds, platform.os as BuildOs | null, platform.arch, platform.archCertain)
-        : [],
+      catalog ? buildsFor(catalog.builds, platform.os, platform.arch, platform.archCertain) : [],
     [catalog, platform],
   )
 

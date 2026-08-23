@@ -80,6 +80,12 @@ def _parse_ts(value: Any) -> datetime | None:
 def _parse_build(raw: Any) -> AgentBuild | None:
     """One manifest entry, or None if it cannot be trusted.
 
+    Every check is inside the try. This file is written by CI on a machine the
+    server never sees, so "validated, not trusted" has to mean *no* input shape
+    reaches an exception: `{"os": []}` makes `raw["os"] not in KNOWN_OS` raise
+    TypeError on an unhashable key, which would 500 the catalogue rather than
+    degrade it — the one thing this module exists to avoid.
+
     A filename is checked here rather than at serve time as well, because this
     is the only place a name enters the system: anything with a path separator
     or a parent reference is dropped outright, so the allow-list the file route
@@ -87,22 +93,30 @@ def _parse_build(raw: Any) -> AgentBuild | None:
     """
     if not isinstance(raw, dict) or any(f not in raw for f in _REQUIRED_FIELDS):
         return None
-    if raw["os"] not in KNOWN_OS or raw["arch"] not in KNOWN_ARCH:
-        return None
-
-    filename = raw["filename"]
-    if (
-        not isinstance(filename, str)
-        or not filename
-        or filename != Path(filename).name
-        or filename.startswith(".")
-    ):
-        return None
 
     try:
+        os_name, arch = raw["os"], raw["arch"]
+        if not isinstance(os_name, str) or not isinstance(arch, str):
+            return None
+        if os_name not in KNOWN_OS or arch not in KNOWN_ARCH:
+            return None
+
+        filename = raw["filename"]
+        if (
+            not isinstance(filename, str)
+            or not filename
+            or filename != Path(filename).name
+            # A backslash is not a path separator on POSIX, so Path().name
+            # leaves `..\..\x` intact — harmless (it cannot escape the dist
+            # directory) but it has no business being offered as a build.
+            or "\\" in filename
+            or filename.startswith(".")
+        ):
+            return None
+
         return AgentBuild(
-            os=str(raw["os"]),
-            arch=str(raw["arch"]),
+            os=os_name,
+            arch=arch,
             version=str(raw["version"]),
             filename=filename,
             size_bytes=int(raw["size_bytes"]),
@@ -174,9 +188,16 @@ def _read_catalog() -> DownloadCatalog:
             ),
         )
 
+    # Not `entries or []`: a `builds` of 5 would make the comprehension raise
+    # "'int' object is not iterable" — same class of crash as an unhashable os.
     entries = raw.get("builds")
-    parsed = [b for b in (_parse_build(e) for e in entries or []) if b is not None]
-    dropped = len(entries or []) - len(parsed)
+    if not isinstance(entries, list):
+        if entries is not None:
+            logger.error("agent build manifest 'builds' is not a list")
+        entries = []
+
+    parsed = [b for b in (_parse_build(e) for e in entries) if b is not None]
+    dropped = len(entries) - len(parsed)
     if dropped:
         logger.warning("dropped %d unusable entries from the agent build manifest", dropped)
 

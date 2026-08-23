@@ -52,12 +52,21 @@ def build_unit(config_path: Path, scope: Scope = "user") -> str:
     # Windows users create constantly and then carry to a Linux box — would
     # otherwise arrive as two arguments and fail to parse. systemd understands
     # POSIX single-quoting, which is what shlex.quote emits.
-    exec_start = " ".join(shlex.quote(part) for part in agent_command(config_path))
+    # shlex.quote, then double every %. systemd word-splits ExecStart (so a
+    # home directory with a space in it would otherwise arrive as two
+    # arguments) *and* expands %-specifiers in it, so a path containing a
+    # literal % — `/home/user/100%backup/…` — would be read as an unknown
+    # specifier. `%%` is how systemd spells a literal percent.
+    exec_start = " ".join(
+        shlex.quote(part).replace("%", "%%") for part in agent_command(config_path)
+    )
 
     lines = [
         "[Unit]",
         "Description=Sentinel monitoring agent",
-        "Documentation=https://github.com/sentinel/sentinel/blob/main/docs/INSTALL.md",
+        # No Documentation= line: there is no published URL for this project
+        # and no man page is installed, so any value here would name something
+        # that does not exist. An absent field beats a dangling reference.
         # network-online rather than network.target: the agent's first act is an
         # outbound WSS connection, and network.target only means "the stack is
         # configured", not "a route exists".

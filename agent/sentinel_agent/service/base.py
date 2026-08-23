@@ -40,9 +40,13 @@ def agent_executable() -> list[str]:
     if is_frozen():
         return [str(Path(sys.executable).resolve())]
 
-    script = Path(sys.executable).parent / "sentinel-agent"
-    if script.exists():
-        return [str(script)]
+    # `.exe` first: on Windows a venv's console script is
+    # Scripts\sentinel-agent.exe, and checking only the extensionless name
+    # would silently fall through to the `-m` form.
+    for name in ("sentinel-agent.exe", "sentinel-agent"):
+        script = Path(sys.executable).parent / name
+        if script.exists():
+            return [str(script)]
     return [sys.executable, "-m", "sentinel_agent.cli"]
 
 
@@ -74,6 +78,26 @@ class InstallResult:
     logs: str
 
 
+#: Directories a downloaded binary passes through but should not live in.
+#: Compared against a forward-slash-normalised path, because Windows renders
+#: these with backslashes and matching "/Downloads/" literally meant the
+#: warning never fired there — on the one platform where a user is most likely
+#: to run the binary straight out of Downloads, since SmartScreen already made
+#: them go and find it.
+TRANSIENT_DIRS = (
+    "/Downloads/",
+    "/Desktop/",
+    "/tmp/",  # noqa: S108
+    "/private/var/folders/",
+    "/AppData/Local/Temp/",
+)
+
+
+def looks_transient(path: str) -> bool:
+    """Pure, so the Windows answer is assertable from a Mac."""
+    return any(part in path.replace("\\", "/") for part in TRANSIENT_DIRS)
+
+
 def check_executable_location() -> str | None:
     """Warn when the binary being registered will not survive.
 
@@ -97,8 +121,7 @@ def check_executable_location() -> str | None:
             "temporary extraction directory"
         )
 
-    transient = ("/Downloads/", "/Desktop/", "/tmp/", "/private/var/folders/")  # noqa: S108
-    if any(part in str(resolved) for part in transient):
+    if looks_transient(str(resolved)):
         return (
             f"the agent binary is at {resolved}, which looks like a temporary "
             f"location. Move it somewhere permanent and re-run install-service, "

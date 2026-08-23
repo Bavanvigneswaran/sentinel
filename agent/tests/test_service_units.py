@@ -267,10 +267,16 @@ def test_create_replaces_an_existing_task():
     assert "/F" in windows.build_create_argv(Path("t.xml"), "user")
 
 
-def test_creating_a_boot_task_names_localsystem():
-    argv = windows.build_create_argv(Path("t.xml"), "system")
-    assert "/RU" in argv and windows.LOCAL_SYSTEM_SID in argv
-    assert "/RU" not in windows.build_create_argv(Path("t.xml"), "user")
+def test_registration_never_passes_ru():
+    """With /XML the principal in the document is authoritative, and it already
+    names LocalSystem by SID with LogonType=ServiceAccount. /RU documents only
+    "", "NT AUTHORITY\\SYSTEM" and "SYSTEM" for the system account — a raw SID
+    is not a documented value, so passing one risks "The user name or password
+    is incorrect" on a machine this project cannot test against."""
+    for scope in ("user", "system"):
+        argv = windows.build_create_argv(Path("t.xml"), scope)
+        assert "/RU" not in argv
+        assert "/XML" in argv
 
 
 # --- dispatch ---------------------------------------------------------------
@@ -333,3 +339,77 @@ def test_a_log_file_still_leaves_the_config_before_the_subcommand():
     assert args.command == "run"
     assert args.config == str(CONFIG)
     assert args.log_file == "/var/log/sentinel/agent.log"
+
+
+
+# --- things that only break on the platform we cannot run ------------------
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        # Windows renders these with backslashes. Matching "/Downloads/"
+        # literally meant the warning never fired there.
+        r"C:\Users\bo\Downloads\sentinel-agent.exe",
+        r"C:\Users\bo\AppData\Local\Temp\sentinel-agent.exe",
+        r"C:\Users\bo\Desktop\sentinel-agent.exe",
+        "/Users/bo/Downloads/sentinel-agent",
+        "/private/var/folders/xy/T/sentinel-agent",
+    ],
+)
+def test_a_transient_location_is_recognised_on_every_platform(path):
+    assert base.looks_transient(path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        r"C:\Program Files\Sentinel\sentinel-agent.exe",
+        "/usr/local/bin/sentinel-agent",
+        "/opt/sentinel/sentinel-agent",
+    ],
+)
+def test_a_durable_location_is_not_flagged(path):
+    assert not base.looks_transient(path)
+
+
+def test_a_percent_in_a_config_path_is_escaped_for_systemd():
+    """systemd expands %-specifiers in ExecStart, so `/srv/100%backup/…` would
+    be read as an unknown specifier rather than a path. %% is the literal."""
+    unit = systemd.build_unit(Path("/srv/100%backup/agent.toml"), "system")
+    exec_start = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
+
+    assert "100%%backup" in exec_start
+    assert exec_start.count("%") % 2 == 0, "an odd % is a specifier to systemd"
+
+
+def test_the_unit_does_not_cite_documentation_that_does_not_exist():
+    """No published URL, and no man page is installed. Any Documentation=
+    value would name something that is not there — and pointing at a
+    github.com path that resolves to somebody else's project is worse than
+    omitting the field."""
+    unit = systemd.build_unit(CONFIG, "user")
+    assert "Documentation=" not in unit
+    assert "github.com" not in unit
+
+
+def test_a_windows_venv_console_script_is_preferred_over_the_module_form(
+    tmp_path, monkeypatch
+):
+    """A venv's script is Scripts\\sentinel-agent.exe; checking only the
+    extensionless name falls through to `python -m`, which works but is not
+    what a service should be pointed at."""
+    scripts = tmp_path / "Scripts"
+    scripts.mkdir()
+    (scripts / "sentinel-agent.exe").write_text("")
+    monkeypatch.setattr(base.sys, "frozen", False, raising=False)
+    monkeypatch.setattr(base.sys, "executable", str(scripts / "python.exe"))
+
+    assert base.agent_executable() == [str(scripts / "sentinel-agent.exe")]
+
+
+def test_the_module_form_is_the_last_resort(tmp_path, monkeypatch):
+    monkeypatch.setattr(base.sys, "frozen", False, raising=False)
+    monkeypatch.setattr(base.sys, "executable", str(tmp_path / "python"))
+
+    assert base.agent_executable() == [str(tmp_path / "python"), "-m", "sentinel_agent.cli"]

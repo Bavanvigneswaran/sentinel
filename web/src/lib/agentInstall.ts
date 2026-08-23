@@ -112,7 +112,8 @@ export const SERVICE_MECHANISM: Record<BuildOs, string> = {
  */
 export function buildsFor(
   builds: AgentBuild[],
-  os: BuildOs | null,
+  /** A DetectedOs, which includes values no build can ever have — "ios". */
+  os: string | null,
   arch: string | null,
   archCertain: boolean,
 ): AgentBuild[] {

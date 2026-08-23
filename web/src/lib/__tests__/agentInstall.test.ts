@@ -117,3 +117,13 @@ describe("buildsFor", () => {
     ])
   })
 })
+
+describe("buildsFor with a platform that has no agent", () => {
+  it("returns nothing for iOS rather than throwing on an unknown key", () => {
+    // detectPlatform can return "ios", which is not a BuildOs. The page relies
+    // on getting an empty list back so it can render the "no agent for iOS"
+    // explanation instead of a broken card.
+    const catalog = [build({ os: "macos", arch: "arm64", filename: "mac-arm64" })]
+    expect(buildsFor(catalog, "ios", null, false)).toEqual([])
+  })
+})

@@ -338,3 +338,47 @@ async def test_the_reason_does_not_leak_the_server_filesystem_layout(
 
     assert str(tmp_path) not in body["unavailable_reason"]
     assert "/" not in body["unavailable_reason"]
+
+
+@pytest.mark.parametrize(
+    ("builds", "label"),
+    [
+        ([{**_build(), "os": []}], "an unhashable os"),
+        ([{**_build(), "arch": {"a": 1}}], "a dict arch"),
+        ([{**_build(), "size_bytes": {}}], "a dict size"),
+        ([{**_build(), "filename": 42}], "a numeric filename"),
+        (5, "a builds field that is not a list"),
+        ({"a": 1}, "a builds field that is an object"),
+        ([None, 42, "nope"], "junk entries"),
+    ],
+)
+async def test_no_manifest_shape_can_500_the_catalogue(
+    client, monkeypatch, tmp_path, builds, label
+):
+    """This file is written by CI on a machine the server never sees, so
+    "validated, not trusted" has to mean no input shape reaches an exception.
+
+    `{"os": []}` in particular makes `raw["os"] not in KNOWN_OS` raise
+    TypeError on an unhashable key — a 500 rather than the visible degradation
+    this module exists for.
+    """
+    (tmp_path / svc.MANIFEST_FILENAME).write_text(
+        json.dumps({"schema_version": svc.SCHEMA_VERSION, "builds": builds})
+    )
+    _point_at(monkeypatch, tmp_path)
+
+    resp = await client.get(CATALOG, headers=await _auth_headers(client))
+
+    assert resp.status_code == 200, label
+    assert resp.json()["builds"] == [], label
+    assert resp.json()["unavailable_reason"] is not None, label
+
+
+async def test_a_backslash_filename_is_not_offered(client, monkeypatch, tmp_path):
+    """A backslash is not a path separator on POSIX, so Path().name leaves
+    `..\\..\\x` intact. It cannot escape the dist directory, but it has no
+    business being rendered as a build either."""
+    _write_manifest(tmp_path, [_build(filename=r"..\..\etc\passwd")])
+    _point_at(monkeypatch, tmp_path)
+
+    assert (await client.get(CATALOG, headers=await _auth_headers(client))).json()["builds"] == []

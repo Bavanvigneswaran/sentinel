@@ -374,6 +374,21 @@ never a query string, never logged, indexed-hash lookup with no timing compariso
 nowhere disabled, frames size-capped before parsing, `/enroll` atomically single-use and
 rate-limited with invalid/expired/used deliberately indistinguishable.
 
+A follow-up review pass over the whole phase found seven more, all fixed with tests. The one that
+mattered: **a malformed build manifest could 500 the catalogue** instead of degrading — `{"os": []}`
+makes `raw["os"] not in KNOWN_OS` raise TypeError on an unhashable key, and a non-list `builds`
+raises on iteration, both defeating the module's whole "validated, not trusted" contract. The rest
+were platform-specific things that only bite where this project cannot run: `check_executable_location()`
+matched `/Downloads/` literally, so the "you left it in Downloads" warning **never fired on Windows**,
+the one platform where SmartScreen makes a user go and find the binary in the first place;
+`agent_executable()` missed a venv's `Scripts\sentinel-agent.exe`; `schtasks /RU` documents only
+`""`/`"NT AUTHORITY\SYSTEM"`/`"SYSTEM"` and not a raw SID, so the flag was dropped in favour of the
+`/XML` principal (which *is* documented to take one); systemd expands `%`-specifiers in `ExecStart`,
+so a path like `/srv/100%backup/` needed `%%`; a fabricated `Documentation=github.com/...` URL pointing
+at somebody else's project was removed, and then its `man:` replacement too, since no man page is
+installed either; and a `platform.os as BuildOs` cast in `DownloadPage` was a lie that happened to work
+for `"ios"`. 482 backend, 139 agent, 28 web, 41 mobile JS, 36 Kotlin.
+
 Still to come in Phase 11, if picked back up: run the CI matrix and publish real Windows and Linux
 binaries (and find out what breaks); a `.dmg` so a notarized macOS build can be *stapled* — a bare
 binary cannot be, so Gatekeeper checks it online and an air-gapped machine still warns; and a real
