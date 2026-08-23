@@ -17,9 +17,10 @@ import sqlalchemy as sa
 from pywebpush import WebPushException, webpush
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.alerts import fcm
 from app.config import get_settings
 from app.models.alerts import AlertEvent
-from app.models.notifications import NotificationSettings, WebPushSubscription
+from app.models.notifications import FcmToken, NotificationSettings, WebPushSubscription
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,36 @@ async def _send_web_push(session: AsyncSession, user_id: uuid.UUID, payload: dic
             logger.warning("web push failed endpoint=%s", sub.endpoint, exc_info=True)
 
 
+async def _send_fcm(session: AsyncSession, user_id: uuid.UUID, payload: dict) -> None:
+    """Push to every Android device this user has registered.
+
+    Unlike web push there is no `fcm_enabled` setting to consult: holding a
+    token row IS the opt-in, because a phone that revoked the OS permission or
+    uninstalled the app cannot be represented honestly by an account-wide flag.
+    See the FcmToken model docstring.
+    """
+    if not fcm.is_configured():
+        logger.info("fcm suppressed (not configured)")
+        return
+
+    tokens = list(await session.scalars(sa.select(FcmToken).where(FcmToken.user_id == user_id)))
+    if not tokens:
+        return
+
+    dead = await fcm.send_to_tokens(
+        [t.token for t in tokens],
+        title=payload["title"],
+        body=payload["body"],
+        # Every FCM data value must be a string. `url` is the same "/alerts"
+        # the web push payload already carries, so one notification body serves
+        # both channels; the app maps it through an allow-list rather than
+        # navigating to whatever arrives (mobile/src/navigation/linking.ts).
+        data={"url": payload["url"]},
+    )
+    if dead:
+        await session.execute(sa.delete(FcmToken).where(FcmToken.token.in_(dead)))
+
+
 async def _dispatch(
     session: AsyncSession,
     user_id: uuid.UUID,
@@ -113,6 +144,20 @@ async def _dispatch(
     *,
     resolved: bool,
 ) -> None:
+    push_payload = {
+        "title": _subject(event, device_name, resolved=resolved),
+        "body": _body(event, device_name, resolved=resolved),
+        "url": "/alerts",
+    }
+
+    # Deliberately before the settings lookup, and not gated on it. The row is
+    # created lazily by GET /notifications/settings, which the Android app
+    # never calls — it has no email or web-push UI to render. Gating FCM on a
+    # row that only the web console creates would mean a phone that registered
+    # a token silently received nothing until its owner happened to open
+    # Settings in a browser.
+    await _send_fcm(session, user_id, push_payload)
+
     notification_settings = await session.get(NotificationSettings, user_id)
     if notification_settings is None:
         return
@@ -121,22 +166,10 @@ async def _dispatch(
         user = await session.get(User, user_id)
         to_address = notification_settings.email_address or (user.email if user else None)
         if to_address:
-            await _send_email(
-                to_address,
-                _subject(event, device_name, resolved=resolved),
-                _body(event, device_name, resolved=resolved),
-            )
+            await _send_email(to_address, push_payload["title"], push_payload["body"])
 
     if notification_settings.web_push_enabled:
-        await _send_web_push(
-            session,
-            user_id,
-            {
-                "title": _subject(event, device_name, resolved=resolved),
-                "body": _body(event, device_name, resolved=resolved),
-                "url": "/alerts",
-            },
-        )
+        await _send_web_push(session, user_id, push_payload)
 
 
 async def notify_firing(

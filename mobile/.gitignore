@@ -1,0 +1,51 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+# generated native folders
+/ios
+/android
+
+# Local backend URL. src/config.ts falls back to the Android-emulator default,
+# so a fresh clone runs without one. Copy .env.example and point it at whatever
+# your device can actually reach.
+.env
+
+# Firebase service file for FCM. Carries a real project's identifiers, and
+# app.config.ts treats its absence as "push is unavailable" rather than an
+# error — see mobile/README.md.
+google-services.json

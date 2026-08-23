@@ -1,0 +1,115 @@
+# Sentinel — Android viewer (Phase 10a)
+
+The phone half of Sentinel: sign in, see your fleet's health, watch one machine
+stream live, and triage alerts. It talks to the **same backend API and viewer
+WebSocket the web console uses**, with no endpoints of its own beyond the FCM
+token registration Phase 10a added.
+
+This is the **viewer** only. Android-as-a-monitored-device — the Kotlin
+foreground-service collector — is Phase 10b and is not started.
+
+Expo SDK 57 / React Native 0.86, a **dev build** (not Expo Go): `expo-dev-client`
+is what lets Phase 10b add a native module without changing how this is run.
+
+## What's here
+
+| Screen | Backend it renders |
+|---|---|
+| Sign in / sign up | `POST /auth/login`, `/auth/signup`, `/auth/refresh` |
+| Fleet | `GET /fleet/overview` (30s poll) |
+| Devices | `GET /devices` (10s poll) |
+| Device | `GET /devices/{id}/summary` (15s poll) |
+| Live | `POST /ws/tickets` → `WS /ws/viewer`, primed by `GET /devices/{id}/samples/recent` |
+| Alerts | `GET /alerts/events`, `POST /alerts/silences` (10s poll) |
+| Settings | `POST`/`DELETE /notifications/fcm/register` |
+
+Alert rules, silence windows beyond a one-hour mute, email and Web Push
+channels, reports, incidents, forecasts and the history view all stay in the web
+console. This app is deliberately the subset you want *on a phone*.
+
+## Running it
+
+```bash
+make install          # from the repo root; includes `cd mobile && npm install`
+```
+
+Point the app at a backend the **device** can reach. There is no Vite proxy
+here, so the URL is absolute and carries **no `/api` prefix** — FastAPI mounts
+`/auth`, `/devices` and `/fleet` at the root, and the web app's `/api` exists
+only because the dev proxy strips it again.
+
+```bash
+cp mobile/.env.example mobile/.env
+```
+
+| Where you're running | `EXPO_PUBLIC_API_URL` |
+|---|---|
+| Android emulator | `http://10.0.2.2:8000` (the default) |
+| Physical phone on your LAN | `http://192.168.x.x:8000` |
+| Deployed | `https://sentinel.example.com` |
+
+Over plain `http`, the backend must be running with `COOKIE_SECURE=false` — the
+refresh cookie is otherwise never stored and every app restart logs you out.
+
+Then, with an emulator running or a phone attached:
+
+```bash
+make mobile-android
+```
+
+That builds, installs and launches the dev build (first run compiles the Android
+project and takes several minutes). Afterwards, `make mobile` just starts Metro
+against the already-installed build.
+
+`make mobile-prebuild` regenerates `android/` from `app.config.ts` — needed
+after changing a config plugin, the package name, or adding
+`google-services.json`. `android/` is generated and gitignored; do not edit it
+by hand.
+
+## Push notifications (FCM)
+
+The app obtains a **native FCM registration token** via `expo-notifications`'
+`getDevicePushTokenAsync()` and registers it with the backend; the backend sends
+through FCM HTTP v1. Nothing goes through Expo's push service.
+
+Three things must line up, and each one missing degrades rather than breaks:
+
+1. **`mobile/google-services.json`** — from the Firebase console, for an Android
+   app whose package name is `com.sentinel.viewer`. Without it, `app.config.ts`
+   omits `googleServicesFile` entirely (so the build still works) and Settings
+   says push is unavailable instead of offering a dead toggle.
+2. **`FCM_PROJECT_ID` and `FCM_SERVICE_ACCOUNT_FILE`** in the backend's `.env` —
+   Firebase console → Project settings → Service accounts → Generate new private
+   key. Without them the backend logs "fcm suppressed" and sends nothing, the
+   same posture it takes for unset SMTP or VAPID.
+3. **A device with Google Play services.** A bare emulator image cannot obtain a
+   token at all; use a `google_apis_playstore` image or a real phone.
+
+Registration *is* the opt-in — there is no `fcm_enabled` setting beside the
+web-push one, because a flag saying "on" with no device token registered would
+be a lie the UI would happily render. Signing out unregisters this phone.
+
+## Tests and checks
+
+```bash
+npm test        # node --test over the pure logic (ring buffer, chart frame, deep links)
+npm run lint    # oxlint, same config as web/
+npm run typecheck
+```
+
+The tests deliberately cover the pure modules only — the parts where a silent
+wrong answer is plausible: that a `null` reading becomes a **gap** in a chart
+and never a zero, that the y-scale follows the visible window, and that a push
+payload's `url` is matched against an allow-list rather than navigated to on
+trust. They run in plain Node with no React Native runtime, no jest, and no
+transform.
+
+## Relationship to `web/`
+
+`src/types/` is copied byte-for-byte from `web/src/types/`; the backend's
+Pydantic schemas are the single source of truth and both clients hand-write
+against them. `lib/api.ts`, `lib/liveSocket.ts`, `stores/auth.ts`,
+`lib/ringBuffer.ts` and `lib/streamBuffers.ts` are ports kept deliberately
+recognisable against their web counterparts, so a fix to one is obviously
+applicable to the other. What genuinely differs is documented in each file's
+header — mostly: no `window`, no DOM, and an app that gets suspended.

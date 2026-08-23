@@ -149,6 +149,15 @@ class Settings(BaseSettings):
     vapid_private_key: str | None = None
     vapid_subject: str | None = None  # a "mailto:" URI, required by the spec
 
+    # --- Notifications: FCM (Android) -----------------------------------------
+    # Optional and off when unset, exactly like SMTP and VAPID above. Both must
+    # be set for anything to send: the project id names the FCM v1 endpoint, and
+    # the service-account JSON is what mints the OAuth2 access token for it.
+    # Generate the key file once in the Firebase console (Project settings →
+    # Service accounts → Generate new private key) — an ops step, not code.
+    fcm_project_id: str | None = None
+    fcm_service_account_file: str | None = None
+
     # NOTE: pydantic-settings parses complex types as JSON, so this must be
     # written as CORS_ORIGINS=["http://localhost:5173"] — a bare URL fails.
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])

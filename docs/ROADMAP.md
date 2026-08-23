@@ -52,9 +52,19 @@ strict prompt boundary (metrics are data, never instructions). Incidents workspa
 Historical trend analytics, availability/reliability stats. Report generator → PDF (WeasyPrint) + CSV export,
 scheduled email reports.
 
-### Phase 10 — Android app  ·  Sonnet 5, Opus for the native module  ·  ~3 sessions
-React Native dev-build viewer (login, device list, dashboard, live, alerts, push via FCM),
-then Kotlin foreground-service collector module for Android-as-a-monitored-device.
+### Phase 10a — Android viewer  ·  Opus 5  ·  ~1 session  ·  **DONE**
+React Native dev-build viewer in `mobile/` (login/signup, device list, fleet + per-device health,
+Live Monitoring over the viewer WS, alerts triage, push via FCM). Reuses `web/src`'s API client,
+auth store shape and types; renders the existing API/WS as-is. The one backend addition was the FCM
+registration surface — the server had no way to reach a phone at all.
+**Done when:** real telemetry from a real agent streaming at 1s on a real Android device. Verified.
+Known gap: FCM is untested against a live Firebase project (none configured).
+
+### Phase 10b — Android as a monitored device  ·  Opus 5  ·  ~2 sessions
+Kotlin foreground-service collector plus an Expo native module so a phone can enrol itself and
+report its own metrics over the existing agent protocol. Read ARCHITECTURE.md's Known Constraints
+first: global CPU% is not readable since API 26, so decide up front what Android can *honestly*
+measure and send `null` for the rest.
 
 ### Phase 11 — Packaging + distribution  ·  Sonnet 5  ·  ~1–2 sessions
 PyInstaller builds per OS, OS-detecting download page, install docs, signing (when you're ready to pay for certs),

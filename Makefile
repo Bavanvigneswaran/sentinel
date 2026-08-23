@@ -1,11 +1,13 @@
 .PHONY: up down dev dev-backend dev-frontend test agent logs install \
         migrate migrate-down revision db-shell redis-shell reset-db lint typecheck \
-        agent-enroll agent-sample agent-status agent-install-service agent-uninstall-service
+        agent-enroll agent-sample agent-status agent-install-service agent-uninstall-service \
+        mobile mobile-android mobile-prebuild mobile-test
 
 install:
 	cd backend && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 	cd agent && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 	cd web && npm install
+	cd mobile && npm install
 
 up:
 	docker compose up -d
@@ -31,6 +33,7 @@ dev:
 test:
 	cd backend && .venv/bin/pytest -q
 	cd agent && .venv/bin/pytest -q
+	cd mobile && npm test
 
 # --- database ---------------------------------------------------------------
 # Alembic runs as the owner role (ADMIN_DATABASE_URL); the app itself connects
@@ -61,9 +64,11 @@ lint:
 	cd backend && .venv/bin/ruff check .
 	cd agent && .venv/bin/ruff check .
 	cd web && npm run lint
+	cd mobile && npm run lint
 
 typecheck:
 	cd web && npx tsc -b --noEmit
+	cd mobile && npx tsc --noEmit
 
 # --- agent ------------------------------------------------------------------
 # Enrol first: mint a code in the UI (or POST /enrollment-codes), then
@@ -87,3 +92,25 @@ agent-install-service:
 
 agent-uninstall-service:
 	cd agent && .venv/bin/sentinel-agent uninstall-service
+
+# --- mobile (Phase 10a Android viewer) ---------------------------------------
+# Point mobile/.env at a backend the *device* can reach before the first run:
+# an Android emulator sees this machine as 10.0.2.2, a physical phone needs
+# your LAN IP. See mobile/README.md.
+
+# Metro, for an already-installed dev build.
+mobile:
+	cd mobile && npx expo start --dev-client
+
+# Build, install and launch the dev build on the running emulator/device.
+# The first run compiles the Android project and takes a while.
+mobile-android:
+	cd mobile && npx expo run:android
+
+# Regenerate android/ from app.config.ts. Needed after changing a config
+# plugin, the package name, or adding google-services.json.
+mobile-prebuild:
+	cd mobile && npx expo prebuild --platform android --clean
+
+mobile-test:
+	cd mobile && npm test

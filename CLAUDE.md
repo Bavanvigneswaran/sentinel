@@ -19,7 +19,8 @@ Read `docs/ARCHITECTURE.md` before making design decisions. Read `docs/ROADMAP.m
 ## Stack
 
 Python 3.11+ / FastAPI / TimescaleDB / Redis · React + TS + Vite + Tailwind + shadcn/ui · uPlot for live
-charts · Python + psutil agent (PyInstaller) · React Native + Kotlin module for Android.
+charts · Python + psutil agent (PyInstaller) · React Native (Expo dev build, React Navigation,
+react-native-svg for charts) in `mobile/`, plus a Kotlin collector module in Phase 10b.
 
 ## Commands
 
@@ -33,6 +34,8 @@ charts · Python + psutil agent (PyInstaller) · React Native + Kotlin module fo
 - `make agent-enroll code=X4T9-K2QM-7PDR` — enrol this machine · `make agent` — run it
 - `make agent-sample` — print one real sample without connecting · `make agent-status`
 - `make agent-install-service` / `agent-uninstall-service` — macOS launchd (Phase 11 adds the rest)
+- `make mobile-android` — build/install/launch the Android dev build · `make mobile` — Metro only
+- `make mobile-prebuild` — regenerate `mobile/android/` from `app.config.ts` · `make mobile-test`
 
 Phase 5 status: alerts, the evaluator, and notifications complete on top of Phase 4's dashboard.
 Continuous aggregates at 1m/5m/1h behind a tenant-scoped wrapper view, a time-range query planner,
@@ -177,6 +180,50 @@ Still to come in Phase 9, if picked back up: a filled prediction-interval-style 
 (currently numbers only, no chart); the report's AI-insights context (Phase 8's incident summaries) isn't
 pulled into the emailed report, which would need a decision about how much of that per-incident text
 belongs in a periodic fleet-wide digest versus staying scoped to one incident's own page.
+
+Phase 10a status: the Android viewer is complete — a React Native dev build in `mobile/` (Expo SDK
+57 / RN 0.86, `expo-dev-client` so Phase 10b can add its Kotlin module without changing how the app
+is run). Sign-in/sign-up, a fleet dashboard, a per-device health screen, Live Monitoring over the
+viewer WebSocket, alerts triage, and FCM push. It renders the *existing* API and WS protocols — the
+only backend addition is the FCM registration surface, because the server had no way to send to a
+phone at all (`notify.py` did Web Push and SMTP only, and an FCM registration token is not a Web
+Push endpoint). That addition is purely additive and mirrors the web-push pair it sits beside:
+`FcmToken` (migration `0011_fcm_tokens`, RLS like every other tenant table), `POST`/`DELETE
+/notifications/fcm/register` upserting on the token, and `app/alerts/fcm.py` sending through FCM
+HTTP v1 behind `asyncio.to_thread` for google-auth's blocking refresh — a logged no-op when
+`fcm_project_id`/`fcm_service_account_file` are unset, exactly as SMTP and VAPID already are. One
+push payload (`{title, body, url}`) now feeds both channels. 437 backend tests green.
+
+The app reuses `web/src` rather than reinventing it: `src/types/` is copied byte-for-byte,
+and `lib/api.ts`, `stores/auth.ts`, `lib/liveSocket.ts`, `lib/ringBuffer.ts` and
+`lib/streamBuffers.ts` are ports kept deliberately recognisable against their web counterparts.
+What genuinely differs: no `window` (an absolute base URL and **no `/api` prefix** — that prefix is
+purely a Vite-proxy artefact), no DOM (uPlot is replaced by a `react-native-svg` renderer over the
+same `RingBuffer`), and an app that gets *suspended* rather than merely hidden. `AppState` replaces
+`visibilitychange` for the pre-expiry token re-check, pauses every screen's poll, and — the one
+genuinely new behaviour — tears the viewer socket down on background so the agent downshifts out of
+1s mode immediately instead of waiting out Phase 3's 30s lease.
+
+Verified end-to-end on a real Android 36 emulator against the real backend and a real Python agent
+enrolled to a scratch account: signup, cold-start session restore, fleet numbers matching this Mac's
+actual telemetry (health 87, both APFS mounts, "Not measurable on this platform: iowait"), live 1s
+streaming with real NIC/disk/latency series, a threshold rule firing and appearing in triage, and
+the background→foreground upshift/downshift cycle confirmed in the agent's own log (live at
+11:27:57, normal at 11:28:13 — ~2s after backgrounding, not 30s). Four real defects were found by
+running it that neither typecheck nor Metro caught: two safe-area bugs (a missing top inset, then a
+double one — `HeaderHeightContext` is `0` under a hidden bottom-tab header, not `undefined`), a tab
+glyph with no font coverage rendering as tofu, and a crash on resume from background where an empty
+chart frame carried its series but an empty `latest` array, so `latest[i]` was `undefined` rather
+than `null` and reached the value formatter. The last one now has a regression test.
+
+Still to come in Phase 10a, if picked back up: **push has never been exercised against a live
+Firebase project** — there is none configured here, so the app correctly reports push as unavailable
+and the send path is covered by unit tests (`test_fcm_transport.py`, `test_fcm_dispatch.py`) rather
+than a real notification arriving on a phone; the notification *tap* → deep-link path
+(`navigation/linking.ts`) is likewise only covered by `deepLinks.test.ts`. Also deferred by choice,
+not blocked: the history view with its time-range picker, incidents, forecasts and reports, and
+alert-rule CRUD, all of which stay in the web console.
+
 
 ## Conventions
 
@@ -508,3 +555,66 @@ belongs in a periodic fleet-wide digest versus staying scoped to one incident's 
   `import weasyprint` succeeds at all — a missing dependency here fails at import time, not at
   render time, so it surfaces as the whole backend refusing to start rather than a report-specific
   error.
+
+## Phase 10a invariants — don't break these
+
+- **The access token never touches disk on the phone either.** `mobile/src/stores/auth.ts` is a
+  plain zustand store, deliberately *not* wrapped in `zustand/middleware/persist` and never written
+  to AsyncStorage or SecureStore. "Kill the app and stay signed in" works the same way "hard-refresh
+  and stay logged in" works in the browser: the HttpOnly refresh cookie is replayed by the platform
+  cookie jar (Android: RN's OkHttp stack via `android.webkit.CookieManager`) and exchanged at launch.
+  Verified by `am force-stop` followed by a cold relaunch landing straight on the fleet screen.
+- **`bootstrapAuth()` is called at module scope in `index.ts`, never from an effect.** Identical
+  reasoning to the web client, and easier to trip here: StrictMode double-invokes effects, two
+  concurrent `/auth/refresh` calls present the same cookie, and the backend correctly reads the
+  second as theft and revokes the family. Refresh is single-flighted in `lib/api.ts` on top of that.
+- **A network failure is not a logout.** `lib/api.ts` throws `NetworkError` for an unreachable
+  backend and returns `null` only when the server actually rejected the cookie; `renew()` keeps the
+  session on the former. Collapsing the two would sign a user out every time they walked into a
+  tunnel — the same "never make a claim about something you cannot reach" reflex as Phase 5's
+  "an already-firing alert is never auto-resolved by a device going quiet".
+- **Backgrounding drops the viewer socket; it does not merely stop reading it.**
+  `liveSocket.suspend()`/`resume()` plus the `AppState` handler in `hooks/useDeviceStream.ts`. A
+  suspended app still holds a nominally-open socket, and Phase 3's live registry would keep the
+  agent at 1s push for the full 30s lease. Resuming **replaces** the `StreamBuffers` wholesale
+  before re-priming — appending the primer's replay onto samples captured before the gap would
+  interleave older timestamps into a buffer the chart reads as monotonic.
+- **The mobile API base URL carries no `/api` prefix.** That prefix exists only because the Vite dev
+  proxy strips it again (Phase 1's invariant); FastAPI mounts `/auth`, `/devices`, `/fleet` at the
+  root. There is no proxy on a device, so `src/config.ts` points at the origin directly. It is also
+  absolute, because `window.location` does not exist — which is where the WS URL comes from too.
+- **`null` is still a gap, in a renderer that has no `spanGaps` option.**
+  `mobile/src/lib/chartFrame.ts` emits one polyline per unbroken run of readings and never bridges a
+  hole, and the y-scale is recomputed from the visible window every tick. The maths lives in that
+  pure module rather than in the component precisely so it can be tested without a React Native
+  runtime — `src/lib/__tests__/chartFrame.test.ts` is the guard.
+- **An empty chart frame keeps `paths` and `latest` index-aligned with `series`.**
+  `emptyFrameFor()` exists for this and nothing else. Spreading `EMPTY_FRAME` and overriding only
+  `series` leaves `latest[i]` as `undefined`, which is not `null`, which slips past the legend's
+  "unavailable" check and reaches the value formatter. It crashed the Live screen on resume from
+  background — the exact moment the buffer is reset into that state.
+- **A push payload's `url` is matched against an allow-list, never navigated to.**
+  `mobile/src/lib/deepLinks.ts` maps the backend's `"/alerts"` to a route through a `Map` — a `Map`
+  and not an object literal, because an object lookup walks `Object.prototype` and a payload of
+  `{"url": "constructor"}` would resolve to a "route". `data.url` arrives over the network; this is
+  the same "observed content is data, not instructions" reflex CLAUDE.md already applies to metric
+  data reaching the LLM.
+- **An `FcmToken` row IS the opt-in — there is no `fcm_enabled` settings flag.** A flag saying "on"
+  beside no registered device would be a lie the UI would render happily, and the two would drift
+  the moment somebody revoked the OS permission. Consequently `notify.py`'s FCM leg runs *before*
+  and independently of the `NotificationSettings` lookup: that row is created lazily by
+  `GET /notifications/settings`, which the Android app never calls, so gating on it would mean a
+  registered phone silently received nothing.
+- **A phone already registered to another account gets a 409, not a silent reassignment.** The
+  UNIQUE on `fcm_tokens.token` is global on purpose — one physical device must not be addressable by
+  two tenants — and RLS makes the other tenant's row invisible, so the upsert cannot rewrite it and
+  Postgres refuses the statement. That is the correct outcome; the route turns it into an actionable
+  conflict instead of a 500, and the app avoids reaching it by unregistering on sign-out.
+- **`google-services.json` is absent from the repo, and its absence must stay buildable.**
+  `app.config.ts` omits `android.googleServicesFile` entirely when the file is missing — naming a
+  file that does not exist fails `expo prebuild` outright — and `src/config.ts` surfaces that as
+  Settings saying push is unavailable. Same graceful-absence posture as unset SMTP/VAPID/API keys.
+- **`mobile/android/` is generated, not authored.** It is gitignored and rebuilt by
+  `make mobile-prebuild` from `app.config.ts`. Editing it by hand is work that disappears on the
+  next prebuild; config plugins are where native changes belong.
+

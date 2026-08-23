@@ -21,7 +21,11 @@ from app.models.metrics import (
     NetSample,
     ProcessSample,
 )
-from app.models.notifications import NotificationSettings, WebPushSubscription
+from app.models.notifications import (
+    FcmToken,
+    NotificationSettings,
+    WebPushSubscription,
+)
 from app.models.refresh_token import RefreshToken
 from app.models.reports import ReportSchedule
 from app.models.user import User
@@ -39,6 +43,7 @@ __all__ = [
     "DiskUsageSample",
     "EnrollmentCode",
     "ExhaustionForecast",
+    "FcmToken",
     "Incident",
     "LatencySample",
     "MetricForecast",

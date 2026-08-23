@@ -44,3 +44,21 @@ class WebPushUnsubscribeRequest(BaseModel):
 class VapidPublicKeyOut(BaseModel):
     #: None when the server has no VAPID keypair configured.
     public_key: str | None
+
+
+class FcmRegisterRequest(BaseModel):
+    """Register (or re-register) this Android device for alert notifications.
+
+    There is no matching `fcm_enabled` field on NotificationSettingsUpdate:
+    holding a row here *is* the opt-in — see the FcmToken model docstring.
+    """
+
+    #: FCM registration tokens are ~160 chars today but are documented as
+    #: variable-length and opaque; the cap is generous and exists only to keep
+    #: an unbounded string out of the database.
+    token: str = Field(min_length=1, max_length=4096)
+    device_label: str | None = Field(default=None, max_length=200)
+
+
+class FcmUnregisterRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=4096)

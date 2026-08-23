@@ -67,3 +67,35 @@ class WebPushSubscription(Base):
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
     last_used_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class FcmToken(Base):
+    """An Android device's FCM registration token.
+
+    The mobile counterpart of WebPushSubscription, and deliberately shaped the
+    same way: one row per device, `token` unique so a re-register upserts
+    rather than duplicating, and a user can hold several (two phones, or a
+    phone and a tablet).
+
+    There is no `fcm_enabled` flag on NotificationSettings beside
+    `web_push_enabled`. Registration *is* the enable flag: a settings row
+    saying "on" while no device token exists would be a lie the UI would
+    happily render, and the two would drift the first moment somebody revoked
+    the OS permission. A row here means that device opted in; deleting it means
+    it opted out.
+    """
+
+    __tablename__ = "fcm_tokens"
+    __table_args__ = (sa.Index("ix_fcm_tokens_user_id", "user_id"),)
+
+    id: Mapped[uuid_pk]
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    token: Mapped[str] = mapped_column(sa.Text, nullable=False, unique=True)
+    #: Whatever the phone calls itself. Display only; never trusted for routing.
+    device_label: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
