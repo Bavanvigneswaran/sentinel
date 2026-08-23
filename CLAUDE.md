@@ -685,6 +685,40 @@ refuses to present it. But the combination reads as a broken agent, and nothing 
 "this machine's clock is wrong" — the skew is measurable at ingest (`ts` versus server `now()`)
 and currently nothing looks.
 
+### A correction pass, prompted by "nothing has changed"
+
+Three things from Phase 13 above were incomplete or half-done, all caught by the user pointing at
+the actual running app rather than the summary:
+
+* **The web console's `/` and `/devices` were still two pages.** The mobile Fleet/Devices merge had
+  a web-side twin — same redundancy shape (`/` = rich cards, `/devices` = a thinner list) — and it
+  had been left alone on the reasoning "a sidebar has room a bottom bar does not." That reasoning
+  was never what was asked for. Fixed the same way as mobile: one page at `/`, `/devices` redirects
+  to it, `DeviceSummaryCard` grew a self-contained remove flow (own confirm state, own DELETE call)
+  matching the shape the phone's `DeviceScreen` already used.
+* **Forecasts got better messaging, not a shorter wait.** The prior fix correctly diagnosed the
+  15-minute worker sweep as the real gate and then left the 15 minutes in place — explaining a
+  problem is not fixing it. `forecast_worker_interval_seconds` is now 120 (was 900), re-measured
+  with a fresh scratch agent: 5m26s from enrollment to a fully-fitted forecast, down from 11m32s.
+  Real trade-off, stated in the config comment: eight times the tick rate, real CPU per tick, fine
+  for the number of devices this project actually runs, not free at scale.
+* **"Fix the Android app" meant the release APK someone downloads and puts on a real phone — not
+  the emulator's dev build.** The registered APK on `/download` was `agent/dist/sentinel-agent-0.1.0-
+  android-arm64.apk`, built the *previous* session at 21:40, before any of this session's device
+  removal, per-device screens, merged tab, report download, or cleartext fix. Every verification this
+  session had been against the emulator's separately-installed debug build, which picks up JS changes
+  through Metro and never touches that stale file. Rebuilt with the real release keystore
+  (`~/.sentinel-keys/`) via `make mobile-apk`, with `EXPO_PUBLIC_API_URL` pointed at this Mac's LAN
+  address rather than the emulator-only `10.0.2.2` alias — that address is what a real phone needs,
+  and is exactly the distinction Phase 11's cleartext work exists to get right. Verified past "it
+  built": `apksigner verify` matched the keystore's own SHA-256 fingerprint, then the rebuilt APK was
+  installed fresh on the emulator (its network path reaches the host's real LAN IP the same way it
+  reaches `10.0.2.2`, so this is a faithful stand-in for a physical phone) and signed in for real — the
+  backend's own log shows `192.168.0.4:53731 - "POST /auth/login HTTP/1.1" 200 OK`, not a guess. The
+  stale APK was deleted from `dist/`, the new one re-registered, and the served bytes were pulled back
+  through the real authenticated route and matched SHA-256 against the manifest. `frontend/mobile/.env`
+  was reverted to the emulator default afterward, same as Phase 11 documented doing.
+
 Still to come, if picked back up: **no code-signing certificates exist**, so all four desktop
 builds are unsigned and Gatekeeper/SmartScreen will interrupt every install — the page quotes the
 dialog before the click rather than leaving the user alone with it. Alert events and incidents
