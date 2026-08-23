@@ -46,6 +46,12 @@ interface HistoryChartProps {
   /** Fixed y-domain, e.g. [0, 100] for a percentage. */
   domain?: [number, number]
   forecast?: ForecastOverlay
+  /** A dashed horizontal line at this y-value — the ceiling a forecast is
+   * heading towards (100% for a percentage metric). Drawn via a uPlot draw
+   * hook rather than a fifth series, since it has no x-extent of its own and
+   * a real series would need it padded, spanGaps-broken, or legend-hidden to
+   * avoid rendering as a flat trend line the device never reported. */
+  referenceLine?: number
 }
 
 function buildOptions(
@@ -55,6 +61,7 @@ function buildOptions(
   valueFormatter?: (v: number) => string,
   domain?: [number, number],
   forecast?: ForecastOverlay,
+  referenceLine?: number,
 ): uPlot.Options {
   return {
     width,
@@ -66,6 +73,38 @@ function buildOptions(
       x: { time: true },
       y: domain ? { range: domain } : {},
     },
+    hooks:
+      referenceLine === undefined
+        ? undefined
+        : {
+            draw: [
+              (u: uPlot) => {
+                const y = u.valToPos(referenceLine, "y", true)
+                if (y < u.bbox.top || y > u.bbox.top + u.bbox.height) return
+                const ctx = u.ctx
+                ctx.save()
+                // A canvas 2D context never resolves CSS — `currentColor` and
+                // `color-mix()` are DOM/SVG concepts, and assigning either as
+                // strokeStyle is silently a no-op rather than an error, which
+                // is how this line went missing the first time: no exception,
+                // just nothing drawn. --muted-foreground is a real resolved
+                // colour read off the chart's own root, so it tracks the
+                // light/dark theme the same way the CSS token does; the
+                // transparency that color-mix would have added comes from
+                // globalAlpha instead, which canvas actually understands.
+                const muted = getComputedStyle(u.root).getPropertyValue("--muted-foreground")
+                ctx.strokeStyle = muted || "#888"
+                ctx.globalAlpha = 0.5
+                ctx.setLineDash([4, 4])
+                ctx.lineWidth = 1
+                ctx.beginPath()
+                ctx.moveTo(u.bbox.left, y)
+                ctx.lineTo(u.bbox.left + u.bbox.width, y)
+                ctx.stroke()
+                ctx.restore()
+              },
+            ],
+          },
     axes: [
       {},
       {
@@ -120,6 +159,7 @@ export function HistoryChart({
   valueFormatter,
   domain,
   forecast,
+  referenceLine,
 }: HistoryChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<uPlot | null>(null)
@@ -131,8 +171,9 @@ export function HistoryChart({
   const shape = useMemo(
     () =>
       series.map((s) => `${s.label}:${s.color}`).join("|") +
-      (forecast ? `|forecast:${forecast.label}:${forecast.color}` : ""),
-    [series, forecast],
+      (forecast ? `|forecast:${forecast.label}:${forecast.color}` : "") +
+      (referenceLine === undefined ? "" : `|ref:${referenceLine}`),
+    [series, forecast, referenceLine],
   )
 
   const data = useMemo(() => {
@@ -160,7 +201,7 @@ export function HistoryChart({
 
     const width = container.clientWidth || 600
     chartRef.current = new uPlot(
-      buildOptions(width, height, series, valueFormatter, domain, forecast),
+      buildOptions(width, height, series, valueFormatter, domain, forecast, referenceLine),
       data,
       container,
     )

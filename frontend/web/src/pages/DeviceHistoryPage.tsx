@@ -11,6 +11,7 @@ import { TimeRangePicker } from "@/components/TimeRangePicker"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { apiFetch } from "@/lib/api"
 import { colorForIndex } from "@/lib/chartColors"
+import { forecastCaption, toForecastOverlay } from "@/lib/forecastOverlay"
 import { formatBytesPerSecond, formatMs } from "@/lib/formatters"
 import { mergePivots, pivotByEntity, pivotColumns } from "@/lib/seriesPivot"
 import { describeSource, rangeByKey, type TimeRange } from "@/lib/timeRanges"
@@ -266,46 +267,6 @@ interface ChartSpec {
 }
 
 const percent = (v: number) => `${v.toFixed(0)}%`
-
-/** A forecast continues past the real series' last timestamp, dashed, in the
- * same colour as the real series it extends — see HistoryChart. Undefined
- * (no overlay) when there wasn't enough history to fit one. */
-/**
- * How a forecast's own confidence should be described under its chart.
- *
- * A forecast now appears within minutes of a device enrolling instead of after
- * a full day, because the worker plans its window from when the device started
- * reporting. That is only honest if the projection says how thin the ground
- * under it is — so the horizon is capped to the history behind it, and this
- * puts that in words rather than leaving the user to notice the dashed line is
- * short.
- */
-export function forecastCaption(forecast: MetricForecast | undefined): string | undefined {
-  if (!forecast || forecast.points.length === 0) return undefined
-  const hours = Math.max(1, Math.round((forecast.history_seconds ?? 0) / 3600))
-  const span = hours < 48 ? `${hours}h` : `${Math.round(hours / 24)}d`
-  if (forecast.confidence === "high") return undefined
-  return forecast.confidence === "provisional"
-    ? `Provisional forecast — fitted on ${span} of history, so it only projects that far ahead.`
-    : `Forecast fitted on ${span} of history; it will lengthen and steady as more accumulates.`
-}
-
-function toForecastOverlay(
-  forecast: MetricForecast | undefined,
-  label: string,
-  color: string,
-): ForecastOverlay | undefined {
-  if (!forecast || forecast.points.length === 0) return undefined
-  const computedAtSeconds = new Date(forecast.computed_at).getTime() / 1000
-  return {
-    label,
-    color,
-    timestamps: forecast.points.map((p) => computedAtSeconds + p.offset_seconds),
-    predicted: forecast.points.map((p) => p.predicted),
-    lower: forecast.points.map((p) => p.lower),
-    upper: forecast.points.map((p) => p.upper),
-  }
-}
 
 function sortedEntities<T>(points: T[], key: keyof T): string[] {
   return [...new Set(points.map((p) => String(p[key])))].sort((a, b) => a.localeCompare(b))

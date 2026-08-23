@@ -3,10 +3,13 @@ import { Link } from "react-router"
 
 import { AlertStatusBadge } from "@/components/AlertStatusBadge"
 import { AppLayout } from "@/components/AppLayout"
+import { HistoryChart } from "@/components/charts/HistoryChart"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { apiFetch } from "@/lib/api"
+import { colorForIndex } from "@/lib/chartColors"
 import { formatDaysUntil } from "@/lib/formatters"
+import { toForecastOverlay } from "@/lib/forecastOverlay"
 import type { AlertEvent, EventStatus } from "@/types/alerts"
 import type { Device } from "@/types/api"
 import type { ExhaustionForecast, MetricForecast } from "@/types/forecast"
@@ -16,6 +19,13 @@ const POLL_INTERVAL_MS = 10_000
 const METRIC_LABEL: Record<ExhaustionForecast["metric"], string> = {
   mem_percent: "Memory",
   disk_percent: "Disk",
+}
+
+/** Matches the colour each metric already has on DeviceSummaryCard/DeviceHistoryPage
+ * — memory's forecast chart here should look like the same series everywhere. */
+const METRIC_COLOR: Record<ExhaustionForecast["metric"], string> = {
+  mem_percent: colorForIndex(1),
+  disk_percent: colorForIndex(2),
 }
 
 const FILTERS: { value: EventStatus | "all"; label: string }[] = [
@@ -144,26 +154,68 @@ export function ForecastsPage() {
                 : "No device is currently trending towards its memory or disk limit."}
             </p>
           )}
-          {exhaustion?.map((e) => (
-            <div
-              key={`${e.device_id}:${e.metric}`}
-              className="flex items-center justify-between gap-4 text-sm"
-            >
-              <Link
-                to={`/devices/${e.device_id}/history`}
-                className="hover:text-foreground hover:underline"
-              >
-                {devicesById[e.device_id]?.name ?? e.device_id}
-              </Link>
-              <span className="text-muted-foreground">
-                {METRIC_LABEL[e.metric]}
-                {e.entity ? ` (${e.entity})` : ""} · {e.current_value.toFixed(0)}%
-              </span>
-              <span className={e.projected_at ? "font-medium" : "text-muted-foreground"}>
-                {e.projected_at ? `full ${formatDaysUntil(e.projected_at)}` : "steady"}
-              </span>
-            </div>
-          ))}
+          {exhaustion?.map((e) => {
+            // The same (device, metric[, entity]) pair the exhaustion estimate
+            // was computed from — Theil-Sen for the ETA, Holt-Winters for the
+            // plotted trend, both off the same underlying samples, so the two
+            // never describe different trends even though they're separate fits.
+            const forecastRow = forecasts?.find(
+              (f) =>
+                f.device_id === e.device_id && f.metric === e.metric && f.entity === e.entity,
+            )
+            const overlay = toForecastOverlay(
+              forecastRow,
+              METRIC_LABEL[e.metric],
+              METRIC_COLOR[e.metric],
+            )
+
+            return (
+              <div key={`${e.device_id}:${e.metric}:${e.entity ?? ""}`} className="flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-4 text-sm">
+                  <Link
+                    to={`/devices/${e.device_id}/history`}
+                    className="hover:text-foreground hover:underline"
+                  >
+                    {devicesById[e.device_id]?.name ?? e.device_id}
+                  </Link>
+                  <span className="text-muted-foreground">
+                    {METRIC_LABEL[e.metric]}
+                    {e.entity ? ` (${e.entity})` : ""} · {e.current_value.toFixed(0)}%
+                  </span>
+                  <span className={e.projected_at ? "font-medium" : "text-muted-foreground"}>
+                    {e.projected_at ? `full ${formatDaysUntil(e.projected_at)}` : "steady"}
+                  </span>
+                </div>
+                {overlay ? (
+                  // timestamps/series are empty on purpose: this chart draws
+                  // only the forecast itself (predicted trend + confidence
+                  // band), not the real history behind it — that overlay,
+                  // anchored to the real series it continues, is what
+                  // DeviceHistoryPage already draws, one click away via the
+                  // device name above. A dashed line at 100% is the ceiling
+                  // every exhaustion estimate here is measured against.
+                  <HistoryChart
+                    timestamps={[]}
+                    series={[]}
+                    forecast={overlay}
+                    domain={[0, 100]}
+                    referenceLine={100}
+                    height={140}
+                    valueFormatter={(v) => `${v.toFixed(0)}%`}
+                  />
+                ) : (
+                  // Exhaustion (Theil-Sen) needs less history than the plotted
+                  // trend (Holt-Winters' MIN_POINTS_TREND) to produce an ETA,
+                  // so a device can have a real "full in Xd" a tick or two
+                  // before there is anything honest to draw yet.
+                  <p className="text-xs text-muted-foreground">
+                    Not enough history for a chart yet — the days-until estimate above needs less
+                    data than the trend line does.
+                  </p>
+                )}
+              </div>
+            )
+          })}
         </CardContent>
       </Card>
 

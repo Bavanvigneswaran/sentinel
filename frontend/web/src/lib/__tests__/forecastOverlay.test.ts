@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { forecastCaption } from "@/pages/DeviceHistoryPage"
+import { forecastCaption, toForecastOverlay } from "@/lib/forecastOverlay"
 import type { MetricForecast } from "@/types/forecast"
 
 function forecast(overrides: Partial<MetricForecast> = {}): MetricForecast {
@@ -49,5 +49,37 @@ describe("forecastCaption", () => {
   it("treats an unrecorded history as the smallest, not the largest", () => {
     // A pre-migration row must not be flattered into looking well-founded.
     expect(forecastCaption(forecast({ history_seconds: null }))).toContain("1h")
+  })
+})
+
+describe("toForecastOverlay", () => {
+  it("returns undefined when there is nothing to draw", () => {
+    expect(toForecastOverlay(undefined, "Memory", "#fff")).toBeUndefined()
+    expect(toForecastOverlay(forecast({ points: [] }), "Memory", "#fff")).toBeUndefined()
+  })
+
+  it("anchors every point after the forecast's own computed_at, not the caller's clock", () => {
+    // ForecastsPage draws this chart with no real series alongside it, so
+    // computed_at is the only anchor a caller has for "when is this from" —
+    // using Date.now() instead would silently drift the x-axis every time the
+    // page re-renders.
+    const overlay = toForecastOverlay(
+      forecast({
+        computed_at: "2026-08-23T12:00:00Z",
+        points: [
+          { offset_seconds: 0, predicted: 10, lower: 8, upper: 12 },
+          { offset_seconds: 60, predicted: 11, lower: 9, upper: 13 },
+        ],
+      }),
+      "Memory",
+      "#fff",
+    )
+    const computedAtSeconds = new Date("2026-08-23T12:00:00Z").getTime() / 1000
+    expect(overlay?.timestamps).toEqual([computedAtSeconds, computedAtSeconds + 60])
+    expect(overlay?.predicted).toEqual([10, 11])
+    expect(overlay?.lower).toEqual([8, 9])
+    expect(overlay?.upper).toEqual([12, 13])
+    expect(overlay?.label).toBe("Memory")
+    expect(overlay?.color).toBe("#fff")
   })
 })
