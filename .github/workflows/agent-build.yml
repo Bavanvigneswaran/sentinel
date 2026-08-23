@@ -12,6 +12,9 @@
 name: agent-build
 
 on:
+  # Trigger a build by hand with:
+  #   gh workflow run agent-build.yml --repo <owner>/sentinel
+  # Tagging `agent-v<version>` builds all four platforms for a release.
   workflow_dispatch:
   push:
     tags: ["agent-v*"]
