@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react"
 import uPlot from "uplot"
 import "uplot/dist/uPlot.min.css"
 
+import { resolveChartTheme, type ChartTheme } from "@/lib/chartColors"
 import type { RingBuffer } from "@/lib/ringBuffer"
 
 export interface SeriesSpec {
@@ -55,6 +56,7 @@ function buildOptions(
   height: number,
   series: SeriesSpec[],
   windowSeconds: number,
+  theme: ChartTheme,
   valueFormatter?: (v: number) => string,
 ): uPlot.Options {
   return {
@@ -80,8 +82,15 @@ function buildOptions(
       },
     },
     axes: [
-      {},
       {
+        stroke: theme.axisStroke,
+        grid: { stroke: theme.gridStroke },
+        ticks: { stroke: theme.gridStroke },
+      },
+      {
+        stroke: theme.axisStroke,
+        grid: { stroke: theme.gridStroke },
+        ticks: { stroke: theme.gridStroke },
         values: valueFormatter ? (_u, vals) => vals.map((v) => valueFormatter(v)) : undefined,
       },
     ],
@@ -119,10 +128,11 @@ export function LiveChart({
 
     const initialKeys = deriveSeries ? deriveSeries(buffer.current.seriesKeys()) : (series ?? [])
     appliedKeysRef.current = initialKeys.map((s) => s.key).join(",")
+    const theme = resolveChartTheme(container)
 
     const width = container.clientWidth || 600
     chartRef.current = new uPlot(
-      buildOptions(title, width, height, initialKeys, windowSeconds, valueFormatter),
+      buildOptions(title, width, height, initialKeys, windowSeconds, theme, valueFormatter),
       buffer.current.toAlignedData(initialKeys.map((s) => s.key)) as uPlot.AlignedData,
       container,
     )
@@ -154,6 +164,7 @@ export function LiveChart({
             height,
             specs,
             windowSeconds,
+            theme,
             valueFormatter,
           ),
           currentBuffer.toAlignedData(keys) as uPlot.AlignedData,

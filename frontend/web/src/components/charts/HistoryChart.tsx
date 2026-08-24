@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef } from "react"
 import uPlot from "uplot"
 import "uplot/dist/uPlot.min.css"
 
+import { resolveChartTheme, type ChartTheme } from "@/lib/chartColors"
+
 /**
  * uPlot over a fixed array, for the history view.
  *
@@ -58,6 +60,7 @@ function buildOptions(
   width: number,
   height: number,
   series: HistorySeries[],
+  theme: ChartTheme,
   valueFormatter?: (v: number) => string,
   domain?: [number, number],
   forecast?: ForecastOverlay,
@@ -106,8 +109,15 @@ function buildOptions(
             ],
           },
     axes: [
-      {},
       {
+        stroke: theme.axisStroke,
+        grid: { stroke: theme.gridStroke },
+        ticks: { stroke: theme.gridStroke },
+      },
+      {
+        stroke: theme.axisStroke,
+        grid: { stroke: theme.gridStroke },
+        ticks: { stroke: theme.gridStroke },
         values: valueFormatter ? (_u, vals) => vals.map((v) => valueFormatter(v)) : undefined,
       },
     ],
@@ -200,8 +210,9 @@ export function HistoryChart({
     if (!container) return
 
     const width = container.clientWidth || 600
+    const theme = resolveChartTheme(container)
     chartRef.current = new uPlot(
-      buildOptions(width, height, series, valueFormatter, domain, forecast, referenceLine),
+      buildOptions(width, height, series, theme, valueFormatter, domain, forecast, referenceLine),
       data,
       container,
     )
