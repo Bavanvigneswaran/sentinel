@@ -7,7 +7,7 @@
 import { useState } from "react"
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from "react-native"
 
-import { Button, ErrorNote, Field } from "@/components/ui"
+import { Button, ErrorNote, Field, PasswordField } from "@/components/ui"
 import { API_BASE_URL } from "@/config"
 import { useAuth } from "@/stores/auth"
 import { colors, spacing, text } from "@/theme"
@@ -91,11 +91,10 @@ export function AuthScreen() {
               placeholder="Bavan"
             />
           )}
-          <Field
+          <PasswordField
             label="Password"
             value={password}
             onChangeText={setPassword}
-            secureTextEntry
             autoCapitalize="none"
             autoComplete={mode === "login" ? "current-password" : "new-password"}
             textContentType={mode === "login" ? "password" : "newPassword"}

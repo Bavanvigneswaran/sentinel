@@ -4,6 +4,7 @@
  * deliberately small, and deliberately not a design system.
  */
 
+import { useState } from "react"
 import type { ReactNode } from "react"
 import {
   ActivityIndicator,
@@ -117,6 +118,38 @@ export function Field({
   )
 }
 
+/** A password Field with a trailing eye toggle between masked and plain text. */
+export function PasswordField({
+  label,
+  ...props
+}: Omit<TextInputProps, "secureTextEntry"> & { label: string }) {
+  const [visible, setVisible] = useState(false)
+  return (
+    <View style={{ gap: spacing.xs }}>
+      <Text style={text.small}>{label}</Text>
+      <View style={styles.passwordRow}>
+        <TextInput
+          placeholderTextColor={colors.mutedDeep}
+          style={[styles.input, styles.passwordInput]}
+          accessibilityLabel={label}
+          secureTextEntry={!visible}
+          {...props}
+        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={visible ? "Hide password" : "Show password"}
+          accessibilityState={{ selected: visible }}
+          onPress={() => setVisible((v) => !v)}
+          style={styles.passwordToggle}
+          hitSlop={8}
+        >
+          <Text style={styles.passwordToggleText}>{visible ? "🙈" : "👁"}</Text>
+        </Pressable>
+      </View>
+    </View>
+  )
+}
+
 /** An inline error strip. Never a modal: an error on a monitoring screen
  * should not hide the numbers behind it. */
 export function ErrorNote({ message }: { message: string }) {
@@ -200,6 +233,17 @@ const styles = StyleSheet.create({
     color: colors.foreground,
     fontSize: 15,
   },
+  passwordRow: { justifyContent: "center" },
+  passwordInput: { paddingRight: spacing.xl + spacing.md },
+  passwordToggle: {
+    position: "absolute",
+    right: spacing.sm,
+    height: 44,
+    width: 32,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  passwordToggleText: { fontSize: 16 },
   errorNote: {
     backgroundColor: "rgba(239, 68, 68, 0.08)",
     borderColor: "rgba(239, 68, 68, 0.35)",

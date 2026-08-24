@@ -7,6 +7,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { PasswordInput } from "@/components/ui/password-input"
 import { ApiError } from "@/lib/api"
 import { useAuth } from "@/stores/auth"
 
@@ -74,9 +75,8 @@ export function LoginPage() {
 
         <div className="flex flex-col gap-2">
           <Label htmlFor="password">Password</Label>
-          <Input
+          <PasswordInput
             id="password"
-            type="password"
             autoComplete="current-password"
             required
             value={password}
