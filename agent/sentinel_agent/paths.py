@@ -112,7 +112,54 @@ class ConfigPermissionError(Exception):
     """
 
 
-def windows_acl_argv(path: Path, *, username: str | None = None) -> list[str]:
+def current_user_sid(*, run=subprocess.run) -> str | None:  # noqa: ANN001
+    """The SID of the account this process is running as, or None.
+
+    `whoami /user /fo csv /nh` prints `"HOST\\name","S-1-5-21-..."`, and is
+    present on every Windows since Vista. A SID is used in preference to
+    `%USERNAME%` for exactly the reason the SYSTEM/Administrators constants
+    above are: it is the identifier icacls resolves unambiguously, with no
+    localisation and no dependence on an environment variable that may not be
+    set in the process actually doing the work.
+    """
+    try:
+        result = run(
+            ["whoami", "/user", "/fo", "csv", "/nh"],  # noqa: S607 — a Windows builtin
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    for field in (result.stdout or "").replace('"', "").split(","):
+        candidate = field.strip()
+        if candidate.startswith("S-1-"):
+            return candidate
+    return None
+
+
+def windows_principal(*, sid_lookup=current_user_sid) -> str | None:  # noqa: ANN001
+    """Who to grant the token file to, most reliable form first.
+
+    Falls back to `DOMAIN\\USERNAME` and then bare `USERNAME`, because a SID
+    lookup failing is not by itself a reason to refuse an install that would
+    otherwise work. Returns None only when nothing at all identifies the
+    caller — and the caller's job is then to refuse, never to carry on.
+    """
+    sid = sid_lookup()
+    if sid:
+        return f"*{sid}"
+    username = os.environ.get("USERNAME") or ""
+    if not username:
+        return None
+    domain = os.environ.get("USERDOMAIN") or ""
+    return f"{domain}\\{username}" if domain else username
+
+
+def windows_acl_argv(path: Path, *, principal: str) -> list[str]:
     """The `icacls` invocation that makes `path` private.
 
     Pure, so it can be asserted on a Mac. `/inheritance:r` is the load-bearing
@@ -123,20 +170,32 @@ def windows_acl_argv(path: Path, *, username: str | None = None) -> list[str]:
     SYSTEM and Administrators are granted because they can take ownership of
     any file regardless; denying them would be theatre, and omitting SYSTEM
     would lock out the very service account a system-scope install runs as.
+
+    `principal` is REQUIRED, and that is the whole point. This function used to
+    read `%USERNAME%` itself and silently emit no user grant at all when it was
+    empty — while `/inheritance:r` had already stripped every inherited
+    permission. The result was a token file granted to SYSTEM and
+    Administrators and to nobody else: icacls exits 0, so nothing raises, and
+    the person who just enrolled cannot read, rewrite, or even delete their own
+    credential. Observed on a real Windows machine, where the only way to clear
+    it was an elevated shell — Administrators being, by construction, the one
+    principal that was still on the ACL.
+
+    The owner gets (F), not (R,W): they own the file, `save()` rewrites it on
+    every re-enrolment, and (R,W) does not include DELETE, so the previous
+    grant could not have been cleaned up by its owner even when it did apply.
+    Privacy here comes from `/inheritance:r` plus a three-entry ACL, not from
+    withholding rights from the account the file exists to serve.
     """
-    argv = [
+    return [
         "icacls",
         str(path),
         "/inheritance:r",
         "/grant:r",
         f"{_WIN_SID_SYSTEM}:(F)",
         f"{_WIN_SID_ADMINISTRATORS}:(F)",
+        f"{principal}:(F)",
     ]
-    if username is None:
-        username = os.environ.get("USERNAME") or ""
-    if username:
-        argv.append(f"{username}:(R,W)")
-    return argv
 
 
 #: How long a freshly ACL'd file may transiently deny access before this gives
@@ -148,18 +207,20 @@ def _reopen_after_acl_change(path: Path, flags: int) -> int:
     """Reopen `path` right after `icacls` has just rewritten its ACL,
     tolerating the access being transiently denied.
 
-    Found on a real Windows machine, enrolling for the first time: `icacls`
-    exits 0 — the grant genuinely succeeded — and the very next `os.open()` in
-    the same process, on the same file, still raises `PermissionError`. The
-    likely cause is Windows Defender's real-time protection: this binary is
-    unsigned and had just tripped SmartScreen moments earlier, so Defender has
-    no reputation data for it and holds a brief synchronous lock on a file it
-    just watched change ACL out from under an unrecognised process. That is a
-    plausible, well-documented category of Windows/AV behaviour, not something
-    this project's own test suite can reproduce — there is no Windows machine
-    here, and no way to fake Defender's scanner. What is verifiable is the
-    shape of the fix: back off and retry rather than fail an enrollment that
-    already minted a real, single-use token the server will not reissue.
+    **This did not fix the bug it was written for, and the theory behind it was
+    wrong.** It was added after a real Windows machine failed here with
+    `PermissionError` despite icacls exiting 0, on the guess that Windows
+    Defender was briefly locking a file it had just watched an unsigned,
+    freshly-SmartScreen-flagged process re-ACL. Retrying changed nothing: the
+    failure reproduced on every attempt, on a brand-new file, exhausting the
+    full backoff every time. Deterministic is not transient, and that ruled the
+    theory out.
+
+    The actual cause was `windows_acl_argv()` silently emitting no grant for
+    the calling user at all — see its docstring. This is kept because a bounded
+    retry around a filesystem call that another process may momentarily hold is
+    cheap and occasionally right, but it is not load-bearing, and it should not
+    be read as evidence that anything here is racy.
     """
     delay_iter = iter(_REOPEN_RETRY_SECONDS)
     while True:
@@ -218,9 +279,24 @@ def secure_file(path: Path, *, system: str | None = None) -> None:
     system = system or _system()
 
     if system == "Windows":
+        principal = windows_principal()
+        if principal is None:
+            # Refusing beats carrying on. /inheritance:r has stripped every
+            # inherited permission by the time this matters, so an ACL with no
+            # entry for the caller does not fail — it succeeds at locking them
+            # out of their own token. See windows_acl_argv().
+            raise ConfigPermissionError(
+                f"could not determine which account to grant {path} to "
+                f"(neither a SID from `whoami /user` nor %USERNAME%). Refusing "
+                f"to write the agent token to a file this account would not be "
+                f"able to read back."
+            )
         try:
             result = subprocess.run(  # noqa: S603
-                windows_acl_argv(path), capture_output=True, text=True, check=False
+                windows_acl_argv(path, principal=principal),
+                capture_output=True,
+                text=True,
+                check=False,
             )
         except OSError as exc:
             # icacls missing or unrunnable. The caller's contract is that the

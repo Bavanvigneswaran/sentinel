@@ -51,14 +51,39 @@ python -m venv .venv
 .venv\Scripts\sentinel-agent run
 ```
 
-**No packaged `.exe` exists yet.** No Windows binary has ever been built or
-run — PyInstaller does not cross-compile, and this project has been developed
-entirely on a Mac. Running from source is currently the only way to try this
-on Windows, and even that has had exactly one bug already found and fixed by
-static reading rather than by testing on a real Windows machine (see
-[PACKAGING.md](PACKAGING.md)) — treat the first real run as the actual test,
-report anything else that goes wrong, and expect it might be the first time
-this exact code path has executed anywhere.
+A packaged `.exe` **does** exist and is built by the CI matrix on a real
+`windows-2022` runner, which also runs the full agent test suite before
+packaging. Running from source is still useful for developing a fix without
+waiting on CI.
+
+### Known: enrolling could lock you out of your own token file
+
+Fixed, but worth knowing if you are running an older Windows build. `enroll`
+would fail with:
+
+```
+PermissionError: [Errno 13] Permission denied:
+  'C:\Users\<you>\AppData\Local\Sentinel\agent.toml'
+```
+
+and then keep failing — including on a plain *read* — leaving a file that even
+`Remove-Item` refused to delete without an elevated shell.
+
+The cause was `paths.windows_acl_argv()` reading `%USERNAME%` and emitting **no
+grant at all** when it came back empty, after `/inheritance:r` had already
+stripped every inherited permission. `icacls` exits 0 in that case — it did
+what it was told — so nothing raised, and the file ended up granted to SYSTEM
+and Administrators and to nobody else. An elevated shell being the only way to
+delete it is the tell: Administrators was the one principal still on the ACL.
+
+It now grants the caller's **SID** (from `whoami /user`, falling back to
+`%USERDOMAIN%\%USERNAME%`), and refuses to write the token at all if it cannot
+work out who to grant to. If you are stuck with an older build, clear the file
+from an Administrator PowerShell and use a newer one:
+
+```powershell
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Sentinel"
+```
 
 ---
 

@@ -13,7 +13,14 @@ import pytest
 
 from sentinel_agent import paths
 from sentinel_agent.config import AgentConfig
-from sentinel_agent.paths import ConfigPermissionError, config_dir, secure_file, windows_acl_argv
+from sentinel_agent.paths import (
+    ConfigPermissionError,
+    config_dir,
+    current_user_sid,
+    secure_file,
+    windows_acl_argv,
+    windows_principal,
+)
 
 #: These tests do real filesystem work whose semantics are POSIX. The rendering
 #: tests above them stay cross-platform on purpose — `config_dir(system="X")` is
@@ -90,7 +97,7 @@ def test_the_windows_acl_strips_inheritance():
     """The load-bearing flag. Without /inheritance:r the file keeps
     ProgramData's "Users: read" ACE and the token is readable by every account
     on the box."""
-    argv = windows_acl_argv(paths.Path("C:/ProgramData/Sentinel/agent.toml"), username="bo")
+    argv = windows_acl_argv(paths.Path("C:/ProgramData/Sentinel/agent.toml"), principal="bo")
     assert "/inheritance:r" in argv
     # /grant:r replaces rather than adds, so re-running cannot accumulate.
     assert "/grant:r" in argv and "/grant" not in argv[argv.index("/grant:r") + 1 :]
@@ -99,16 +106,93 @@ def test_the_windows_acl_strips_inheritance():
 def test_the_windows_acl_uses_sids_not_localised_names():
     """"SYSTEM" and "Administrators" are localised; a German Windows would not
     match them and icacls would fail."""
-    argv = windows_acl_argv(paths.Path("C:/x.toml"), username="bo")
+    argv = windows_acl_argv(paths.Path("C:/x.toml"), principal="bo")
     joined = " ".join(argv)
     assert "*S-1-5-18" in joined and "*S-1-5-32-544" in joined
     assert "SYSTEM" not in joined and "Administrators" not in joined
 
 
-def test_the_windows_acl_survives_no_username(monkeypatch):
+def test_the_windows_acl_always_grants_the_caller():
+    """Replaces a test that asserted the opposite.
+
+    The old `windows_acl_argv()` read %USERNAME% itself and emitted no user
+    grant at all when it was empty — and the old test named that "survives",
+    asserting the last entry was Administrators. It does not survive: with
+    /inheritance:r having already stripped everything, a missing user grant
+    produces a token file its own owner cannot read, rewrite, or delete. That
+    is what happened on a real Windows machine, and the only way out was an
+    elevated shell, Administrators being the one principal left on the ACL.
+    """
+    argv = windows_acl_argv(paths.Path("C:/x.toml"), principal="*S-1-5-21-1-2-3-1001")
+
+    assert argv[-1] == "*S-1-5-21-1-2-3-1001:(F)"
+    # Full control for the owner, not (R,W): save() rewrites this file on every
+    # re-enrolment, and (R,W) does not include DELETE.
+    assert ":(R,W)" not in " ".join(argv)
+
+
+def test_the_principal_prefers_a_sid_over_an_environment_variable(monkeypatch):
+    monkeypatch.setenv("USERNAME", "Divya")
+    monkeypatch.setenv("USERDOMAIN", "DESKTOP-ABC")
+
+    assert windows_principal(sid_lookup=lambda: "S-1-5-21-9-9-9-1001") == (
+        "*S-1-5-21-9-9-9-1001"
+    )
+
+
+def test_the_principal_falls_back_to_a_qualified_username(monkeypatch):
+    """A whoami that cannot be run is not a reason to refuse an install that
+    would otherwise work — only a reason to use a less reliable identifier."""
+    monkeypatch.setenv("USERNAME", "Divya")
+    monkeypatch.setenv("USERDOMAIN", "DESKTOP-ABC")
+
+    assert windows_principal(sid_lookup=lambda: None) == "DESKTOP-ABC\\Divya"
+
+
+def test_the_principal_is_none_when_nothing_identifies_the_caller(monkeypatch):
     monkeypatch.delenv("USERNAME", raising=False)
-    argv = windows_acl_argv(paths.Path("C:/x.toml"))
-    assert argv[-1].startswith("*S-1-5-32-544")
+    monkeypatch.delenv("USERDOMAIN", raising=False)
+
+    assert windows_principal(sid_lookup=lambda: None) is None
+
+
+def test_securing_a_file_refuses_rather_than_locking_the_owner_out(monkeypatch, tmp_path):
+    """The bug this whole change exists for: refusing has to be what happens,
+    because the alternative is not a failure — icacls exits 0 and the file is
+    successfully made unreadable to the person who just enrolled."""
+    monkeypatch.delenv("USERNAME", raising=False)
+    monkeypatch.delenv("USERDOMAIN", raising=False)
+    monkeypatch.setattr(paths, "current_user_sid", lambda: None)
+
+    def must_not_run(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("icacls must not run without a principal to grant")
+
+    monkeypatch.setattr(paths.subprocess, "run", must_not_run)
+
+    with pytest.raises(ConfigPermissionError, match="could not determine which account"):
+        secure_file(tmp_path / "agent.toml", system="Windows")
+
+
+def test_current_user_sid_parses_whoami_csv():
+    def fake_run(argv, **kwargs):  # noqa: ANN001, ANN003
+        assert argv[:2] == ["whoami", "/user"]
+
+        class Result:
+            returncode = 0
+            stdout = '"desktop-abc\\divya","S-1-5-21-1111111111-2222222222-3333333333-1001"\n'
+
+        return Result()
+
+    assert current_user_sid(run=fake_run) == (
+        "S-1-5-21-1111111111-2222222222-3333333333-1001"
+    )
+
+
+def test_current_user_sid_is_none_when_whoami_is_unavailable():
+    def missing(argv, **kwargs):  # noqa: ANN001, ANN003
+        raise OSError("no whoami here")
+
+    assert current_user_sid(run=missing) is None
 
 
 @posix_only

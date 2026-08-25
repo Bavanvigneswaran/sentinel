@@ -813,6 +813,67 @@ removed device with alert history on each: `/alerts`, `/incidents` and an incide
 render "retired-pixel (removed)" where they used to print a UUID, with every request 200 and no
 console errors. 546 backend tests (was 535), 156 agent (was 145), 51 web, 68 mobile JS, 42 Kotlin.
 
+### Running the agent on a real Windows machine for the first time
+
+A second machine was added to the fleet, which is the first time the Windows
+agent has been run by someone who is not its author. Three defects in a row,
+each only reachable by doing it:
+
+* **`make mobile-apk` died on Gradle's "SDK location not found"** on a machine
+  that had built the app many times. `expo prebuild --clean` regenerates
+  `android/` including `local.properties`, which was the only record of the SDK
+  path. `mobile-collector-test` had solved this in Phase 10b; the variable just
+  sat below `mobile-apk` in the Makefile and was never wired into it.
+
+* **The APK's backend address is welded in, and nobody had written that down.**
+  `EXPO_PUBLIC_API_URL` is inlined into the JS bundle *and* its host is written
+  into the Network Security Config, so a release APK is only valid while the
+  backend keeps the address it was built against — and a laptop's LAN IP
+  changes with every network it joins. The app's own "Could not reach the
+  backend at ..." is accurate and reads as a stale *build*, which is the wrong
+  conclusion. `frontend/mobile/README.md` now says so, and says the cheap fix
+  is to stop letting the address move: run the laptop on the phone's own
+  hotspot and pin that. There is deliberately still no server-URL field in
+  Settings — it would fix the bundle's copy of the address and not the
+  OS-level cleartext allow-list, so the request would still be blocked.
+
+* **`enroll` locked the user out of their own token file, permanently.** This
+  is the one worth remembering. `windows_acl_argv()` read `%USERNAME%` itself
+  and, when it came back empty, appended no grant at all — *after*
+  `/inheritance:r` had stripped every inherited permission. `icacls` exits 0,
+  because it did exactly what it was asked; `secure_file()`'s returncode check
+  therefore passed; and the token file ended up granted to SYSTEM and
+  Administrators and to nobody else. Every subsequent run failed on a plain
+  *read*, and `Remove-Item` needed an elevated shell — which is the tell, since
+  Administrators was the one principal left on the ACL.
+
+  `tests/test_paths.py` had asserted this behaviour as correct, under the name
+  `test_the_windows_acl_survives_no_username`. It does not survive. A test can
+  pin a bug in place as easily as it can catch one, and the giveaway here was
+  the word "survives" describing a branch nobody had reasoned about the
+  consequences of.
+
+  The fix grants the caller's **SID** (`whoami /user`, falling back to
+  `%USERDOMAIN%\%USERNAME%`), makes `principal` a required argument so no
+  caller can ever omit it again, and **refuses to write the token** when it
+  cannot determine who to grant to — the one case where failing loudly is
+  strictly better, because the alternative is not a failure at all but a
+  successful lockout. The owner now gets `(F)` rather than `(R,W)`: `save()`
+  rewrites the file on every re-enrolment, and `(R,W)` does not include DELETE.
+
+  One dead end is recorded on purpose. The first fix attempted was a bounded
+  retry around the reopen, on the theory that Windows Defender was briefly
+  locking a file it had just watched an unsigned, freshly-SmartScreen-flagged
+  process re-ACL. It was published through the CI matrix and changed nothing:
+  the failure reproduced on a brand-new file, exhausting the full backoff every
+  time. **Deterministic is not transient** — that observation is what killed
+  the theory, and it should have been the first question asked. The retry is
+  kept, deliberately not load-bearing, with a docstring that says it did not
+  fix what it was written for.
+
+`docs/INSTALL.md` no longer claims no Windows `.exe` exists; the CI matrix has
+been building and testing one on a real `windows-2022` runner since Phase 13.
+
 ## Conventions
 
 - Files stay under ~400 lines; split rather than grow.
