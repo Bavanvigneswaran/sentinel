@@ -46,7 +46,39 @@ cp frontend/mobile/.env.example frontend/mobile/.env
 |---|---|
 | Android emulator | `http://10.0.2.2:8000` (the default) |
 | Physical phone on your LAN | `http://192.168.x.x:8000` |
+| Phone hotspot (see below) | `http://10.x.x.x:8000` |
 | Deployed | `https://sentinel.example.com` |
+
+### The address is baked in, so pin it
+
+This value is **compiled into the APK**, twice: Expo inlines it into the JS
+bundle, and `withDevBackendCleartext.js` (below) writes its host into a
+Network Security Config. Neither can be changed on the phone — there is no
+server-URL field in Settings, deliberately, because one would fix only the
+first of those two and the OS would still block the request.
+
+The practical consequence is that a release APK is only valid for as long as
+the backend keeps the address it was built against, and **a laptop's LAN IP
+changes every time it joins a different network**. An APK built at the office
+simply cannot reach the same laptop at home, and the symptom is the app's own
+"Could not reach the backend at ..." — accurate, and easy to misread as the
+build being out of date when it is the *address* that went stale.
+
+The cheapest fix for local development is to stop letting the address move:
+run the laptop on the **phone's own hotspot** and build against whatever
+address it hands out. That address comes from the hotspot's DHCP server, which
+runs on the phone, so it does not depend on how the phone reaches the internet
+— cellular data or a bridged WiFi network both give the laptop the same
+address. Check it with `ipconfig getifaddr en0` (macOS) while connected, then
+put it in `.env` and rebuild once.
+
+It also sidesteps a second problem: a phone and a laptop on the same hotspot
+are alone on a small private network, whereas home and campus WiFi frequently
+block device-to-device traffic outright, which no amount of correct
+configuration will get around.
+
+The real answer, when there is one, is to stop using a bare IP: an `https://`
+backend on a real domain never moves and needs no cleartext exception at all.
 
 Over plain `http`, the backend must be running with `COOKIE_SECURE=false` — the
 refresh cookie is otherwise never stored and every app restart logs you out.
