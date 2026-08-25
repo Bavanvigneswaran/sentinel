@@ -141,15 +141,22 @@ def current_user_sid(*, run=subprocess.run) -> str | None:  # noqa: ANN001
     return None
 
 
-def windows_principal(*, sid_lookup=current_user_sid) -> str | None:  # noqa: ANN001
+def windows_principal(*, sid_lookup=None) -> str | None:  # noqa: ANN001
     """Who to grant the token file to, most reliable form first.
 
     Falls back to `DOMAIN\\USERNAME` and then bare `USERNAME`, because a SID
     lookup failing is not by itself a reason to refuse an install that would
     otherwise work. Returns None only when nothing at all identifies the
     caller — and the caller's job is then to refuse, never to carry on.
+
+    `sid_lookup` defaults to None and is resolved here rather than in the
+    signature: a default of `current_user_sid` binds at definition time, so
+    substituting the module attribute would not affect it. That is not a
+    hypothetical — it made a test pass on macOS (where Unix `whoami` has no
+    `/user` flag, so the real lookup returned None anyway) and fail on Windows
+    (where it succeeded and the substitution was silently ignored).
     """
-    sid = sid_lookup()
+    sid = (sid_lookup or current_user_sid)()
     if sid:
         return f"*{sid}"
     username = os.environ.get("USERNAME") or ""

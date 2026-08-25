@@ -164,6 +164,13 @@ def test_securing_a_file_refuses_rather_than_locking_the_owner_out(monkeypatch, 
     monkeypatch.delenv("USERDOMAIN", raising=False)
     monkeypatch.setattr(paths, "current_user_sid", lambda: None)
 
+    # Assert the substitution actually took, before relying on it. The first
+    # version of this test did not, and a `sid_lookup=current_user_sid` default
+    # bound at definition time meant the real lookup ran regardless: it passed
+    # on macOS (Unix `whoami` has no /user flag, so it returned None by
+    # accident) and failed on Windows, where it returned a genuine SID.
+    assert paths.windows_principal() is None
+
     def must_not_run(*args, **kwargs):  # noqa: ANN002, ANN003
         raise AssertionError("icacls must not run without a principal to grant")
 
