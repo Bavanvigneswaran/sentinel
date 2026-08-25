@@ -23,6 +23,7 @@ import os
 import platform
 import stat
 import subprocess  # noqa: S404 — icacls is the only way to set a Windows ACL
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -138,6 +139,39 @@ def windows_acl_argv(path: Path, *, username: str | None = None) -> list[str]:
     return argv
 
 
+#: How long a freshly ACL'd file may transiently deny access before this gives
+#: up and lets the real PermissionError surface.
+_REOPEN_RETRY_SECONDS = (0.05, 0.1, 0.2, 0.4, 0.8)
+
+
+def _reopen_after_acl_change(path: Path, flags: int) -> int:
+    """Reopen `path` right after `icacls` has just rewritten its ACL,
+    tolerating the access being transiently denied.
+
+    Found on a real Windows machine, enrolling for the first time: `icacls`
+    exits 0 — the grant genuinely succeeded — and the very next `os.open()` in
+    the same process, on the same file, still raises `PermissionError`. The
+    likely cause is Windows Defender's real-time protection: this binary is
+    unsigned and had just tripped SmartScreen moments earlier, so Defender has
+    no reputation data for it and holds a brief synchronous lock on a file it
+    just watched change ACL out from under an unrecognised process. That is a
+    plausible, well-documented category of Windows/AV behaviour, not something
+    this project's own test suite can reproduce — there is no Windows machine
+    here, and no way to fake Defender's scanner. What is verifiable is the
+    shape of the fix: back off and retry rather than fail an enrollment that
+    already minted a real, single-use token the server will not reissue.
+    """
+    delay_iter = iter(_REOPEN_RETRY_SECONDS)
+    while True:
+        try:
+            return os.open(path, flags, 0o600)
+        except PermissionError:
+            delay = next(delay_iter, None)
+            if delay is None:
+                raise
+            time.sleep(delay)
+
+
 def open_private(path: Path, *, system: str | None = None) -> int:
     """Create/truncate `path`, make it private, and return a writable fd.
 
@@ -159,7 +193,7 @@ def open_private(path: Path, *, system: str | None = None) -> int:
     if system == "Windows":
         os.close(os.open(path, flags, 0o600))
         secure_file(path, system=system)
-        return os.open(path, flags, 0o600)
+        return _reopen_after_acl_change(path, flags)
 
     fd = os.open(path, flags, 0o600)
     try:

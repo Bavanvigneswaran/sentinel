@@ -169,3 +169,68 @@ def test_the_token_is_never_written_before_the_file_is_locked_down(tmp_path, mon
         config.save()
 
     assert not config.path.exists() or config.path.read_text() == ""
+
+
+# --- the Windows reopen-after-ACL-change retry --------------------------------
+#
+# _reopen_after_acl_change() is pure enough to test on any platform: it is
+# "retry os.open() a few times on PermissionError", independent of what put
+# icacls in front of it. Found on a real Windows machine mid-enrollment —
+# icacls exited 0 (the grant genuinely succeeded) and the very next os.open()
+# in the same process still raised PermissionError, most plausibly Windows
+# Defender holding a brief lock on a file it just watched an unrecognised,
+# unsigned, freshly-SmartScreen-flagged process change the ACL of. There is no
+# Windows machine here to reproduce Defender's scanner itself; what these
+# assert is the shape of the fix — retry rather than fail an enrollment that
+# already minted a real, single-use token the server will not reissue.
+
+
+def test_reopen_after_acl_change_retries_a_transient_permission_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(paths.time, "sleep", lambda _seconds: None)
+
+    attempts = []
+
+    def flaky_open(path, flags, mode):  # noqa: ANN001
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise PermissionError("Access is denied")
+        return 99  # a fake fd; the caller only asserts it got one back
+
+    monkeypatch.setattr(paths.os, "open", flaky_open)
+
+    fd = paths._reopen_after_acl_change(tmp_path / "agent.toml", os.O_WRONLY)
+
+    assert fd == 99
+    assert len(attempts) == 3
+
+
+def test_reopen_after_acl_change_eventually_gives_up(monkeypatch, tmp_path):
+    """A permission problem that is not transient — a genuinely locked-down
+    file, not an AV scan window — must still surface as a real error rather
+    than retry forever."""
+    monkeypatch.setattr(paths.time, "sleep", lambda _seconds: None)
+
+    def always_denied(path, flags, mode):  # noqa: ANN001
+        raise PermissionError("Access is denied")
+
+    monkeypatch.setattr(paths.os, "open", always_denied)
+
+    with pytest.raises(PermissionError):
+        paths._reopen_after_acl_change(tmp_path / "agent.toml", os.O_WRONLY)
+
+
+def test_reopen_after_acl_change_does_not_retry_on_success(monkeypatch, tmp_path):
+    """The common case costs exactly one os.open() call — no sleep, no
+    wasted retries when the ACL change was already visible."""
+    calls = []
+
+    def counting_open(path, flags, mode):  # noqa: ANN001
+        calls.append(1)
+        return 7
+
+    monkeypatch.setattr(paths.os, "open", counting_open)
+
+    fd = paths._reopen_after_acl_change(tmp_path / "agent.toml", os.O_WRONLY)
+
+    assert fd == 7
+    assert len(calls) == 1
