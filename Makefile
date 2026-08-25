@@ -178,7 +178,20 @@ mobile-test:
 # table). Create a keystore once with:
 #   keytool -genkeypair -v -keystore sentinel-release.jks -alias sentinel \
 #           -keyalg RSA -keysize 4096 -validity 10000
+# Gradle needs an Android SDK to compile against, and `expo prebuild --clean`
+# regenerates android/ — including local.properties, which is where the SDK
+# path would otherwise have been recorded. So every Gradle target has to pass
+# it explicitly. Falls back to the usual macOS location when ANDROID_HOME is
+# unset, because a machine that has built the app once already has an SDK there
+# and failing with Gradle's own "SDK location not found" names neither the
+# variable nor the fix.
+ANDROID_SDK ?= $(or $(ANDROID_HOME),$(HOME)/Library/Android/sdk)
+
 mobile-apk:
+	@if [ ! -d "$(ANDROID_SDK)" ]; then \
+		echo "No Android SDK at $(ANDROID_SDK). Set ANDROID_HOME."; \
+		exit 1; \
+	fi
 	@missing=""; \
 	for v in SENTINEL_ANDROID_KEYSTORE SENTINEL_ANDROID_KEYSTORE_PASSWORD \
 	         SENTINEL_ANDROID_KEY_ALIAS SENTINEL_ANDROID_KEY_PASSWORD; do \
@@ -192,7 +205,7 @@ mobile-apk:
 		exit 1; \
 	fi; \
 	cd frontend/mobile && npx expo prebuild --platform android --clean && \
-		cd android && ./gradlew assembleRelease && \
+		cd android && ANDROID_HOME="$(ANDROID_SDK)" ./gradlew assembleRelease && \
 		echo "APK: frontend/mobile/android/app/build/outputs/apk/release/app-release.apk" && \
 		echo "Publish it with: python agent/build/register_build.py --os android \\" && \
 		echo "  --arch arm64 --version 0.1.0 --signed --signing '<your key>' \\" && \
@@ -203,11 +216,7 @@ mobile-apk:
 # Its JVM unit tests need no emulator: everything they cover is deliberately pure
 # (aggregation, batching, counter differentiation, /proc parsing, JSON encoding).
 #
-# Gradle still needs an Android SDK to compile against, so this falls back to the
-# usual macOS location when ANDROID_HOME is unset and *skips loudly* when there
-# is no SDK at all — `make test` must stay runnable on a machine that has never
-# built the app, rather than failing on a toolchain the other suites do not need.
-ANDROID_SDK ?= $(or $(ANDROID_HOME),$(HOME)/Library/Android/sdk)
+# Gradle still needs an Android SDK to compile against; see ANDROID_SDK above.
 
 mobile-collector-test:
 	@if [ ! -d "$(ANDROID_SDK)" ]; then \
