@@ -8,6 +8,11 @@ import { SeverityBadge } from "@/components/SeverityBadge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { apiFetch } from "@/lib/api"
+import {
+  DEVICE_LIST_WITH_REMOVED,
+  deviceLabel,
+  indexDevices,
+} from "@/lib/deviceNames"
 import type { AlertEvent, EventStatus } from "@/types/alerts"
 import type { Device } from "@/types/api"
 
@@ -47,10 +52,13 @@ export function AnomaliesPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
   useEffect(() => {
-    apiFetch<Device[]>("/devices")
-      .then((devices) => setDevicesById(Object.fromEntries(devices.map((d) => [d.id, d]))))
+    // Removed devices included: this list is history, and a firing on a
+    // machine the user has since removed still has to be able to name it.
+    // See lib/deviceNames.ts.
+    apiFetch<Device[]>(DEVICE_LIST_WITH_REMOVED)
+      .then((devices) => setDevicesById(indexDevices(devices)))
       .catch(() => {
-        // Non-fatal: the list still works with a raw device_id shown.
+        // Non-fatal: the list still works with a short device id shown.
       })
   }, [])
 
@@ -133,7 +141,7 @@ export function AnomaliesPage() {
                   <div className="flex flex-col gap-1">
                     <span className="font-medium">{event.rule_name}</span>
                     <span className="text-sm text-muted-foreground">
-                      {devicesById[event.device_id]?.name ?? event.device_id} · {event.metric} ·
+                      {deviceLabel(devicesById, event.device_id)} · {event.metric} ·
                       z = {event.z_score?.toFixed(1) ?? "—"}
                     </span>
                   </div>

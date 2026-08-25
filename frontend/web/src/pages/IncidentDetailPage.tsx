@@ -6,6 +6,7 @@ import { AppLayout } from "@/components/AppLayout"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { apiFetch, ApiError } from "@/lib/api"
+import { DEVICE_LIST_WITH_REMOVED, deviceLabel } from "@/lib/deviceNames"
 import { cn } from "@/lib/utils"
 import type { Device } from "@/types/api"
 import type { IncidentDetail } from "@/types/incidents"
@@ -46,13 +47,15 @@ export function IncidentDetailPage() {
   useEffect(load, [incidentId])
 
   useEffect(() => {
-    apiFetch<Device[]>("/devices")
+    // Removed devices included: an incident is history and outlives the
+    // machine it happened on. See lib/deviceNames.ts.
+    apiFetch<Device[]>(DEVICE_LIST_WITH_REMOVED)
       .then((devices) => {
         const match = devices.find((d) => d.id === incident?.device_id)
         if (match) setDevice(match)
       })
       .catch(() => {
-        // Non-fatal: header falls back to the raw device_id.
+        // Non-fatal: the header falls back to a short device id.
       })
   }, [incident?.device_id])
 
@@ -101,7 +104,7 @@ export function IncidentDetailPage() {
               to={`/devices/${incident.device_id}/history`}
               className="text-xl font-semibold tracking-tight hover:underline"
             >
-              {device?.name ?? incident.device_id}
+              {deviceLabel(device ? { [device.id]: device } : {}, incident.device_id)}
             </Link>
             <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
               <span

@@ -19,6 +19,11 @@ import { EmptyState, Screen } from "@/components/Screen"
 import { Button, Card, ErrorNote, Segmented } from "@/components/ui"
 import { usePolledResource } from "@/hooks/usePolledResource"
 import { apiFetch } from "@/lib/api"
+import {
+  DEVICE_LIST_WITH_REMOVED,
+  deviceLabel,
+  indexDevices,
+} from "@/lib/deviceNames"
 import { formatDaysUntil } from "@/lib/formatters"
 import { formatRelative } from "@/lib/timeRanges"
 import { colors, spacing, text } from "@/theme"
@@ -53,8 +58,11 @@ export function AlertsScreen() {
   )
 
   useEffect(() => {
-    apiFetch<Device[]>("/devices")
-      .then((list) => setDevices(Object.fromEntries(list.map((d) => [d.id, d]))))
+    // Removed devices included: this list is history, and a firing on a
+    // machine the user has since removed still has to be able to name it.
+    // See lib/deviceNames.ts.
+    apiFetch<Device[]>(DEVICE_LIST_WITH_REMOVED)
+      .then((list) => setDevices(indexDevices(list)))
       .catch(() => {
         // Non-fatal: the triage list still works with a raw device_id shown.
       })
@@ -114,7 +122,7 @@ export function AlertsScreen() {
         <AlertCard
           key={event.id}
           event={event}
-          deviceName={devices[event.device_id]?.name ?? event.device_id}
+          deviceName={deviceLabel(devices, event.device_id)}
           busy={silencing === event.id}
           onSilence={() => void silence(event)}
         />

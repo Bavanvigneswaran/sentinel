@@ -19,6 +19,11 @@ import { EmptyState, Screen } from "@/components/Screen"
 import { Card, ErrorNote, Segmented } from "@/components/ui"
 import { usePolledResource } from "@/hooks/usePolledResource"
 import { apiFetch } from "@/lib/api"
+import {
+  DEVICE_LIST_WITH_REMOVED,
+  deviceLabel,
+  indexDevices,
+} from "@/lib/deviceNames"
 import { withDeviceScope } from "@/lib/deviceScope"
 import { formatRelative } from "@/lib/timeRanges"
 import { spacing, text } from "@/theme"
@@ -49,8 +54,11 @@ export function IncidentsScreen({ route }: RootStackScreenProps<"Incidents">) {
   )
 
   useEffect(() => {
-    apiFetch<Device[]>("/devices")
-      .then((list) => setDevices(Object.fromEntries(list.map((d) => [d.id, d]))))
+    // Removed devices included: this list is history, and a firing on a
+    // machine the user has since removed still has to be able to name it.
+    // See lib/deviceNames.ts.
+    apiFetch<Device[]>(DEVICE_LIST_WITH_REMOVED)
+      .then((list) => setDevices(indexDevices(list)))
       .catch(() => {
         // Non-fatal.
       })
@@ -87,7 +95,7 @@ export function IncidentsScreen({ route }: RootStackScreenProps<"Incidents">) {
         <Card key={incident.id}>
           <View style={styles.header}>
             <Text style={text.heading}>
-              {devices[incident.device_id]?.name ?? incident.device_id}
+              {deviceLabel(devices, incident.device_id)}
             </Text>
             <AlertStatusBadge status={incident.status === "open" ? "firing" : "resolved"} />
           </View>

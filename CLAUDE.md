@@ -754,11 +754,64 @@ via Metro fast refresh against the real emulator both before and after the fix.
 
 Still to come, if picked back up: **no code-signing certificates exist**, so all four desktop
 builds are unsigned and Gatekeeper/SmartScreen will interrupt every install — the page quotes the
-dialog before the click rather than leaving the user alone with it. Alert events and incidents
-still return rows for soft-deleted devices and render them as bare UUIDs; unlike a forecast that is
-arguably *history worth keeping*, so it needs a decision about whether to filter them or snapshot a
-device name onto the event the way `rule_name` already is. And **there is still no deployed
+dialog before the click rather than leaving the user alone with it. And **there is still no deployed
 backend** — everything above is reachable over the LAN from this Mac and nowhere else.
+
+### A whole-codebase review pass
+
+Asked to re-read everything and fix what was wrong. Every suite was green going in (535 backend,
+145 agent, 145 JS, 42 Kotlin, ruff and tsc clean), so nothing here was found by running the tests —
+each came out of reading the code and then reproducing it.
+
+* **Anomaly notifications said `(None None)`.** `notify.py`'s `_body` read
+  `comparison`/`threshold` unconditionally, and an anomaly event leaves both null by design
+  (models/alerts.py) — so every email and push for the entire Phase 6 rule type rendered
+  `mem_percent = 87.3 (None None)`. Both frontends had been taught to branch on `rule_type` when
+  anomaly and forecast rules landed; this one surface never was. `_condition()` now branches the
+  same way, so an anomaly reads "unusual for this device — normally around 42.1, now +5.4 sigma
+  out" and a forecast says it is a forecast rather than implying the threshold is already crossed.
+* **The Live Monitoring primer returned the *oldest* rows of its window.**
+  `/devices/{id}/samples/recent` ordered ascending and LIMITed at 900, with a comment reasoning
+  about "900s of 1s rows" — true for one series, and `net`/`disk_io`/`latency` are multi-entity.
+  This Mac reports **six NICs**, so a 300s live window is 1800 rows against that cap: the network
+  chart opened showing the first half of the window and then jumped when the socket delivered
+  `now`. It only bites in live mode, which is the only time the endpoint is called. Now ordered
+  descending, reversed, with a per-entity budget — a truncated primer loses its oldest end, which
+  is the only end it may lose.
+* **A removed device's name could not be reused.** `uq_devices_user_id_name` covered soft-deleted
+  rows, so remove-then-re-add was refused with "You already have a device with that name" against
+  a device list that no longer held one — the soft delete existing so metric rows keep a valid FK
+  is a storage decision, and it had been leaking out as a rule about names. Migration `0013` makes
+  it a partial unique index (`WHERE deleted_at IS NULL`); `_unique_device_name` now ignores removed
+  devices too, so a re-enrolling machine gets its own name back instead of a `-2` suffix.
+* **Alert/anomaly/incident history rendered removed devices as bare UUIDs** — the open decision
+  recorded above. Resolved by keeping the rows (a firing that really happened is history worth
+  keeping, unlike a forecast, which is a claim about a future the machine no longer has and which
+  `/forecasts` already filters) and giving the client a way to *name* them: `GET
+  /devices?include_removed=true`, plus a `deleted_at` on `DeviceOut`. `lib/deviceNames.ts` on both
+  frontends keeps the two reasons a lookup can miss distinct — "removed" is permanent and
+  explainable, a not-yet-loaded device list is transient and gets a short id, and conflating them
+  would invent an explanation.
+* **Two agent config values could brick the agent.** `sample_interval_seconds` and
+  `push_interval_seconds` are both stamped onto samples as `resolution_seconds`, which the protocol
+  declares `Literal[1, 10]` — so editing either to any other value produced an agent that
+  connected, handshook, pushed once, and was killed by a non-retryable `invalid_frame` whose
+  message names no field. `validate_intervals()` now runs before `run` connects (and warns in
+  `status`, which must keep describing a broken config rather than refusing to).
+* **`AgentConfig.save()` wrote TOML it could not read back.** Values went straight into
+  `key = "{value}"`, and every one of them is user-supplied (`--server`, the latency targets), so a
+  quote or a backslash produced a file `enroll` wrote happily — token and all — and `run` then died
+  in tomllib. Exactly the write-succeeds/read-fails shape as the cp1252 bug the CI matrix found,
+  reached by a different route. `toml_string()` escapes properly.
+* **A live-viewer lease key could outlive everything that would clean it up.** `live_count()`
+  prunes and deletes the ZSET, but only an agent's supervisor calls it — so a viewer that watched a
+  device whose agent never reconnected left the key in Redis forever. `claim()` now sets a TTL
+  alongside the member score, refreshed on every renewal.
+
+Verified in the browser against the real backend, on a seeded account holding one live and one
+removed device with alert history on each: `/alerts`, `/incidents` and an incident detail page all
+render "retired-pixel (removed)" where they used to print a UUID, with every request 200 and no
+console errors. 546 backend tests (was 535), 156 agent (was 145), 51 web, 68 mobile JS, 42 Kotlin.
 
 ## Conventions
 

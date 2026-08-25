@@ -53,6 +53,13 @@ class DeviceOut(BaseModel):
     last_seen_at: datetime | None
     enrolled_at: datetime | None
     created_at: datetime
+    #: Set on a device the user has removed. Normally absent from every list —
+    #: `GET /devices` filters them — but the pages that show *history* (alert
+    #: events, anomalies, incidents) legitimately hold rows pointing at one,
+    #: and rendering those as a bare UUID because the name could not be looked
+    #: up is worse than saying the machine was removed. See
+    #: `list_devices(include_removed=...)`.
+    deleted_at: datetime | None = None
 
     @model_validator(mode="after")
     def _derive_stale_status(self) -> DeviceOut:

@@ -25,6 +25,21 @@ DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_DIR / CONFIG_FILENAME
 DEFAULT_SERVER = "http://localhost:8000"
 DEFAULT_SAMPLE_INTERVAL = 1
 DEFAULT_PUSH_INTERVAL = 10
+
+#: The only two values the server's `Sample.resolution_seconds` accepts —
+#: app/schemas/protocol.py declares it `Literal[1, 10]`, and that schema is the
+#: contract both sides import (CLAUDE.md's Phase 2 invariants).
+#:
+#: Both intervals below are stamped onto samples as their resolution: the
+#: sample interval in live mode, the push interval when a window is collapsed
+#: (see runner.py's `_build_batch`). Anything else validates cleanly here and
+#: is then rejected by the server as `invalid_frame` with `retryable=false`,
+#: which the transport correctly treats as fatal — so an agent configured with,
+#: say, a 30s push interval connects, handshakes, pushes once and exits, and
+#: the only clue is "frame failed validation". Checking it where the value is
+#: set turns that into a sentence naming the field.
+PROTOCOL_RESOLUTIONS = (1, 10)
+
 #: How many samples to hold when the socket is down. At 1s sampling this is a
 #: little over an hour, which matches the server's accepted sample age — buffering
 #: longer would only produce rows the server will reject.
@@ -33,6 +48,38 @@ DEFAULT_BUFFER_SIZE = 3600
 
 class ConfigError(Exception):
     pass
+
+
+#: Characters a TOML basic string may not carry literally, and what they become.
+#: `\\` must be first or it would re-escape the backslashes the others add.
+_TOML_ESCAPES = (
+    ("\\", "\\\\"),
+    ('"', '\\"'),
+    ("\n", "\\n"),
+    ("\r", "\\r"),
+    ("\t", "\\t"),
+)
+
+
+def toml_string(value: str) -> str:
+    """`value` as a TOML basic string, quotes included.
+
+    save() used to interpolate values straight into `key = "{value}"`. Every
+    value written there is user-supplied — `--server`, and the latency targets
+    — so a single quote or backslash produced a config file that parsed on the
+    way out and not on the way back in: `enroll` succeeded, wrote the token,
+    and `run` then died in tomllib. Exactly the failure mode the cp1252
+    encoding bug had, reached by a different route.
+    """
+    escaped = value
+    for raw, replacement in _TOML_ESCAPES:
+        escaped = escaped.replace(raw, replacement)
+    # Remaining control characters have no short escape and must be \uXXXX.
+    # The tuple above has already turned every control character TOML gives a
+    # short escape to into two printable ones, so anything still below U+0020
+    # has no shorthand and must go out as \uXXXX.
+    escaped = "".join(c if c >= " " else f"\\u{ord(c):04X}" for c in escaped)
+    return f'"{escaped}"'
 
 
 def is_loopback(url: str) -> bool:
@@ -125,18 +172,18 @@ class AgentConfig:
             "# Contains the agent token — keep this file readable only by its owner.",
             "",
             "[agent]",
-            f'server_url = "{self.server_url}"',
+            f"server_url = {toml_string(self.server_url)}",
         ]
         if self.agent_token:
-            lines.append(f'agent_token = "{self.agent_token}"')
+            lines.append(f"agent_token = {toml_string(self.agent_token)}")
         if self.device_id:
-            lines.append(f'device_id = "{self.device_id}"')
+            lines.append(f"device_id = {toml_string(self.device_id)}")
         lines += [
             f"sample_interval_seconds = {self.sample_interval_seconds}",
             f"push_interval_seconds = {self.push_interval_seconds}",
             f"buffer_size = {self.buffer_size}",
             "latency_targets = ["
-            + ", ".join(f'"{t}"' for t in self.latency_targets)
+            + ", ".join(toml_string(t) for t in self.latency_targets)
             + "]",
             f"collect_processes = {str(self.collect_processes).lower()}",
             "",
@@ -154,6 +201,32 @@ class AgentConfig:
         # matrix's first Windows run.
         with os.fdopen(open_private(self.path), "w", encoding="utf-8") as handle:
             handle.write("\n".join(lines))
+
+    def validate_intervals(self) -> None:
+        """Fail fast on a cadence the server will refuse.
+
+        Called before the agent connects rather than at load(), so `status`
+        still renders a broken config instead of refusing to describe it —
+        diagnosing is the one thing that has to keep working.
+        """
+        for field_name, value in (
+            ("sample_interval_seconds", self.sample_interval_seconds),
+            ("push_interval_seconds", self.push_interval_seconds),
+        ):
+            if value not in PROTOCOL_RESOLUTIONS:
+                allowed = " or ".join(str(v) for v in PROTOCOL_RESOLUTIONS)
+                raise ConfigError(
+                    f"{field_name} = {value} in {self.path} is not a resolution the "
+                    f"server accepts (must be {allowed}). Every sample is stamped "
+                    f"with one of these two, and the server rejects any other value "
+                    f"as an invalid frame."
+                )
+        if self.push_interval_seconds < self.sample_interval_seconds:
+            raise ConfigError(
+                f"push_interval_seconds ({self.push_interval_seconds}) is shorter than "
+                f"sample_interval_seconds ({self.sample_interval_seconds}) in "
+                f"{self.path}: there would be nothing new to send on most pushes."
+            )
 
     def require_token(self) -> str:
         if not self.agent_token:

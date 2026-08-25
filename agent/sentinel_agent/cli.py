@@ -136,6 +136,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     config = _load(args)
     try:
         config.require_token()
+        # Before connecting, not on the first push. A cadence the server will
+        # not accept otherwise surfaces as a fatal "invalid_frame" one push
+        # interval into an otherwise healthy-looking session.
+        config.validate_intervals()
     except ConfigError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -295,6 +299,12 @@ def cmd_status(args: argparse.Namespace) -> int:
         # The token is in this file. Say so loudly rather than let a bad umask
         # or a hand-copied config quietly leave a credential readable.
         print("              WARNING: readable by other users on this machine")
+    try:
+        config.validate_intervals()
+    except ConfigError as exc:
+        # `status` describes a config rather than refusing one, so this is the
+        # one place a bad cadence is reported without stopping anything.
+        print(f"              WARNING: {exc}")
     print(f"Server:       {config.server_url}")
     print(f"Device ID:    {config.device_id or '(not enrolled)'}")
     print(f"Token:        {'present' if config.agent_token else 'absent'}")

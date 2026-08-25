@@ -219,3 +219,28 @@ async def test_samples_are_published_only_while_a_viewer_is_registered(
 
     await pubsub.unsubscribe()
     await pubsub.aclose()
+
+
+async def test_a_lease_key_expires_even_if_nothing_ever_prunes_it(redis_client):
+    """`live_count()` deletes the ZSET when its last member expires, but only
+    an agent's own supervisor ever calls it. A viewer that opened Live
+    Monitoring on a device whose agent never reconnected therefore left the
+    key in Redis with nothing to clean up after it — small, but unbounded in
+    the number of (user, device) pairs ever watched."""
+    import uuid as uuid_module
+
+    import app.live.registry as registry_module
+
+    user_id, device_id = uuid_module.uuid4(), uuid_module.uuid4()
+    await registry.claim(user_id, device_id, "viewer-1")
+
+    key = registry_module._live_key(user_id, device_id)
+    ttl = await redis_client.ttl(key)
+
+    # -1 is "no expiry set", which is the state this guards against.
+    assert 0 < ttl <= registry_module.LEASE_TTL_SECONDS
+
+    # Renewing must push the expiry back out, not leave it decaying.
+    await registry.claim(user_id, device_id, "viewer-1")
+    assert await redis_client.ttl(key) >= ttl
+    await redis_client.delete(key)

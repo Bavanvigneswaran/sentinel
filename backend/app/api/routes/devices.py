@@ -51,6 +51,10 @@ async def _unique_device_name(session, user_id: uuid.UUID, name: str) -> str:  #
             await session.scalars(
                 sa.select(Device.name).where(
                     Device.user_id == user_id,
+                    # Only live devices hold a name (migration 0013), so a
+                    # machine re-enrolling after it was removed gets its own
+                    # name back rather than a "-2" suffix nobody asked for.
+                    Device.deleted_at.is_(None),
                     Device.name.like(f"{pattern}%", escape="\\"),
                 )
             )
@@ -75,11 +79,25 @@ _code_limit = RateLimit("enrollment_code", limit=20, window=3600, key="ip")
 
 
 @router.get("/devices", response_model=list[DeviceOut])
-async def list_devices(user: CurrentUser, session: TenantSession) -> list[Device]:
-    rows = await session.scalars(
-        sa.select(Device).where(Device.deleted_at.is_(None)).order_by(Device.created_at)
-    )
-    return list(rows)
+async def list_devices(
+    user: CurrentUser,
+    session: TenantSession,
+    include_removed: bool = False,
+) -> list[Device]:
+    """Every device the user has, removed ones excluded by default.
+
+    `include_removed` exists for the surfaces that render *history*: an
+    AlertEvent, an anomaly or an incident may name a device that has since
+    been removed, and those rows are kept deliberately — unlike a forecast,
+    which is a claim about a future the machine no longer has, a firing that
+    really happened is worth keeping. What was not worth keeping was showing
+    it as a bare UUID, which is what a page got when it resolved names
+    against a list that had already filtered the device out.
+    """
+    query = sa.select(Device).order_by(Device.created_at)
+    if not include_removed:
+        query = query.where(Device.deleted_at.is_(None))
+    return list(await session.scalars(query))
 
 
 @router.post("/devices", response_model=DeviceOut, status_code=status.HTTP_201_CREATED)
