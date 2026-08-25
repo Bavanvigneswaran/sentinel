@@ -874,6 +874,43 @@ each only reachable by doing it:
 `docs/INSTALL.md` no longer claims no Windows `.exe` exists; the CI matrix has
 been building and testing one on a real `windows-2022` runner since Phase 13.
 
+**Verified for real, not just in CI:** the rebuilt binary enrolled cleanly on
+the same physical machine that produced every failure above — no crash, token
+written, `run` connected, and the fleet dashboard showed it as a genuine
+second device. The whole chain (SID-based grant → CI → download → enroll →
+connect) is confirmed working end to end on real Windows hardware, which is
+the first time any of it has been.
+
+### Open: live-mode flapping, not yet diagnosed with real evidence
+
+Found immediately after the enrollment above, watching that same device:
+`sentinel_agent.transport.client` logged repeated `switched to live mode (1s)`
+/ `switched to normal mode (10s)` pairs, sometimes twice within the same
+displayed second. The mechanism is not in question — the supervisor only
+sends a `mode` frame when `registry.live_count()` actually changes
+(`app/live/supervisor.py`), so two flips a second apart means a viewer's
+Redis lease is genuinely appearing and disappearing that fast, which only
+happens if the browser's `/ws/viewer` WebSocket is dropping and reconnecting
+(`ViewerSession.stop()` releases the lease and publishes `viewer_left` on
+disconnect; reconnecting resubscribes and re-claims within its ~1s first
+backoff step).
+
+The *why* is not established. The leading theory — this Mac, the Windows
+agent, and whichever browser had Live Monitoring open were all sharing one
+phone's hotspot radio simultaneously, and mobile hotspots are known to be
+worse than a home router at holding a long-lived, mostly-idle connection
+steady under multi-device load — fits the ~15–40s cadence better than a code
+bug would, but it is a theory, not a finding. Given this session's own
+"deterministic is not transient" lesson two sections up, it is deliberately
+**not** being acted on without first confirming it: the concrete next step is
+opening the browser's DevTools Network→WS tab while it is flapping and
+watching whether `/ws/viewer` shows one connection staying open the whole
+time (a genuinely different, server-side bug) or a new one appearing every
+15–40s (confirms the reconnect-cycle theory, and turns this into an
+environment limitation rather than something a code change fixes). Nothing
+has been changed in `app/live/` or `frontend/web/src/lib/liveSocket.ts` for
+this — there is no fix yet because there is no confirmed cause yet.
+
 ## Conventions
 
 - Files stay under ~400 lines; split rather than grow.
