@@ -5,8 +5,8 @@ report_service.py: the dispatch logic should read as "which channels does this
 user want", not as OAuth2 and JSON envelopes.
 
 Unconfigured is a no-op, logged and not an error — the same posture SMTP and
-VAPID already take in this package, and ANTHROPIC_API_KEY takes in the insights
-worker. Nothing here ever raises into the evaluator sweep.
+VAPID already take in this package. Nothing here ever raises into the
+evaluator sweep.
 """
 
 from __future__ import annotations

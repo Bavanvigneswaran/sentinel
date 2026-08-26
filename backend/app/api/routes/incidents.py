@@ -1,45 +1,36 @@
 """Incidents workspace: the fleet-wide list, a per-incident timeline of its
-correlated AlertEvents, and a manual trigger to regenerate the AI summary/
+correlated AlertEvents, and a manual trigger to regenerate the summary/
 root-cause outside the insights worker's own cadence.
 
 Simple CRUD-adjacent reads live directly here, matching alerts.py's and
 forecasts.py's style for operations that are genuinely just an ORM query;
 the one piece of real logic (deciding whether a regeneration is actually
-needed) lives in app/ai/insights_service.py, shared with the background
-worker so the two can never disagree about what "regenerated" means.
+needed) lives in app/insights/service.py, shared with the background worker
+so the two can never disagree about what "regenerated" means.
+
+Phase 8's `_ai_client_dependency` and its 503 are gone: they existed because
+an unset ANTHROPIC_API_KEY meant a user pressing "regenerate" had to be told
+it did not happen. Generation is now a local template pass with nothing to
+configure, so the only remaining failure is a bug — which belongs in a 500,
+not in a "not configured" message that would be untrue.
 """
 
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Literal
+from typing import Literal
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 
-from app.ai.client import AIClient, AIUnavailable, build_ai_client
-from app.ai.insights_service import refresh_incident_insights
 from app.api.deps import CurrentUser, TenantSession
-from app.config import get_settings
+from app.insights.service import refresh_incident_insights
 from app.models import AlertEvent
 from app.models.incidents import Incident
 from app.schemas.alerts import AlertEventOut
 from app.schemas.incidents import IncidentDetailOut, IncidentOut
 
 router = APIRouter(tags=["incidents"])
-
-
-def _ai_client_dependency() -> AIClient:
-    try:
-        return build_ai_client(get_settings())
-    except AIUnavailable as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI insights are not configured (no ANTHROPIC_API_KEY)",
-        ) from exc
-
-
-AIClientDep = Annotated[AIClient, Depends(_ai_client_dependency)]
 
 
 async def _incident_or_404(session: TenantSession, incident_id: uuid.UUID) -> Incident:
@@ -106,14 +97,13 @@ async def regenerate_incident_insights(
     incident_id: uuid.UUID,
     user: CurrentUser,
     session: TenantSession,
-    ai_client: AIClientDep,
 ) -> IncidentDetailOut:
-    """Bypasses insights_service's own freshness check: a user pressing
+    """Bypasses the service's own freshness check: a user pressing
     "regenerate" wants a new answer even if nothing has technically changed
     since the last one — the one deliberate crack in the caching layer,
     open only to an explicit user action, never to the background sweep."""
     incident = await _incident_or_404(session, incident_id)
-    await refresh_incident_insights(session, incident, ai_client, force=True)
+    await refresh_incident_insights(session, incident, force=True)
     await session.commit()
     await session.refresh(incident)
     events = await _events_for(session, incident_id)

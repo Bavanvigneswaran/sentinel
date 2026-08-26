@@ -100,14 +100,6 @@ class Settings(BaseSettings):
     rl_refresh_per_minute: int = 30
     rl_logout_per_minute: int = 60
 
-    anthropic_api_key: str | None = None
-    # Haiku writes the short incident summary; Sonnet writes the deeper
-    # root-cause analysis. Pinned to specific model IDs, not aliases, so a
-    # provider-side default change cannot silently alter the tone/cost of
-    # either without a deliberate bump here.
-    anthropic_haiku_model: str = "claude-haiku-4-5-20251001"
-    anthropic_sonnet_model: str = "claude-sonnet-5"
-
     # --- Alerts ------------------------------------------------------------
     alert_evaluator_interval_seconds: int = 15
 
@@ -127,11 +119,16 @@ class Settings(BaseSettings):
     forecast_worker_interval_seconds: int = 120
     forecast_history_days: int = 14
 
-    # --- AI insights -----------------------------------------------------------
-    # Network-bound (an Anthropic call per stale incident), not CPU-bound like the
-    # forecast worker — but still far looser than the 15s alert sweep, since each
-    # tick that finds nothing changed costs no API call at all (see
-    # app/ai/insights_service.py's fingerprint cache).
+    # --- Incident insights -------------------------------------------------------
+    # Neither network- nor CPU-bound since generation became a local template
+    # pass: a tick costs a fingerprint comparison per open incident and, when
+    # that changed, one signal-bundle query plus some string formatting (see
+    # app/insights/service.py). The interval stays loose anyway, because an
+    # explanation only changes when the incident's correlated events do.
+    #
+    # This is the only insights setting there is. Phase 8's anthropic_api_key
+    # / anthropic_haiku_model / anthropic_sonnet_model went with the API
+    # client; one left over in an existing .env is ignored, not read.
     insights_worker_interval_seconds: int = 60
 
     # --- Reports -----------------------------------------------------------
@@ -144,7 +141,7 @@ class Settings(BaseSettings):
 
     # --- Notifications: email ------------------------------------------------
     # All optional. Email dispatch is a no-op (logged, not an error) whenever
-    # smtp_host is unset, matching anthropic_api_key's graceful-absence pattern.
+    # smtp_host is unset, the same graceful-absence pattern VAPID and FCM take.
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_username: str | None = None
@@ -172,8 +169,7 @@ class Settings(BaseSettings):
     # Where a CI run's `manifest.json` and its binaries were published. Unset is
     # a fully supported state, not a broken one: the download page then says no
     # build exists for the visitor's OS and points at building from source,
-    # rather than offering a link that 404s. Same posture as unset SMTP/VAPID/
-    # ANTHROPIC_API_KEY.
+    # rather than offering a link that 404s. Same posture as unset SMTP/VAPID/FCM.
     agent_dist_dir: str | None = None
     # When set, the manifest is still read locally but the binaries themselves
     # are linked from here (a release host or CDN) instead of being streamed by

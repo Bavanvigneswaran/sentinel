@@ -1,7 +1,8 @@
 """Wire schemas for incidents: the fleet-wide list, per-incident detail with
-its correlated-event timeline, and the AI-generated summary/root-cause
+its correlated-event timeline, and the generated summary/root-cause
 fields, which are plain strings — display text only, never structured
-output the frontend interprets as anything but prose. See app/ai/client.py.
+output the frontend interprets as anything but prose. See
+app/insights/generator.py, which writes them.
 """
 
 from __future__ import annotations

@@ -35,7 +35,7 @@ export type RootStackParamList = {
    * history: a chart of every machine's CPU at once is not a thing anybody
    * reads. */
   History: { deviceId: string; deviceName?: string }
-  /** One incident's timeline and AI insights. Reached from the incidents
+  /** One incident's timeline and its insights. Reached from the incidents
    * list, which only holds `Incident` — the timeline needs a second request
    * per incident and is not worth making for every row. */
   IncidentDetail: { incidentId: string }

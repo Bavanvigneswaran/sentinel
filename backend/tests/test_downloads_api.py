@@ -2,7 +2,7 @@
 
 Most of these are about the *absence* of a build, which is the state this
 server is actually in: no CI has published anything to it. Following the
-project's existing posture for unset SMTP/VAPID/FCM/ANTHROPIC_API_KEY, that has
+project's existing posture for unset SMTP/VAPID/FCM, that has
 to degrade visibly — a reason the page can render — never an empty list the UI
 must guess about, and never a link that 404s.
 """

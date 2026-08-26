@@ -80,7 +80,7 @@ export function IncidentsPage() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Incidents</h1>
         <p className="text-sm text-muted-foreground">
-          Correlated alerts grouped by device, with an AI-generated summary and root-cause
+          Correlated alerts grouped by device, with a generated summary and root-cause
           analysis for each.
         </p>
       </div>

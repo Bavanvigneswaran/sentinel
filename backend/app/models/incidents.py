@@ -9,13 +9,26 @@ open/close bookkeeping it mirrors. Device-level, not rule-level: two
 unrelated rules firing on the same machine at once are exactly the case an
 "incidents workspace" exists to group, per CLAUDE.md's Phase 8 description.
 
-`summary_text`/`root_cause_text` are Claude's output (Haiku and Sonnet
-respectively — see app/ai/), stored purely as display text. The `*_hash`
-columns are analysis/incidents.py's fingerprint over the incident's own
-correlated-event membership at the moment each was generated; the insights
-worker recomputes the fingerprint every tick and only calls the API when it
-has actually changed, which is what makes this "caching" rather than "a
-periodic API bill." See app/ai/insights_service.py.
+`summary_text`/`root_cause_text` hold generated prose, stored purely as
+display text and never parsed back into a decision. `*_model` records what
+produced it — Phase 8 wrote a Claude model id there, and since the switch to
+local templates it carries app/insights/generator.py's GENERATOR_ID, so rows
+from either era stay distinguishable.
+
+The `*_hash` columns are analysis/incidents.py's fingerprint over the
+incident's own correlated-event membership at the moment each was generated;
+the insights worker recomputes the fingerprint every tick and only
+regenerates when it has actually changed. That began as a way to avoid a
+periodic API bill and is kept for what survives the bill going away: it is
+what makes `*_generated_at` mean "when this explanation was reached" rather
+than "when a sweep last ran." See app/insights/service.py.
+
+The text stays *stored* rather than computed at read time — tempting now
+that generation is free and pure, and wrong: the bundle it is generated from
+(health score, forecast rows) drifts, so a resolved incident recomputed
+today would describe the machine's present state instead of the incident's.
+Same reasoning AnomalyEvidenceChart draws the snapshotted and live baselines
+as two separate lines.
 """
 
 from __future__ import annotations

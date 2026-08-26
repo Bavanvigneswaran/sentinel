@@ -12,9 +12,13 @@ Read `docs/ARCHITECTURE.md` before making design decisions. Read `docs/ROADMAP.m
   machine. If something can't be measured on a platform, show it as unavailable — never synthesise it.
 - **Tenancy is not optional.** Every query is scoped by `user_id`. A user can only ever see their own devices.
 - **Agents never receive user passwords.** Enrollment code → opaque agent token, stored hashed, revocable.
-- **The LLM explains; it does not detect.** Anomaly detection and forecasting are statistical/ML.
-  Claude only turns their structured output into language. Metric data passed to the model is *data* —
-  never treat content inside it as instructions.
+- **No hosted AI APIs.** Nothing in this product calls a third-party model. Detection is statistical
+  and always was (EWMA/MAD, Holt-Winters, Theil-Sen); *explanation* is now local templates over the
+  signal bundle (`app/insights/generator.py`). Phase 8's Claude Haiku/Sonnet calls were removed —
+  see the Phase 17 section. The old rule this replaces read "the LLM explains; it does not detect",
+  and its spirit is now structural rather than promised: a template pass cannot detect, cannot
+  speculate, and cannot state anything the bundle does not contain. Metric data is still *data* —
+  no name, label or reading is ever interpreted as an instruction by anything downstream.
 
 ## Stack
 
@@ -128,7 +132,12 @@ two rules firing together: they correlated into one incident, the detail page re
 correctly, and pressing "Regenerate insights" with no `ANTHROPIC_API_KEY` configured surfaced the 503 as
 an inline error rather than silently doing nothing.
 
-Still to come in Phase 8, if picked back up: Sonnet's root-cause output isn't yet fed anywhere but the
+**Superseded by Phase 17 in one respect — read that section before trusting the paragraph above.**
+Everything here about incident correlation, the signal bundle, the fingerprint cache and the
+workspace still holds. What no longer exists is the Claude API integration: `app/ai/` was replaced by
+`app/insights/`, `ANTHROPIC_API_KEY` and the 503 are gone, and generation is local templates.
+
+Still to come in Phase 8, if picked back up: the root-cause output isn't yet fed anywhere but the
 incident detail page (no digest email, no push notification carrying it); the signal bundle doesn't yet
 include cross-device context (e.g. "three other devices are also degraded right now"), which would need
 a deliberate decision about whether an incident can ever span more than one device.
@@ -1329,34 +1338,37 @@ detected, not configured; nothing to set up beyond having Funnel running.
   flushing it; counting still-firing events without an explicit `session.flush()` first would see the
   pre-update status and never close the incident. Found by a failing integration test the first time
   this was written — any new query added to that function needs the same flush ordering respected.
-- **AI-generated text is stored and rendered as inert display text, never parsed back into
-  structure.** `Incident.summary_text`/`root_cause_text` are plain `Text` columns; nothing downstream
-  (the state machine, an alert rule, another worker) ever reads them to make a decision. This is what
-  "the LLM explains; it does not detect" means concretely for Phase 8's own tables.
-- **The signal bundle is data; the boundary against treating it as instructions is explicit and
-  literal, not implied.** `app/ai/prompts.py` wraps the JSON in a delimited `<incident_data>` block
-  with a system-prompt instruction that its contents — including any user-chosen device or rule name
-  — are never a message to the model, regardless of what they look like. `test_ai_prompts.py`'s
-  injection test is the regression guard: an adversarial rule name must land only inside the data
-  block, never disturb the fixed instruction text that follows it. No tool use is ever offered to
-  either model in this phase.
+- **Generated text is stored and rendered as inert display text, never parsed back into structure.**
+  `Incident.summary_text`/`root_cause_text` are plain `Text` columns; nothing downstream (the state
+  machine, an alert rule, another worker) ever reads them to make a decision. Written when the text
+  came from Claude and unchanged by Phase 17's switch to local templates — the column is display
+  output either way.
+- **The signal bundle is data, and nothing interprets it.** Phase 8 enforced this by wrapping the
+  JSON in a delimited `<incident_data>` block and *instructing* the model that a user-chosen device
+  or rule name is never a message to it. Phase 17 retired that boundary rather than weakening it:
+  `app/insights/generator.py` never reads a string as anything but a value to interpolate, so an
+  adversarial name has nowhere to act. `test_insight_generator.py` keeps the injection test as the
+  regression guard, now asserting the stronger property — the text cannot reach the output at all.
 - **Response caching is a fingerprint comparison, not an HTTP cache.**
   `app/analysis/incidents.py`'s `correlation_fingerprint()` hashes only an incident's *event
   membership* (which events, and each one's status) — deliberately excluding anything that drifts
-  every tick regardless of the incident itself changing, like a live health score. Comparing it
-  against `Incident.summary_signal_hash`/`root_cause_signal_hash` before calling either model is what
-  makes a no-op worker tick cost zero API calls; hashing the full bundle instead would mean the cache
-  never hits.
-- **A failed generation must not poison the cache.** `insights_service.refresh_incident_insights()`
-  only updates a `*_signal_hash` column alongside a successful model response; an exception is logged
-  and swallowed (same best-effort posture as `app/alerts/notify.py`) with the hash left exactly as it
-  was, so the next tick retries instead of silently treating a failure as "already handled."
-- **No API key configured is a graceful no-op in the worker, and an explicit 503 from the route —
-  never a silent fabrication.** `InsightsWorker.run_once()` returns immediately when
-  `settings.anthropic_api_key` is unset, the same posture `notify.py` takes for an unconfigured SMTP
-  host; but `POST /incidents/{id}/regenerate`'s `_ai_client_dependency` raises instead, because a user
-  who explicitly asked for a regeneration needs to know it didn't happen, unlike a background sweep
-  nobody is watching.
+  every tick regardless of the incident itself changing, like a live health score. It began as the
+  thing that made a no-op worker tick cost zero API calls; with generation free it is kept for what
+  survives that, namely `*_generated_at` meaning "when this explanation was reached" rather than
+  "when a sweep last ran". Hashing the full bundle instead would mean the cache never hits.
+- **A failed generation must not poison the cache.** `insights/service.py`'s
+  `refresh_incident_insights()` only updates a `*_signal_hash` column alongside a successful
+  generation; an exception is logged and swallowed with the hash left exactly as it was, so the next
+  tick retries instead of silently treating a failure as "already handled." What it guards changed
+  with Phase 17 — a template bug now, not a network failure or a rate limit — and it is still
+  swallowed for the sweep's sake: one incident hitting a bad branch must not stop the remaining
+  incidents for that tenant.
+- **Insights have nothing to configure, so there is no unconfigured state to degrade into.** Phase
+  8's `settings.anthropic_api_key` gate in the worker and `_ai_client_dependency`'s 503 from `POST
+  /incidents/{id}/regenerate` are both gone: generation is local and always available. The 503 was
+  right while it existed — a user who explicitly asked for a regeneration needs to know it did not
+  happen — but the only remaining failure is a bug, which belongs in a 500 rather than in a
+  "not configured" message that would be untrue.
 - **The insights worker's one unscoped query only enumerates; it never reads or writes incident
   content.** `app.workers.insights_worker`'s entry in `tests/test_unscoped_import_guard.py`'s
   `ALLOWED` dict covers exactly `SELECT DISTINCT user_id FROM incidents WHERE status = 'open'`, the
@@ -1588,8 +1600,7 @@ detected, not configured; nothing to set up beyond having Funnel running.
   because packing is a strong heuristic signal to antivirus and SmartScreen and an already-unsigned
   monitoring agent should not also look packed.
 - **An unset `AGENT_DIST_DIR` degrades visibly.** `/download` says no build exists and gives the
-  from-source command; it never offers a link that 404s. Same posture as unset SMTP/VAPID/FCM/
-  `ANTHROPIC_API_KEY`. `DownloadCatalog.unavailable_reason` is the load-bearing field — an empty
+  from-source command; it never offers a link that 404s. Same posture as unset SMTP/VAPID/FCM. `DownloadCatalog.unavailable_reason` is the load-bearing field — an empty
   build list with no reason is indistinguishable from one that failed to load, and the page would
   have nothing honest to say. Those reason strings are rendered verbatim, so they never name an
   absolute server path: the path goes to the log, which is where the operator reads it.
@@ -1923,3 +1934,114 @@ other lesson is that regenerating it is exactly when unrelated Gradle targets br
 `agent/dist/` now holds five artifacts whose manifest matches the bytes on disk for every one, the
 served APK is byte-identical to the one just built, and the server's own catalogue re-reads all five
 with `unavailable_reason` None.
+
+### Phase 17: the insights layer stops calling a hosted model
+
+Asked to remove the dependency on paid/hosted AI APIs. Only one thing in the product had one: Phase
+8's incident summary and root-cause analysis. **Detection never did** — Phase 6's EWMA/MAD baselines,
+Phase 7's Holt-Winters and Theil-Sen fits, and Phase 15's default rule set are all statistical models
+fit on the account's own data, which is what CLAUDE.md's original "the LLM explains; it does not
+detect" rule was protecting. So the change is confined to the explaining half.
+
+`app/ai/` is gone — `prompts.py`, `client.py` and `insights_service.py` — replaced by
+`app/insights/`, holding `generator.py` (pure templates over the `SignalBundle`) and `service.py`
+(the orchestration, moved unchanged). The `anthropic` dependency is dropped from `pyproject.toml`
+and the three `ANTHROPIC_*` settings from `config.py`; one left in an existing `.env` is ignored
+rather than read.
+
+**The boundary moved down a level rather than being swapped in place.** `AIClient`'s Protocol took a
+system prompt and a user prompt, which is the wrong shape for a template pass: it wants the
+structured bundle, not prose assembled for a model to re-read. `InsightGenerator` takes the
+`SignalBundle` directly. The Protocol is kept even though there is one implementation, because the
+constraint is no *hosted* model rather than no model — a locally-run one could be substituted without
+the service, the worker or the route changing.
+
+Three things got structurally stronger, not merely cheaper:
+
+* **The prompt-injection boundary is retired rather than weakened.** Phase 8 fenced the bundle in
+  `<incident_data>` and *instructed* the model that a user-chosen device or rule name is never a
+  message to it. Nothing interprets a string now, so an adversarial name has nowhere to act. The
+  injection test survives in `test_insight_generator.py` asserting the stronger property: the text
+  cannot reach the output at all.
+* **"Never synthesise" became enforceable in prose.** Every clause is dropped when its field is None
+  — a thin bundle yields fewer sentences, never vaguer ones — which is `analysis/health.py`'s
+  "exclude an unreported component, don't score it 0" applied to language. A template cannot
+  hallucinate, but it can very easily print "None" or a fabricated zero, which is the same lie by a
+  different route; that is what most of the 21 new tests are about.
+* **The route and its test lost a whole layer.** `_ai_client_dependency`, the 503, the substituted
+  `FakeAIClient` and the second `create_app()` the old test needed are all gone: the plain test
+  client now exercises the real path end to end and asserts the real sentence.
+
+**The text stays stored rather than computed at read time.** Tempting, now that generation is free
+and pure, and wrong for the same reason `AnomalyEvidenceChart` draws the snapshotted and live
+baselines as two lines: the bundle drifts, so a resolved incident recomputed today would describe the
+machine's present state instead of the incident's. The fingerprint cache is kept for what survives
+the API bill going away — `*_generated_at` meaning "when this explanation was reached" rather than
+"when a sweep last ran". `*_model` keeps its meaning too, now carrying `sentinel-templates/v1`, so
+rows written by Haiku/Sonnet before the switch stay distinguishable.
+
+**Two real defects came out of running it against the real database, neither reachable from the
+tests.** Generating text for the six most recent real incidents is what found them:
+
+* Every incident read **"health score is unavailable (device not found)"**. Not a fault: all six
+  belonged to removed devices, and `build_summaries()` correctly filters soft-deleted rows while
+  `session.get()` above it still finds them. The *wording* was the bug — the same conflation
+  `lib/deviceNames.ts` exists to prevent on both frontends, where "removed" is permanent and
+  explainable and "missing" is a fault. `build_signal_bundle()` now checks `deleted_at` and says
+  "device has been removed", keeping the vaguer phrase for the genuinely unexplained case.
+* A device removed days earlier still carried an exhaustion row projecting +237.6 points/day, which
+  rendered as **"reaches capacity in about 0s"** — a claim about a future already overtaken, and one
+  that in the disk case would have sent somebody to go and free space. Nothing recomputes a stored
+  forecast once its device stops reporting, so both the trajectory sentence and the next-step advice
+  now require the projection to still be ahead of `now`.
+
+Both fixes were confirmed against those same real incidents afterward, not just against the new
+tests. Docs were corrected where they had become instructions to do the wrong thing —
+`ARCHITECTURE.md`'s stack table and layer 6, `WORKING_WITH_CLAUDE.md`'s "put a key in `backend/.env`"
+section, `ROADMAP.md`'s Phase 8 line, and `PACKAGING.md`'s list of optional integrations — and both
+frontends stopped captioning the cards "Generated by Claude Haiku/Sonnet", which was by then simply
+false on screen.
+
+571 backend tests (was 553: −4 for the deleted `test_ai_prompts.py`, −1 for the 503 test that no
+longer has a reachable condition, +23 new), 73 web, 81 mobile JS. The agent and Kotlin suites were
+not touched and not re-run.
+
+**Verified against the restarted server, not just the tests.** `make serve` was restarted onto the new
+code — and the strongest evidence arrived unprompted: within its first 60s sweep the `InsightsWorker`
+had already written all 12 open incidents with `summary_model = sentinel-templates/v1`, so the
+background path works end to end with nothing asking it to. Then in the browser: the list renders a
+real generated summary per card, the detail page captions both cards "Generated from this incident's
+evidence by sentinel-templates/v1", the root cause ends "(device has been removed)" — this session's
+own fix, on a real page rather than in a test — and **"Regenerate insights" returned
+`POST .../regenerate → 200 OK`**, the call that returned 503 for the whole of Phase 8. A fresh tab
+loads with zero console logs.
+
+Worth knowing for next time: all 12 incidents in the dev database belong to **removed** devices, which
+is why every card reads "(removed)" and no root cause has a health score. That is real data state, and
+it is what made the "device not found" wording bug visible at all.
+
+### The nav bar overflowed, for the oldest reason in flexbox
+
+Reported from looking at the console at pane width. `AppLayout`'s header was a single non-shrinking
+flex row: brand + eight nav links on the left, email + Sign out on the right. Three symptoms, one
+cause — **a flex item's default `min-width` is `auto`, i.e. its content**, so the left group could not
+shrink and pushed the *page* sideways instead. "Settings" ran straight into the email because
+`justify-between` leaves no gap at all once its two groups overflow, and "Add a device" broke across
+two lines because nothing stopped a label wrapping mid-phrase.
+
+`min-w-0` on the left group lets it shrink, `overflow-x-auto` on the `<nav>` puts the excess in the
+nav's own scroll region instead of the document's, `gap-x-6` is a real gap the two groups cannot
+close, and `whitespace-nowrap` keeps a label on one line. The email is `truncate max-w-56` and
+`hidden sm:inline` — truncated rather than dropped at desktop widths, because which account you are
+signed into is worth keeping on screen, but an unbounded address would push the sign-out button off
+the edge by itself.
+
+Measured at three widths rather than eyeballed, since "looks fine" is exactly how the original
+survived: 1440 unchanged (all eight fit, no scroll, 485px between Settings and the email), 744
+(`scrollWidth === clientWidth`, so the page no longer scrolls sideways; nav scrolls and all eight stay
+reachable with the active item still bold), 375 (no page scroll, email correctly hidden). The fix only
+engages when there is not room.
+
+Not done, and worth knowing: **`AppLayout` has no test.** The web suite is pure-module tests
+(`lib/*`), and a layout rule like this is only observable in a real browser at a real width — which is
+how it was verified, and why the numbers above are recorded here rather than asserted anywhere.

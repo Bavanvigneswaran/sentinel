@@ -3,7 +3,7 @@
 The whole design question this answers is *what the download page shows when
 no build exists for the visitor's operating system*, and the answer follows the
 posture the rest of the project already takes to unconfigured integrations —
-unset SMTP, VAPID, FCM and ANTHROPIC_API_KEY all degrade visibly rather than
+unset SMTP, VAPID and FCM all degrade visibly rather than
 pretending. So: nothing here raises when the manifest is absent, unreadable, or
 missing a platform. It returns a catalogue that says why, and the page renders
 that instead of a link that 404s.

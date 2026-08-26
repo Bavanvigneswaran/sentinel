@@ -12,7 +12,7 @@ import type { ExpoConfig } from "expo/config"
  * carries a real Firebase project's identifiers. Naming it unconditionally
  * would mean nobody could build the app at all until they had a Firebase
  * project, which is the same "unconfigured must degrade, not explode" posture
- * the backend already takes for SMTP, VAPID and ANTHROPIC_API_KEY. Drop
+ * the backend already takes for SMTP and VAPID. Drop
  * `google-services.json` in beside this file and FCM lights up; leave it out
  * and everything except push still builds and runs.
  */

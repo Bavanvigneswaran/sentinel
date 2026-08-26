@@ -1,7 +1,12 @@
-"""app/ai/insights_service.py's refresh_incident_insights(): the caching
-decision (skip the API entirely when nothing correlated has changed) is the
-one piece of real logic here, verified against a FakeAIClient that records
-every call it receives instead of hitting the real Anthropic API.
+"""app/insights/service.py's refresh_incident_insights(): the caching
+decision (skip regeneration entirely when nothing correlated has changed) is
+the one piece of real logic here, verified against a FakeGenerator that
+records every call it receives.
+
+The fake outlives the API it was written for. When generation was a paid
+call, counting calls proved no money was spent; now it proves
+`*_generated_at` still means "when this explanation was reached" rather than
+"when a sweep last ran over it" — see the service docstring.
 """
 
 from __future__ import annotations
@@ -10,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.ai.insights_service import refresh_incident_insights
+from app.insights.service import refresh_incident_insights
 from app.models import AlertEvent, User
 from app.models.incidents import Incident
 from app.services import enrollment_service as svc
@@ -18,16 +23,16 @@ from app.services import enrollment_service as svc
 NOW = datetime.now(UTC)
 
 
-class FakeAIClient:
+class FakeGenerator:
     def __init__(self) -> None:
         self.summarize_calls = 0
         self.root_cause_calls = 0
 
-    async def summarize(self, *, system: str, prompt: str) -> str:
+    def summarize(self, bundle, *, now) -> str:
         self.summarize_calls += 1
         return f"summary #{self.summarize_calls}"
 
-    async def analyze_root_cause(self, *, system: str, prompt: str) -> str:
+    def explain(self, bundle, *, now) -> str:
         self.root_cause_calls += 1
         return f"root cause #{self.root_cause_calls}"
 
@@ -62,15 +67,15 @@ async def open_incident(admin_session):
     return {"session": admin_session, "incident": incident, "event": event}
 
 
-async def test_first_refresh_calls_both_models_and_caches_the_fingerprint(open_incident):
+async def test_first_refresh_generates_both_texts_and_caches_the_fingerprint(open_incident):
     session, incident = open_incident["session"], open_incident["incident"]
-    client = FakeAIClient()
+    generator = FakeGenerator()
 
-    changed = await refresh_incident_insights(session, incident, client, now=NOW)
+    changed = await refresh_incident_insights(session, incident, generator, now=NOW)
 
     assert changed is True
-    assert client.summarize_calls == 1
-    assert client.root_cause_calls == 1
+    assert generator.summarize_calls == 1
+    assert generator.root_cause_calls == 1
     assert incident.summary_text == "summary #1"
     assert incident.root_cause_text == "root cause #1"
     assert incident.summary_signal_hash is not None
@@ -78,18 +83,18 @@ async def test_first_refresh_calls_both_models_and_caches_the_fingerprint(open_i
     assert incident.summary_generated_at == NOW
 
 
-async def test_a_second_refresh_with_no_membership_change_makes_no_api_calls(open_incident):
+async def test_a_second_refresh_with_no_membership_change_regenerates_nothing(open_incident):
     session, incident = open_incident["session"], open_incident["incident"]
-    client = FakeAIClient()
-    await refresh_incident_insights(session, incident, client, now=NOW)
+    generator = FakeGenerator()
+    await refresh_incident_insights(session, incident, generator, now=NOW)
 
     changed = await refresh_incident_insights(
-        session, incident, client, now=NOW + timedelta(minutes=1)
+        session, incident, generator, now=NOW + timedelta(minutes=1)
     )
 
     assert changed is False
-    assert client.summarize_calls == 1  # unchanged: cache hit, no network call
-    assert client.root_cause_calls == 1
+    assert generator.summarize_calls == 1  # unchanged: cache hit
+    assert generator.root_cause_calls == 1
     assert incident.summary_text == "summary #1"  # untouched
 
 
@@ -99,8 +104,8 @@ async def test_a_new_correlated_event_invalidates_the_cache(open_incident):
         open_incident["incident"],
         open_incident["event"],
     )
-    client = FakeAIClient()
-    await refresh_incident_insights(session, incident, client, now=NOW)
+    generator = FakeGenerator()
+    await refresh_incident_insights(session, incident, generator, now=NOW)
 
     second_event = AlertEvent(
         user_id=first_event.user_id,
@@ -119,39 +124,42 @@ async def test_a_new_correlated_event_invalidates_the_cache(open_incident):
     await session.commit()
 
     changed = await refresh_incident_insights(
-        session, incident, client, now=NOW + timedelta(minutes=1)
+        session, incident, generator, now=NOW + timedelta(minutes=1)
     )
 
     assert changed is True
-    assert client.summarize_calls == 2  # membership changed -> regenerated
+    assert generator.summarize_calls == 2  # membership changed -> regenerated
     assert incident.summary_text == "summary #2"
 
 
 async def test_force_regenerates_even_with_unchanged_membership(open_incident):
     session, incident = open_incident["session"], open_incident["incident"]
-    client = FakeAIClient()
-    await refresh_incident_insights(session, incident, client, now=NOW)
+    generator = FakeGenerator()
+    await refresh_incident_insights(session, incident, generator, now=NOW)
 
     changed = await refresh_incident_insights(
-        session, incident, client, now=NOW + timedelta(minutes=1), force=True
+        session, incident, generator, now=NOW + timedelta(minutes=1), force=True
     )
 
     assert changed is True
-    assert client.summarize_calls == 2
+    assert generator.summarize_calls == 2
     assert incident.summary_text == "summary #2"
 
 
-async def test_a_failed_call_leaves_the_hash_unset_so_it_retries_next_tick(open_incident):
+async def test_a_failed_generation_leaves_the_hash_unset_so_it_retries_next_tick(open_incident):
+    """Now guarding a template bug rather than a network failure, and still
+    swallowed for the sweep's sake: one incident hitting a bad branch must
+    not stop the remaining incidents for this tenant."""
     session, incident = open_incident["session"], open_incident["incident"]
 
-    class FailingClient:
-        async def summarize(self, *, system: str, prompt: str) -> str:
+    class FailingGenerator:
+        def summarize(self, bundle, *, now) -> str:
             raise RuntimeError("boom")
 
-        async def analyze_root_cause(self, *, system: str, prompt: str) -> str:
+        def explain(self, bundle, *, now) -> str:
             raise RuntimeError("boom")
 
-    changed = await refresh_incident_insights(session, incident, FailingClient(), now=NOW)
+    changed = await refresh_incident_insights(session, incident, FailingGenerator(), now=NOW)
 
     assert changed is False
     assert incident.summary_text is None

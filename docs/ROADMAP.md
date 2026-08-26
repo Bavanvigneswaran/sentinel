@@ -45,8 +45,13 @@ Holt-Winters 24 h forecasts with prediction intervals; disk/memory time-to-exhau
 Forecast overlay on real telemetry; "predicted breach" alerts feed the alert engine.
 
 ### Phase 8 — AI Insights + Incidents  ·  Sonnet 5  ·  ~2 sessions
-Signal-bundle builder, Claude API integration (Haiku 4.5 summaries, Sonnet 5 root-cause), response caching,
-strict prompt boundary (metrics are data, never instructions). Incidents workspace with correlated alerts + timeline.
+Signal-bundle builder, insight generation, response caching, strict data/instruction boundary.
+Incidents workspace with correlated alerts + timeline.
+
+Built against the Claude API (Haiku 4.5 summaries, Sonnet 5 root-cause) and later replaced by
+`app/insights/generator.py`, a local template pass over the same bundle, so the product calls no
+hosted AI API. The bundle builder, the caching fingerprint and the incidents workspace are unchanged;
+the prompt boundary is retired rather than weakened, since nothing interprets the data any more.
 
 ### Phase 9 — Analytics + Reports  ·  Sonnet 5  ·  ~1–2 sessions
 Historical trend analytics, availability/reliability stats. Report generator → PDF (WeasyPrint) + CSV export,

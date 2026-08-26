@@ -34,7 +34,7 @@ Agents make **outbound** WebSocket connections only. No inbound ports, works beh
 | Charts | uPlot (live, 1s, thousands of points) + Recharts (dashboards) | uPlot is the only thing that stays smooth for live streaming. |
 | Android app | React Native (dev-build) + one Kotlin native module | Reuses ~60% of web dashboard logic; native module handles the collector service. |
 | ML | `numpy`/`statsmodels`/`river`/`scikit-learn` | Statistical first, ML second. See below. |
-| LLM (AI Insights only) | Claude API — Haiku 4.5 for summaries, Sonnet 5 for root-cause | Cheap, and separate from your Claude Code budget. |
+| Incident insights | Local templates over the signal bundle (`app/insights/generator.py`) | No hosted model. Deterministic, free, and it cannot state anything the bundle does not contain. |
 
 ## Data flow and sampling
 
@@ -65,7 +65,7 @@ Android exposes far less — see Known Constraints.
 3. **Seasonal residual** — STL decompose hourly rollups, flag residual outliers. Needs ~2–3 weeks of history to be meaningful.
 4. **Multivariate** — `river.anomaly.HalfSpaceTrees` online, or nightly-retrained IsolationForest over the joint metric vector. Catches correlated weirdness no single threshold sees.
 5. **Forecasting** — Holt-Winters (statsmodels) per metric, 24 h horizon with prediction intervals. Plus **time-to-exhaustion** linear/robust regression on disk and memory growth — this is the single highest-value forecast in the whole product, and the easiest.
-6. **AI insights** — Claude summarises a *structured bundle* (recent anomalies, alert states, forecast breaches, correlated metrics) in plain language and suggests actions. The LLM never does the detection — it explains it.
+6. **Incident insights** — a *structured bundle* (recent anomalies, alert states, forecast breaches, correlated metrics) is rendered into plain language by `app/insights/generator.py`. Detection is layers 1–5 above; this step only explains it, and being templates rather than a model it *cannot* do otherwise. Originally Claude Haiku/Sonnet over the same bundle; replaced so the product depends on no hosted AI API. A field the bundle leaves null becomes a dropped clause, never a hedge or a zero.
 
 ## Alerting model
 

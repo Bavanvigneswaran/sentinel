@@ -415,8 +415,8 @@ reverse proxy in front of the static files.
 
 `AGENT_DIST_DIR` unset is a fully supported state. The page then says no build
 exists and gives the from-source command, rather than offering a link that
-404s — the same posture the backend already takes for unset SMTP, VAPID, FCM
-and `ANTHROPIC_API_KEY`.
+404s — the same posture the backend already takes for unset SMTP, VAPID and
+FCM.
 
 `AGENT_DOWNLOAD_BASE_URL` moves the binaries to a release host or CDN while the
 manifest is still read locally. Streaming multi-megabyte files out of the app
