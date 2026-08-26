@@ -39,9 +39,11 @@ from sentinel_agent.config import (
     ConfigError,
     requires_tls,
 )
+from sentinel_agent.collectors import latency as latency_mod
+from sentinel_agent.collectors.resources import collect_processes
 from sentinel_agent.enroll import EnrollmentError, enroll
 from sentinel_agent.paths import SCOPES, Scope, config_path, is_private
-from sentinel_agent.runner import Agent
+from sentinel_agent.runner import LATENCY_INTERVAL_SECONDS, PROCESS_INTERVAL_SECONDS, Agent
 from sentinel_agent.service import (
     ServiceError,
     check_executable_location,
@@ -220,6 +222,34 @@ def cmd_sample(args: argparse.Namespace) -> int:
                 f" = {config.sample_interval_seconds})",
                 file=sys.stderr,
             )
+
+            # The five samples above all land within milliseconds of each
+            # other, so PROCESS_INTERVAL_SECONDS/LATENCY_INTERVAL_SECONDS —
+            # the very throttles that keep a running agent's per-sample cost
+            # low — also keep them from ever re-firing inside this loop. A
+            # machine where the process walk or a latency probe is what is
+            # actually blowing the budget would print a clean report here
+            # and nothing else. Timing them directly is what the runtime
+            # warning's "run sample --timing" actually has to make good on.
+            if config.collect_processes:
+                started = time.perf_counter()
+                await asyncio.to_thread(collect_processes)
+                elapsed = (time.perf_counter() - started) * 1000
+                print(
+                    f"\nprocess list (every {PROCESS_INTERVAL_SECONDS}s):"
+                    f" {elapsed:8.1f} ms",
+                    file=sys.stderr,
+                )
+            targets = [latency_mod.LatencyTarget.parse(t) for t in config.latency_targets]
+            if targets:
+                started = time.perf_counter()
+                await latency_mod.measure_all(targets)
+                elapsed = (time.perf_counter() - started) * 1000
+                print(
+                    f"latency probe (every {LATENCY_INTERVAL_SECONDS}s):"
+                    f" {elapsed:8.1f} ms",
+                    file=sys.stderr,
+                )
 
         asyncio.run(timed())
         return 0
