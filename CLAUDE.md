@@ -1068,6 +1068,14 @@ every network. It depends on Tailscale actually being connected on the Mac (menu
 Login" enabled) — if Tailscale isn't running, the Funnel link goes down right along with it, no
 differently than `make serve` itself needing to be running for any of this to work at all.
 
+One rough edge, found immediately by actually looking at the terminal during a demo: `make serve`'s
+own startup banner still only printed the LAN address, because that `echo` predates Funnel and was
+never taught to look for it — the Funnel URL worked the entire time, the terminal just never
+mentioned it, which reads as "did this actually work?" at exactly the moment you're trying to show
+someone it did. The banner now shells out to `tailscale funnel status --json` and prints a `Public
+(Tailscale Funnel): https://...` line whenever one is active, alongside the LAN address as before —
+detected, not configured; nothing to set up beyond having Funnel running.
+
 ## Conventions
 
 - Files stay under ~400 lines; split rather than grow.

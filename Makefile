@@ -50,11 +50,25 @@ web-build:
 
 serve: web-build
 	@ip=$$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $$1}'); \
+	funnel_url=$$(command -v tailscale >/dev/null 2>&1 && tailscale funnel status --json 2>/dev/null \
+		| python3 -c "import json,sys; d=json.load(sys.stdin); w=list(d.get('Web') or {}); print('https://'+w[0].split(':')[0]) if w else None" 2>/dev/null); \
 	echo ""; \
 	echo "  Console + API:  http://$$ip:8000"; \
 	echo "  On this Mac:    http://localhost:8000"; \
+	if [ -n "$$funnel_url" ]; then \
+		echo "  Public (Tailscale Funnel):  $$funnel_url"; \
+	fi; \
 	echo ""; \
-	echo "  Point frontend/mobile/.env at http://$$ip:8000 before building an APK."; \
+	if [ -n "$$funnel_url" ]; then \
+		echo "  Point frontend/mobile/.env at $$funnel_url before building an APK —"; \
+		echo "  it won't go stale when this machine changes networks. Otherwise:"; \
+		echo "  http://$$ip:8000 works too, but only on this network and until the"; \
+		echo "  IP changes. See docs/PACKAGING.md's 'Serving the console' section."; \
+	else \
+		echo "  Point frontend/mobile/.env at http://$$ip:8000 before building an APK."; \
+		echo "  This address is only reachable on this network and can change —"; \
+		echo "  see docs/PACKAGING.md for using Tailscale Funnel for a stable one."; \
+	fi; \
 	echo ""
 	cd backend && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 \
 		--proxy-headers --forwarded-allow-ips=127.0.0.1

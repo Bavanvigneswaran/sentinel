@@ -6,7 +6,12 @@
 > ```
 > make serve
 > #   Console + API:  http://192.168.x.x:8000
+> #   Public (Tailscale Funnel):  https://your-machine.your-tailnet.ts.net
 > ```
+>
+> The Funnel line only appears once Tailscale Funnel is actually running (see
+> below) — `make serve` detects it and prints it alongside the LAN address, it
+> doesn't set it up on its own.
 >
 > That one URL is the whole product — console, REST API, and the live
 > WebSocket. Open it in a browser from any machine on the same network
