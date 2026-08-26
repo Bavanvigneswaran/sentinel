@@ -10,7 +10,7 @@ interface AppLayoutProps {
   /** Highlights the active nav item. Undefined renders neither as active. */
   active?:
     | "devices"
-    | "download"
+    | "add-device"
     | "alerts"
     | "anomalies"
     | "forecasts"
@@ -21,7 +21,7 @@ interface AppLayoutProps {
 
 const NAV_ITEMS = [
   { key: "devices", to: "/", label: "Devices" },
-  { key: "download", to: "/download", label: "Download" },
+  { key: "add-device", to: "/devices/new", label: "Add a device" },
   { key: "alerts", to: "/alerts", label: "Alerts" },
   { key: "anomalies", to: "/anomalies", label: "Anomalies" },
   { key: "forecasts", to: "/forecasts", label: "Forecasts" },

@@ -1,13 +1,13 @@
 /**
  * The rest of the console, reachable from a phone.
  *
- * A menu rather than four more bottom tabs: a bottom bar stops being usable
- * past about five, and these four are things you open deliberately rather than
- * flick between. Devices / Alerts stay as tabs because those are the ones you
- * actually flick between when something is wrong.
+ * A menu rather than five more bottom tabs: a bottom bar stops being usable
+ * past about five entries, and these are things you open deliberately rather
+ * than flick between. Devices / Alerts stay as tabs because those are the ones
+ * you actually flick between when something is wrong.
  *
- * These are also reachable per-device from a device's own screen, which is the
- * more common way to want them — this menu is the fleet-wide entry point.
+ * Every entry here is fleet-wide. The same screens are reachable per-device
+ * from a device's own screen, which is the more common way to want them.
  */
 
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native"
@@ -18,7 +18,7 @@ import { colors, spacing, text } from "@/theme"
 import type { RootTabScreenProps } from "@/navigation/types"
 
 interface Entry {
-  route: "Anomalies" | "Forecasts" | "Incidents" | "Reports" | "Settings"
+  route: "Anomalies" | "Forecasts" | "Incidents" | "Reports" | "AlertRules" | "Settings"
   title: string
   body: string
 }
@@ -43,6 +43,11 @@ const ENTRIES: Entry[] = [
     route: "Reports",
     title: "Reports",
     body: "Measured uptime and reliability over the last week or month.",
+  },
+  {
+    route: "AlertRules",
+    title: "Alert rules",
+    body: "The thresholds, anomaly and forecast rules that decide what pages you.",
   },
   {
     route: "Settings",
@@ -73,8 +78,11 @@ export function MoreScreen({ navigation }: RootTabScreenProps<"More">) {
       ))}
 
       <Text style={text.tiny}>
-        Alert rules, silence windows beyond a one-hour mute, notification channels, report
-        schedules and per-device history stay in the web console.
+        Per-device history, anomalies, forecasts, reports and alert rules are also reachable
+        from a device's own screen, scoped to that machine. What is still web-only: silence
+        windows other than the one-hour mute on the Alerts tab, report schedules, and adding a
+        device — an enrollment code's only destination is a terminal on some other machine, and
+        this phone enrols itself with one tap and needs no code at all.
       </Text>
     </Screen>
   )

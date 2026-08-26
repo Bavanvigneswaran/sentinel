@@ -2,12 +2,12 @@ import { Navigate, createBrowserRouter } from "react-router"
 
 import { ProtectedRoute } from "@/components/ProtectedRoute"
 import { PublicOnlyRoute } from "@/components/PublicOnlyRoute"
+import { AddDevicePage } from "@/pages/AddDevicePage"
 import { AlertRulesPage } from "@/pages/AlertRulesPage"
 import { AlertsPage } from "@/pages/AlertsPage"
 import { AnomaliesPage } from "@/pages/AnomaliesPage"
 import { DashboardPage } from "@/pages/DashboardPage"
 import { DeviceHistoryPage } from "@/pages/DeviceHistoryPage"
-import { DownloadPage } from "@/pages/DownloadPage"
 import { ForecastsPage } from "@/pages/ForecastsPage"
 import { IncidentDetailPage } from "@/pages/IncidentDetailPage"
 import { IncidentsPage } from "@/pages/IncidentsPage"
@@ -36,7 +36,12 @@ export const router = createBrowserRouter([
       { path: "/devices", element: <Navigate to="/" replace /> },
       { path: "/devices/:deviceId/history", element: <DeviceHistoryPage /> },
       { path: "/devices/:deviceId/live", element: <LiveMonitoringPage /> },
-      { path: "/download", element: <DownloadPage /> },
+      { path: "/devices/new", element: <AddDevicePage /> },
+      // Downloading the agent and minting an enrollment code were two pages, and
+      // neither was usable without the other — /download's own instructions told
+      // the user to go and mint a code, and the mint panel linked back here for a
+      // binary. They are one page now; the old path redirects rather than 404s.
+      { path: "/download", element: <Navigate to="/devices/new" replace /> },
       { path: "/alerts", element: <AlertsPage /> },
       { path: "/alerts/rules", element: <AlertRulesPage /> },
       { path: "/anomalies", element: <AnomaliesPage /> },

@@ -6,9 +6,11 @@
  * sufficient in Phase 7, which is exactly why the backend snapshots
  * `rule_type` onto the event (see CLAUDE.md's Phase 7 invariants).
  *
- * Rule CRUD stays in the web app. This is a triage surface: what is firing,
- * on which machine, since when, and can I silence it — the things you want
- * from a phone when something pages you.
+ * This is primarily a triage surface: what is firing, on which machine, since
+ * when, and can I silence it. But triage and authoring are the same loop — the
+ * useful answer to a 3am page is often "that threshold is wrong" — so the rule
+ * that fired is now two taps away rather than back at a desk, and an event's
+ * card opens the incident it was correlated into.
  */
 
 import { useCallback, useEffect, useState } from "react"
@@ -29,6 +31,7 @@ import { formatRelative } from "@/lib/timeRanges"
 import { colors, spacing, text } from "@/theme"
 import type { AlertEvent, EventStatus } from "@/types/alerts"
 import type { Device } from "@/types/api"
+import type { RootTabScreenProps } from "@/navigation/types"
 
 const POLL_INTERVAL_MS = 10_000
 
@@ -45,7 +48,7 @@ const FILTERS: { value: Filter; label: string }[] = [
   { value: "all", label: "All" },
 ]
 
-export function AlertsScreen() {
+export function AlertsScreen({ navigation }: RootTabScreenProps<"Alerts">) {
   const [filter, setFilter] = useState<Filter>("firing")
   const [devices, setDevices] = useState<Record<string, Device>>({})
   const [silencing, setSilencing] = useState<string | null>(null)
@@ -103,6 +106,13 @@ export function AlertsScreen() {
     >
       <Segmented options={FILTERS} value={filter} onChange={setFilter} />
 
+      <Button
+        size="sm"
+        variant="outline"
+        title="Alert rules"
+        onPress={() => navigation.navigate("AlertRules")}
+      />
+
       {error && <ErrorNote message={error} />}
       {silenceError && <ErrorNote message={silenceError} />}
       {loading && !data && <Text style={text.small}>Loading…</Text>}
@@ -125,6 +135,12 @@ export function AlertsScreen() {
           deviceName={deviceLabel(devices, event.device_id)}
           busy={silencing === event.id}
           onSilence={() => void silence(event)}
+          onOpenIncident={
+            event.incident_id
+              ? () =>
+                  navigation.navigate("IncidentDetail", { incidentId: event.incident_id as string })
+              : undefined
+          }
         />
       ))}
     </Screen>
@@ -136,11 +152,16 @@ function AlertCard({
   deviceName,
   busy,
   onSilence,
+  onOpenIncident,
 }: {
   event: AlertEvent
   deviceName: string
   busy: boolean
   onSilence: () => void
+  /** Absent for an event with no incident — which is only ever an event whose
+   * correlation predates Phase 8, since every firing has opened or joined one
+   * since. Rendering a dead button for those would be worse than omitting it. */
+  onOpenIncident?: () => void
 }) {
   return (
     <Card>
@@ -168,15 +189,20 @@ function AlertCard({
             : `resolved ${formatRelative(event.resolved_at ?? event.fired_at)}`}
           {event.status === "firing" && event.notified_at === null ? " · silenced" : ""}
         </Text>
-        {event.status === "firing" && (
-          <Button
-            size="sm"
-            variant="outline"
-            title={`Silence ${SILENCE_HOURS}h`}
-            busy={busy}
-            onPress={onSilence}
-          />
-        )}
+        <View style={styles.footerActions}>
+          {onOpenIncident && (
+            <Button size="sm" variant="ghost" title="Incident" onPress={onOpenIncident} />
+          )}
+          {event.status === "firing" && (
+            <Button
+              size="sm"
+              variant="outline"
+              title={`Silence ${SILENCE_HOURS}h`}
+              busy={busy}
+              onPress={onSilence}
+            />
+          )}
+        </View>
       </View>
     </Card>
   )
@@ -222,4 +248,5 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     paddingTop: spacing.sm,
   },
+  footerActions: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
 })

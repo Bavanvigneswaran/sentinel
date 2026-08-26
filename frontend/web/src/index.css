@@ -14,6 +14,7 @@
    class. */
 :root {
   --radius: 0.625rem;
+  color-scheme: light;
 
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
@@ -41,6 +42,7 @@
 /* Sentinel is a dark ops console; the light set above stays defined so a theme
    toggle is a one-line change later. */
 .dark {
+  color-scheme: dark;
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);

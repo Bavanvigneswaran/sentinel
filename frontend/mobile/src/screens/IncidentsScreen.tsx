@@ -7,8 +7,10 @@
  * detect" applied at the render layer: a phone shows the sentence, the state
  * machine that opened the incident is unaffected by it.
  *
- * Root-cause regeneration stays in the web console — it costs an API call, and
- * a button that spends money is not one to put under a thumb at 3am.
+ * Tapping a card opens IncidentDetailScreen, which is where the correlated
+ * timeline and the root-cause text live — the list endpoint returns
+ * `Incident`, not `IncidentDetail`, and fetching the timeline per row would
+ * be one extra request for every card on screen.
  */
 
 import { useEffect, useState } from "react"
@@ -41,7 +43,7 @@ const FILTERS: { value: Filter; label: string }[] = [
   { value: "all", label: "All" },
 ]
 
-export function IncidentsScreen({ route }: RootStackScreenProps<"Incidents">) {
+export function IncidentsScreen({ route, navigation }: RootStackScreenProps<"Incidents">) {
   const deviceId = route.params?.deviceId
   const deviceName = route.params?.deviceName
   const [filter, setFilter] = useState<Filter>("open")
@@ -92,7 +94,10 @@ export function IncidentsScreen({ route }: RootStackScreenProps<"Incidents">) {
       )}
 
       {incidents.map((incident) => (
-        <Card key={incident.id}>
+        <Card
+          key={incident.id}
+          onPress={() => navigation.navigate("IncidentDetail", { incidentId: incident.id })}
+        >
           <View style={styles.header}>
             <Text style={text.heading}>
               {deviceLabel(devices, incident.device_id)}
@@ -108,8 +113,8 @@ export function IncidentsScreen({ route }: RootStackScreenProps<"Incidents">) {
 
           {/* No per-event breakdown here: the list endpoint returns
               Incident, not IncidentDetail, and fetching detail per row to show
-              a count would be a request per incident for one number. The web
-              console's detail page has the timeline. */}
+              a count would be a request per incident for one number. Tapping
+              the card is what makes that second request, once. */}
           {incident.summary_text ? (
             <Text style={styles.summary}>{incident.summary_text}</Text>
           ) : (

@@ -17,6 +17,10 @@ export type Metric =
 
 export type Comparison = ">" | ">=" | "<" | "<=" | "=="
 export type RuleType = "threshold" | "anomaly" | "forecast"
+/** Where a rule came from. "builtin" rules are seeded for every account so it
+ * detects things without being configured (app/alerts/defaults.py); they are
+ * ordinary rules otherwise, and are edited and deleted like any other. */
+export type RuleSource = "user" | "builtin"
 export type Severity = "watch" | "warning" | "critical"
 export type AlertRuleState = "ok" | "pending" | "firing"
 export type EventStatus = "firing" | "resolved"
@@ -33,6 +37,7 @@ export interface AlertRule {
   threshold: number | null
   for_duration_seconds: number
   enabled: boolean
+  source: RuleSource
   created_at: string
   updated_at: string
 }

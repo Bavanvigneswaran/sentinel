@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react"
+import { Link } from "react-router"
 
 import { AppLayout } from "@/components/AppLayout"
 import { DeviceSummaryCard } from "@/components/DeviceSummaryCard"
-import { NewDevicePanel } from "@/components/NewDevicePanel"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { apiFetch } from "@/lib/api"
@@ -36,7 +36,6 @@ const WINDOW_SECONDS = 3600
 export function DashboardPage() {
   const [overview, setOverview] = useState<FleetOverview | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [adding, setAdding] = useState(false)
 
   const load = useCallback(() => {
     return apiFetch<FleetOverview>(`/fleet/overview?window_seconds=${WINDOW_SECONDS}`)
@@ -89,15 +88,14 @@ export function DashboardPage() {
               updated {formatRelative(overview.generated_at)}
             </span>
           )}
-          {!adding && (
-            <Button size="sm" onClick={() => setAdding(true)}>
-              New device
-            </Button>
-          )}
+          {/* A link, not a panel. Minting a code here left the user needing a
+              binary from another page and vice versa; both halves now live on
+              /devices/new in the order they are used. */}
+          <Button asChild size="sm">
+            <Link to="/devices/new">Add a device</Link>
+          </Button>
         </div>
       </div>
-
-      {adding && <NewDevicePanel onClose={() => setAdding(false)} />}
 
       {error && (
         <Card>
@@ -109,14 +107,16 @@ export function DashboardPage() {
 
       {overview && <Totals totals={overview.totals} />}
 
-      {overview !== null && overview.devices.length === 0 && !adding && (
+      {overview !== null && overview.devices.length === 0 && (
         <Card>
           <CardHeader>
             <CardTitle>No devices yet</CardTitle>
             <CardDescription>
-              Press <strong className="font-medium text-foreground">New device</strong> to mint
-              an enrollment code, then redeem it from the agent on the machine you want to
-              monitor.
+              <Link to="/devices/new" className="underline underline-offset-2">
+                Add a device
+              </Link>{" "}
+              walks through it end to end: download the agent for that machine, mint a one-time
+              code, and copy three commands into its terminal.
             </CardDescription>
           </CardHeader>
         </Card>

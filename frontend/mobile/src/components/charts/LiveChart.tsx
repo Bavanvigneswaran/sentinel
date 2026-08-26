@@ -19,14 +19,16 @@
  *   its scale fresh each tick cannot have that bug.
  */
 
-import { useEffect, useRef, useState } from "react"
-import { StyleSheet, Text, View, type LayoutChangeEvent } from "react-native"
+import { useEffect, useState } from "react"
+import { StyleSheet, Text, View } from "react-native"
 import Svg, { Line, Polyline } from "react-native-svg"
 
+import { PlotFrame } from "@/components/charts/PlotFrame"
+import { GRID_FRACTIONS } from "@/lib/plotGeometry"
 import type { Frame, LiveSeries } from "@/lib/chartFrame"
 import { EMPTY_FRAME, buildFrame } from "@/lib/chartFrame"
 import type { RingBuffer } from "@/lib/ringBuffer"
-import { colors, radius, spacing, text } from "@/theme"
+import { colors, spacing, text } from "@/theme"
 
 /** 1 Hz — the live sample rate. Redrawing faster only burns battery on a
  * chart whose data cannot change in between. */
@@ -53,15 +55,17 @@ export function LiveChart({
   domain,
   valueFormatter,
 }: LiveChartProps) {
-  const [width, setWidth] = useState(0)
   const [frame, setFrame] = useState<Frame>(EMPTY_FRAME)
-  const widthRef = useRef(0)
+  // The *plot's* width, not the card's — PlotFrame reports it, because the
+  // gutter holding the axis labels takes a fixed slice off the left. Building
+  // points against the card width would push the newest sample under the
+  // legend by exactly the gutter's width.
+  const [width, setWidth] = useState(0)
 
   useEffect(() => {
+    if (width <= 0) return
     const draw = () => {
-      const w = widthRef.current
-      if (w <= 0) return
-      setFrame(buildFrame(buffer.current, { width: w, height, series, deriveSeries, domain }))
+      setFrame(buildFrame(buffer.current, { width, height, series, deriveSeries, domain }))
     }
     draw()
     const timer = setInterval(draw, TICK_MS)
@@ -70,30 +74,32 @@ export function LiveChart({
     // `series`/`deriveSeries` are inline literals at every call site and would
     // restart the timer on each parent render if they were.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [height, domain?.[0], domain?.[1]])
-
-  const onLayout = (event: LayoutChangeEvent) => {
-    const next = event.nativeEvent.layout.width
-    widthRef.current = next
-    setWidth(next)
-  }
+  }, [width, height, domain?.[0], domain?.[1]])
 
   return (
     <View style={{ gap: spacing.sm }}>
-      <View onLayout={onLayout} style={[styles.plot, { height }]}>
-        {width > 0 && (
-          <Svg width={width} height={height}>
-            {gridLines(frame, width, height).map((y, index) => (
-              <Line
-                key={index}
-                x1={0}
-                x2={width}
-                y1={y}
-                y2={y}
-                stroke={colors.border}
-                strokeWidth={StyleSheet.hairlineWidth}
-              />
-            ))}
+      <PlotFrame
+        height={height}
+        hi={frame.hi}
+        lo={frame.lo}
+        valueFormatter={valueFormatter}
+        empty={frame.empty}
+        onWidth={setWidth}
+      >
+        {(plotWidth) => (
+          <Svg width={plotWidth} height={height}>
+            {!frame.empty &&
+              GRID_FRACTIONS.map((fraction) => (
+                <Line
+                  key={fraction}
+                  x1={0}
+                  x2={plotWidth}
+                  y1={height * fraction}
+                  y2={height * fraction}
+                  stroke={colors.border}
+                  strokeWidth={StyleSheet.hairlineWidth}
+                />
+              ))}
             {frame.paths.map((runs, seriesIndex) =>
               runs.map((points, runIndex) => (
                 <Polyline
@@ -109,17 +115,7 @@ export function LiveChart({
             )}
           </Svg>
         )}
-        {frame.empty ? (
-          <View style={styles.overlay} pointerEvents="none">
-            <Text style={text.small}>No data yet.</Text>
-          </View>
-        ) : (
-          <View style={[styles.overlay, styles.axis]} pointerEvents="none">
-            <Text style={text.tiny}>{valueFormatter(frame.hi)}</Text>
-            <Text style={text.tiny}>{valueFormatter(frame.lo)}</Text>
-          </View>
-        )}
-      </View>
+      </PlotFrame>
 
       <View style={styles.legend}>
         {frame.series.map((s, index) => (
@@ -149,26 +145,7 @@ function latestOf(frame: Frame, index: number, format: (v: number) => string): s
   return value == null ? null : format(value)
 }
 
-function gridLines(frame: Frame, width: number, height: number): number[] {
-  if (frame.empty || width <= 0) return []
-  return [0.25, 0.5, 0.75].map((fraction) => height * fraction)
-}
-
 const styles = StyleSheet.create({
-  plot: {
-    backgroundColor: colors.background,
-    borderRadius: radius.sm,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    overflow: "hidden",
-  },
-  overlay: { ...StyleSheet.absoluteFill, alignItems: "center", justifyContent: "center" },
-  axis: {
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    paddingHorizontal: spacing.xs,
-    paddingVertical: 2,
-  },
   legend: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
   legendItem: { flexDirection: "row", alignItems: "center", gap: spacing.xs, maxWidth: "48%" },
   swatch: { width: 8, height: 2, borderRadius: 1 },

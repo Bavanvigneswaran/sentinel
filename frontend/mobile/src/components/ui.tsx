@@ -251,7 +251,10 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     padding: spacing.md,
   },
-  segmented: { flexDirection: "row", gap: spacing.sm },
+  // Wraps: a metric picker has six options and a phone is ~330pt wide. A
+  // non-wrapping row would push the last two off-screen with no scroll
+  // affordance to find them by.
+  segmented: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   segment: {
     paddingVertical: 6,
     paddingHorizontal: spacing.md,
