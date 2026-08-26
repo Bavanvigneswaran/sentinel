@@ -363,6 +363,30 @@ viewer WebSocket, which is what makes "the address in the browser" and
 `EXPO_PUBLIC_API_URL` the same string, and removes CORS from a real deployment
 entirely.
 
+`make serve` still only binds a LAN interface, though, so its address is only
+good on whatever network the host is currently on — and can move without
+warning (DHCP renewal, macOS's Private Wi-Fi Address rotating the MAC it
+presents per network, a different Wi-Fi entirely). **[Tailscale
+Funnel](https://tailscale.com/kb/1223/funnel)** gives the same `make serve`
+process a stable public `https://<host>.<tailnet>.ts.net` address without
+deploying anywhere: install Tailscale on the one machine running `make serve`
+(no client device needs it — Funnel serves ordinary public HTTPS) and run
+`tailscale funnel --bg 8000`.
+
+Doing this turns a LAN-local convenience into a public one, so satisfy
+`app/config.py`'s `_refuse_insecure_production()` checks for real before
+relying on it — set `ENVIRONMENT=prod`, `RATE_LIMIT_ENABLED=true`, a fresh
+`JWT_SECRET`, `COOKIE_SECURE=true` (only possible once there is real TLS in
+front, which Funnel provides), and rotate the `sentinel_app` role's password
+with `ALTER ROLE` directly against Postgres — migration `0001`'s `CREATE ROLE`
+is a one-time idempotent bootstrap, so editing `.env` alone leaves the
+database still expecting the old password. Also add `--proxy-headers
+--forwarded-allow-ips=127.0.0.1` to the `uvicorn` invocation: Funnel proxies
+locally to `127.0.0.1`, and without that flag `app/api/ratelimit.py`'s
+`_client_ip()` — which deliberately trusts only `request.client.host`, never a
+bare `X-Forwarded-For` — would see every visitor as the same loopback address
+and rate-limit them all as one shared bucket.
+
 Two decisions there are worth keeping:
 
 * **`/api` is stripped by middleware, not by a second routing convention.**

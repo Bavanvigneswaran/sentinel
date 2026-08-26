@@ -911,6 +911,163 @@ environment limitation rather than something a code change fixes). Nothing
 has been changed in `app/live/` or `frontend/web/src/lib/liveSocket.ts` for
 this — there is no fix yet because there is no confirmed cause yet.
 
+### Phase 14: adding a device is one page, and the phone stops being a viewer-only
+
+Four things reported from using both halves, all fixed and all verified against the real backend.
+
+* **The Copy button on a freshly minted enrollment code did nothing.** Not "failed" — *nothing*:
+  no copy, no error, no feedback. `navigator.clipboard?.writeText(code).then(ok).catch(fail)`
+  looks defensive and is the bug, because optional chaining short-circuits the **entire** chain.
+  `navigator.clipboard` is gated on a secure context, and `make serve` binds to the LAN, so the
+  real origin is `http://192.168.x.y:8000` — not https, not loopback — where the whole object is
+  `undefined` and neither callback ever ran. `lib/clipboard.ts`'s `copyText()` falls back to
+  `document.execCommand("copy")`, which is deprecated but is *not* secure-context-gated, and
+  **returns whether the text actually arrived** so `CopyButton` can say "select it by hand"
+  rather than flashing "Copied" over a clipboard holding something else.
+
+* **`/download` and the "New device" panel were two halves of one task, in two tabs.** Neither
+  worked alone: the download page's own instructions told you to go and mint a code, and the mint
+  panel linked back for a binary. They are one page now — `/devices/new`, "Add a device" in the
+  nav, with `/download` redirecting — and merging them bought something the split could not
+  offer at all: the code and the chosen build are in one component's state, so
+  `enrollmentPlan()` renders **the real commands with the real code already in them**, one
+  copyable line at a time. Two steps that were prose in a warning box are now lines in the
+  sequence, because both make a correct-looking command fail: `cd ~/Downloads` (the shell opens
+  in `$HOME`, the binary does not live there) and `xattr -d com.apple.quarantine` (Gatekeeper
+  blocks an unsigned download *before* the process starts, so `enroll` produces no output of its
+  own). The platform picker is a choice rather than a detection, because the machine being
+  enrolled is very often not the machine the browser is on.
+
+* **The Android app was missing most of the console.** Now added: **History** (per device, its own
+  time-range picker, every chart the web page draws, platform-gated the same way), **Alert
+  rules** (full CRUD — the same three rule types, chips instead of `<select>`), and **Incident
+  detail** (the correlated timeline plus both AI cards and Regenerate). Reachable per-device from
+  a device's own screen and fleet-wide from More; an alert card also opens the incident it
+  correlated into. What stays web-only is now a short, justified list rather than an accident:
+  silence windows beyond the one-hour mute, report schedules, and adding a device — an enrollment
+  code's only destination is a terminal on another machine, and this phone enrols itself with one
+  tap and needs no code.
+
+* **Chart axis labels were drawn on top of the trace.** Both mobile charts pinned their high and
+  low values into an `absoluteFill` overlay at the plot's own corners. On a quiet chart that
+  reads fine, which is why it survived; on this Mac's Live Monitoring — twelve NIC series, most
+  of them near zero — the traces run straight through "0 B/s". `components/charts/PlotFrame.tsx`
+  puts them in a gutter *beside* the plot, and owns the frame for all three charts so they cannot
+  drift. The gutter reports the plot's real width back to its caller, which is load-bearing:
+  building points against the card's width would push the newest sample under the legend by
+  exactly the gutter.
+
+**`/download`'s checksum command was keyed on the wrong machine.** `verifyCommand()` picked its
+tool from `build.os`, so the Android card told a Mac user to run `sha256sum app-release.apk` — a
+command macOS does not ship. The checksum is taken on the machine that *downloaded* the file, which
+for the APK is never the machine it runs on, so the command is keyed on the browser's detected
+platform now and falls back to the build's OS only when detection failed. Seen on the real page,
+not in review.
+
+Three more defects came out of looking at the running app rather than the code, all in the new
+history charts and none catchable by a type checker:
+
+* **A 24h window read "8:52 PM → 8:32 PM"** — time running backwards, which is what a day-wide
+  window looks like for most of the day. `xAxisLabels()` now names the day whenever the two ends
+  fall on different calendar dates, and only then.
+* **`146.1 MB/s` rendered as `146.1 M…`.** The gutter had been sized against `"1.4 MB/s"` and
+  `"100%"`. A y-axis whose top value is unreadable is not a y-axis; it is sized against the
+  longest string the formatters actually produce now.
+* **An autoscaled rate chart floored at its own minimum, not at zero**, so a nearly-idle disk sat
+  on a baseline labelled "53.5 KB/s" and read as sustained write traffic that was not happening.
+  `chartFrame.ts` had always pinned zero for the live chart; `historyChartFrame.ts` now matches it.
+
+Verified on the real Android emulator against the real backend and this Mac's live agent: the
+History screen over 24h with all seven charts and their real rollup caption, Live Monitoring's
+Network and Disk I/O panels — the exact two from the bug report — with every label clear of the
+trace, an alert rule created *and deleted* through the real API, and a real incident's timeline
+with both AI cards correctly reading "Not generated yet" (no `ANTHROPIC_API_KEY` configured).
+
+Verified in the browser against the real backend: `/devices/new` mints a real code
+(`4CA9-PWJ2-B1SX`) and the enrol command reads `enroll --code 4CA9-PWJ2-B1SX` — the substitution
+is the whole point of the merge. The clipboard fix was proved **under the condition that actually
+fails**, which localhost is not: `navigator.clipboard` was deleted from the page to reproduce a
+plain-http LAN origin, and the fallback then reported `execCommand("copy") === true` with the
+selected text equal to the real code. Under the old optional-chained call that same condition
+produced no call, no promise and no callback at all.
+
+546 backend tests, 165 agent (was 156), 65 web (was 51), 81 mobile JS (was 68), and 40 Kotlin —
+40, not the 42 recorded above: nothing here touches Kotlin, and counting the suite's own
+`test-results` XML gives 40 across its eight classes, so the earlier figure was miscounted rather
+than something regressing.
+
+The APK was rebuilt so `/download` serves the app this work is actually in — the registered one
+predated all of it, the same staleness trap Phase 13 records. Checked past "it built":
+`apksigner`'s certificate SHA-256 matched the keystore's own fingerprint (`a6a78f80…`, so the real
+release key and not React Native's public debug key), `strings` on the **Hermes bytecode** — plain
+`grep` silently finds nothing in it, which is its own small trap — confirmed the new screens are
+in the shipped bundle, the manifest/dist/page all agree on `6c76e4d2…`, and the authenticated
+route returned 200 for it. The release-only failure mode Phase 11 exists to catch was confirmed
+statically rather than by uninstalling the emulator's dev build: the APK's Network Security Config
+permits cleartext to exactly `10.23.132.19` and nothing else, with no blanket
+`usesCleartextTraffic` and no `debuggable` flag.
+
+### A stable address: Tailscale Funnel, and the hardening a public link actually requires
+
+Prompted by a real failure: the Windows agent, freshly enrolled, started failing every reconnect
+with `timed out during opening handshake`. Nothing had changed in the agent or the server — the
+Mac's LAN IP had. Chasing *why* surfaced the real mechanism, not just the symptom: `ifconfig`
+showed `en0` broadcasting a MAC address that did not match the Wi-Fi hardware's own
+(`networksetup -listallhardwareports`) — macOS's Private Wi-Fi Address feature presents a
+rotating, per-network-random MAC by default, so a phone hotspot's DHCP server sees what looks like
+a brand-new device each rotation and hands out a fresh lease. This happens even when nothing about
+*which* network you're on ever changes, which is what made it confusing: "same hotspot" and "same
+address" are not the same guarantee, and a hotspot has no reservation feature to fall back on the
+way a home router would.
+
+Pinning the MAC (or the IP) only helps for one network at a time anyway, and the actual goal — a
+link that works from wherever the Mac happens to be, hotspot or otherwise, with **nothing to
+install beyond the agent itself** on any other device — ruled out the first plan (Tailscale on
+every device). **Tailscale Funnel** is the fit instead: only the Mac needs Tailscale. Funnel turns
+`make serve`'s local port into a real `https://` URL —
+`https://bavans-macbook-pro.tail9d00e9.ts.net` — that every other device reaches as an ordinary
+HTTPS endpoint, no client software involved. The Windows agent's `agent.toml` and the mobile app's
+`EXPO_PUBLIC_API_URL` both just point at it now, exactly the "real answer" `mobile/README.md`
+already named: *"an `https://` backend on a real domain never moves and needs no cleartext
+exception at all."*
+
+That link is genuinely public, though, which is a different exposure than a hotspot ever was, and
+`app/config.py`'s own `_refuse_insecure_production()` exists precisely to keep a `dev`-configured
+backend from being mistaken for a safe one. All four of its prod requirements were satisfied for
+real rather than bypassed: `RATE_LIMIT_ENABLED=true`, a fresh 32-byte `JWT_SECRET` (rotating it logs
+out every existing session, expected and one-time), `COOKIE_SECURE=true` (only possible now because
+Funnel terminates real TLS — it was correctly `false` before, over plain LAN `http://`), and the
+`sentinel_app` Postgres role's password rotated with `ALTER ROLE` directly against the database —
+migration `0001`'s `CREATE ROLE` is idempotent and only ever runs once, so editing `.env` alone
+would have left the database still expecting the old password and every connection failing.
+
+Turning rate limiting on surfaced a real bug before it ever reached a real user: `ratelimit.py`'s
+`_client_ip()` deliberately trusts only `request.client.host`, never `X-Forwarded-For`, with a
+comment already warning that production needs `--proxy-headers --forwarded-allow-ips=<lb>` for this
+to key on the right address. Funnel proxies locally to `127.0.0.1:8000`, so without that flag every
+request — from anywhere on the internet — would have landed in the *same* shared bucket, meaning a
+handful of failed logins from one stranger would have locked out every legitimate user. Not a
+theoretical gap: confirmed by checking uvicorn's own access log before and after adding
+`--proxy-headers --forwarded-allow-ips=127.0.0.1` to `make serve`'s command — the logged client
+address changed from `127.0.0.1` to the real forwarded one. Trusting only loopback keeps this safe:
+nothing off-box can forge a connection that originates from `127.0.0.1`.
+
+The APK was rebuilt against the Funnel URL and re-registered in `agent/dist/manifest.json`,
+replacing the stale entry. Because the URL is `https://`, `withDevBackendCleartext.js` correctly
+emitted no Network Security Config exception at all — confirmed by finding no
+`network_security_config` resource anywhere in the built project, where past sessions always found
+one scoped to a bare IP. Verified past "it built": `apksigner`'s certificate SHA-256 matched the
+keystore's own fingerprint, `aapt2 dump badging` confirmed package/version, and — the check that
+actually proves the public path works, not just the build — a real signup, login, and authenticated
+`GET /downloads/agent/app-release.apk` against the live Funnel URL returned the exact SHA-256 the
+manifest now records.
+
+What this is not: a traditional cloud deployment. `make serve` still runs from this Mac exactly as
+before; Funnel just gives its port a stable public front door instead of a LAN IP that moves with
+every network. It depends on Tailscale actually being connected on the Mac (menu-bar app, "Open at
+Login" enabled) — if Tailscale isn't running, the Funnel link goes down right along with it, no
+differently than `make serve` itself needing to be running for any of this to work at all.
+
 ## Conventions
 
 - Files stay under ~400 lines; split rather than grow.
@@ -1492,3 +1649,90 @@ this — there is no fix yet because there is no confirmed cause yet.
   a single lazy regex over the whole file starts inside the injected `signingConfigs.release` block
   and rewrites the *debug* buildType instead, silently leaving release on the public key. Passwords
   come from the environment, never `-P` gradle properties.
+
+### Phase 15: detection that runs itself, and two real-time defects behind it
+
+Three things reported from using both halves. All three turned out to be one theme — the system
+was doing less on its own than it looked like it was.
+
+**Live Monitoring sat still for several seconds before moving, and that was the agent, not the
+chart.** Phase 12 already fixed a *cosmetic* version of this (uPlot auto-fitting x). This one was
+real data not arriving. `_push_loop` read `connection.push_interval_seconds` once and then slept on
+it, and **nothing was reading the socket during that sleep** — so the `mode` frame the supervisor
+sends within a round trip of a viewer opening the page sat unread for up to the full 10s interval.
+Worse, the push that finally woke up was still built in the old mode: one 10s-collapsed row, with
+live mode only taking effect on the iteration after that. This is character-for-character the bug
+Phase 10b found in the Kotlin collector — *changing an interval does not shorten a sleep that has
+already started* — reached from the pusher's side instead of the sampler's, which is why the same
+lesson did not transfer: the fix went in one implementation and the reference implementation it was
+ported from kept the defect. `AgentConnection.idle()` now reads frames while it waits and returns
+early when the cadence actually changes (only when it *changes* — returning for every mode frame
+would rebuild the same batch a moment early for nothing). Measured against the real agent: last
+10s-resolution row at `17:37:06`, first 1s row at `17:37:07`, **no gap** — on the mode frame the
+agent flushes the 1s samples it had already buffered, so the viewer gets 1s history right back to
+where the 10s rows stopped instead of waiting a cycle for it.
+
+**The Windows agent was not sampling slowly; it was being asked to do too much per sample.** The
+sample interval was never the problem — `DEFAULT_SAMPLE_INTERVAL` has been `1` since Phase 2, on
+every platform. What differs is what one sample *costs*. `collect_processes()` (a walk of every
+process, opening each for name/user/memory) and `psutil.net_connections()` ran on **every** sample,
+i.e. once a second. On this Mac that measures 13.4ms and is invisible. The trap is why: `strings`
+of the numbers shows `net_connections()` at **0.1ms here — because macOS *denies* it without root
+and it fails fast.** On Windows the same call succeeds and walks the whole TCP table, and
+`process_iter` opens a handle per process. A cost this machine literally cannot observe is still a
+cost, and at a 1s budget it is the difference between keeping time and not. Both are now throttled
+to their own cadence (10s for processes, 15s for connections/users), carrying the last **real**
+measurement between probes — the pattern `runner.py` already used for latency, and allowed for the
+same reason: the value is always something that was measured, just measured slightly earlier.
+Process collection also moved to `asyncio.to_thread`, since a blocking multi-hundred-millisecond
+walk on the event loop stalls the very socket read that carries the live-mode frame. Per-sample
+cost here fell from ~13.4ms to **0.8ms**. `sentinel-agent sample --timing` is new, and exists
+because this question can only be answered on the machine being asked about — it times five real
+samples against the configured budget.
+
+**Nothing detected anything until you told it to, and that was the actual gap.** The threshold
+evaluator, the adaptive anomaly baselines and the forecast-breach check all worked and all sat idle
+until somebody hand-wrote a rule, so a new account with machines enrolled was silent through a disk
+filling to 100% — not a failure to detect, a failure to have been asked to look. Every account now
+gets a default rule set (`app/alerts/defaults.py`, migration `0014`): four static thresholds, two
+adaptive anomaly rules, two forecast rules. They are **ordinary `AlertRule` rows**, deliberately not
+a parallel mechanism — the evaluator sweep, the OK/PENDING/FIRING machine, incident correlation and
+notification dispatch treat them exactly like hand-written rules, which is the same refusal to add a
+second evaluation path that Phases 6, 7 and 8 each made. `device_id` is `None` on all of them, which
+is load-bearing: `_rule_device_pairs` fans a null-device rule across the account's devices at sweep
+time, so a machine enrolled tomorrow is covered by rules seeded today with nothing re-running.
+
+`source` (`"user"` / `"builtin"`) is presentation only — the evaluator never reads it — and both
+clients group on it, because eight rules somebody did not write, mixed in with the ones they did,
+read as clutter rather than as help. Builtin rules stay fully editable and deletable: a default you
+cannot turn off is a worse default. `ensure_default_rules()` asks whether an account has *ever* been
+seeded rather than whether it currently has all eight, so **a default you delete stays deleted** —
+the alternative resurrects it on every run, which is not a default but a bug the user cannot work
+around. The migration backfills existing accounts and skips any that already have one.
+
+Verified against the real backend rather than assumed: every existing account picked up its eight
+rules with hand-written ones left untouched and separately marked, and one sweep later the
+`anomaly_baselines` table showed **new `cpu_percent` baselines** (`sample_count=33`, updating live)
+for devices whose account had never had a CPU anomaly rule — detection that genuinely was not
+happening before. The OPPO phone correctly got **no** `cpu_percent` baseline at all, because Android
+denies `/proc/stat`: the automatic rules do not fabricate detection on a device that cannot measure
+the thing, which is docs/ANDROID_METRICS.md holding through a feature written long after it.
+
+One trap worth recording: the running `uvicorn` had been started **without `--reload`** (it is the
+LAN-bound one from the APK verification), so the page kept rendering every rule as user-written
+against a stale `AlertRuleOut` with no `source` field. The symptom — a heading that would not appear
+— looked like a frontend bug and was a stale server; `/openapi.json` is what settled it in one
+request.
+
+553 backend tests (was 546), 170 agent (was 165), 65 web, 81 mobile JS, 40 Kotlin.
+
+A self-inflicted scare worth recording, since it will happen again: running `pytest` in one shell
+while `make test` was still going in another produced five failures in `test_alert_rules_crud.py`
+that looked exactly like a regression from the seeding change. Both runs share one Postgres and
+truncate each other's tables between tests. Neither run is wrong; running them concurrently is.
+Serially, both are green.
+
+**The Windows machine will not get the sampling fix until its binary is rebuilt.** The agent it is
+running came from the CI matrix and predates all of the above; the fix is in the source, and reaching
+that machine means re-running `.github/workflows/agent-build.yml` and re-downloading. Same for the
+live-upshift fix on any enrolled desktop.

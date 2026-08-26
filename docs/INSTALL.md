@@ -15,6 +15,13 @@
 >
 > `make dev-backend`/`make dev-frontend` are for developing Sentinel itself:
 > both bind to localhost, so nothing else on the network can reach them.
+>
+> That LAN address can move — a new network, a renewed DHCP lease, a laptop
+> that changed Wi-Fi — which shows up here as an agent that suddenly can't
+> reconnect. If that keeps happening, see "Serving the console" in
+> `docs/PACKAGING.md` for using Tailscale Funnel to give the server a stable
+> public address instead, with no install needed on the agent's side beyond
+> the agent itself.
 
 An agent collects a machine's real metrics and pushes them **outbound** over an
 encrypted WebSocket. It opens no inbound ports, works behind NAT and corporate

@@ -80,6 +80,25 @@ configuration will get around.
 The real answer, when there is one, is to stop using a bare IP: an `https://`
 backend on a real domain never moves and needs no cleartext exception at all.
 
+**[Tailscale Funnel](https://tailscale.com/kb/1223/funnel) is a cheap way to get that domain
+without a real deployment.** Install Tailscale on the machine running `make serve` (nowhere else —
+Funnel serves a normal public `https://` URL that any device reaches directly, so the Windows/Linux
+agent and this app need nothing beyond themselves) and run `tailscale funnel --bg 8000`; it prints a
+stable `https://<machine>.<tailnet>.ts.net` address that survives DHCP changes, hotspot switches,
+and Wi-Fi MAC rotation, because it isn't derived from the local network at all. Point
+`EXPO_PUBLIC_API_URL` at that instead of a bare IP and this whole section stops applying — no
+cleartext exception is generated, and the address doesn't go stale when the laptop changes
+networks.
+
+That said, a Funnel link is genuinely public, not merely LAN-local, so before pointing a real
+backend at one, satisfy `app/config.py`'s `ENVIRONMENT=prod` checks for real: rate limiting on, a
+real `JWT_SECRET`, `COOKIE_SECURE=true` (now possible — Funnel terminates real TLS), and the
+`sentinel_app` database role's password rotated with `ALTER ROLE` (editing `.env` alone does not
+change what Postgres already has, since the role is created once by migration `0001` and never
+after). Also add `--proxy-headers --forwarded-allow-ips=127.0.0.1` to the `uvicorn` invocation —
+Funnel proxies locally to `127.0.0.1`, and without that flag the rate limiter's `_client_ip()` would
+see every visitor as the same address and share one bucket among all of them.
+
 Over plain `http`, the backend must be running with `COOKIE_SECURE=false` — the
 refresh cookie is otherwise never stored and every app restart logs you out.
 The backend also needs to be listening on more than loopback for a physical

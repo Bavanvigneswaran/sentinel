@@ -56,7 +56,8 @@ serve: web-build
 	echo ""; \
 	echo "  Point frontend/mobile/.env at http://$$ip:8000 before building an APK."; \
 	echo ""
-	cd backend && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+	cd backend && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 \
+		--proxy-headers --forwarded-allow-ips=127.0.0.1
 
 test:
 	cd backend && .venv/bin/pytest -q
