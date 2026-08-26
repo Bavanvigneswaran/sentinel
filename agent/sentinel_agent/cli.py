@@ -28,6 +28,7 @@ import os
 import platform
 import signal
 import sys
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -193,6 +194,35 @@ def cmd_sample(args: argparse.Namespace) -> int:
         await agent.sample_once()
         await asyncio.sleep(config.sample_interval_seconds)
         return await agent.sample_once()
+
+    if args.timing:
+        # What one sample actually costs on *this* machine, which is the only
+        # place the question can be answered. The agent samples once a second;
+        # a sample that takes longer than that cannot be taken once a second,
+        # and the visible symptom is a Live Monitoring trace that crawls
+        # rather than streams.
+        #
+        # Worth running on Windows specifically. On macOS two of the three
+        # expensive probes are cheap only because the OS *denies* them —
+        # net_connections() needs root here and fails in a tenth of a
+        # millisecond, while on Windows it succeeds and walks the whole TCP
+        # table. A cost this Mac cannot see is still a cost.
+        async def timed() -> None:
+            await agent.sample_once()  # prime the counters
+            for i in range(1, 6):
+                started = time.perf_counter()
+                await agent.sample_once()
+                elapsed = (time.perf_counter() - started) * 1000
+                print(f"sample {i}: {elapsed:8.1f} ms", file=sys.stderr)
+            budget = config.sample_interval_seconds * 1000
+            print(
+                f"\nbudget:   {budget:8.1f} ms (sample_interval_seconds"
+                f" = {config.sample_interval_seconds})",
+                file=sys.stderr,
+            )
+
+        asyncio.run(timed())
+        return 0
 
     print(json.dumps(asyncio.run(once()), indent=2, default=str))
     return 0
@@ -366,7 +396,14 @@ def build_parser() -> argparse.ArgumentParser:
     enroll_parser.set_defaults(func=cmd_enroll)
 
     sub.add_parser("run", help="run the agent in the foreground").set_defaults(func=cmd_run)
-    sub.add_parser("sample", help="print one real sample and exit").set_defaults(func=cmd_sample)
+    sample_parser = sub.add_parser("sample", help="print one real sample and exit")
+    sample_parser.add_argument(
+        "--timing",
+        action="store_true",
+        help="time five samples instead of printing one, to see whether this "
+        "machine can actually sample as often as it is configured to",
+    )
+    sample_parser.set_defaults(func=cmd_sample)
     sub.add_parser("status", help="show configuration and service state").set_defaults(
         func=cmd_status
     )
