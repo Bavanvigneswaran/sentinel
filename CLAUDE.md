@@ -1744,3 +1744,105 @@ Serially, both are green.
 running came from the CI matrix and predates all of the above; the fix is in the source, and reaching
 that machine means re-running `.github/workflows/agent-build.yml` and re-downloading. Same for the
 live-upshift fix on any enrolled desktop.
+
+
+### Phase 16: a phone that sleeps, panels that can never fill, and a window narrow enough to see move
+
+Four things reported from using both halves, plus a question about the Windows machine.
+
+**A phone went "offline · not currently connected" the moment its screen was turned off**, and came
+back the moment it was turned on. Nothing was killed and nothing crashed: `FOREGROUND_SERVICE` keeps
+the *process* from being reclaimed and says nothing about the application processor, which suspends
+within seconds of the screen going off unless something holds a wake lock. A suspended SoC does not
+run kotlinx's timer thread, so the sample loop's `delay(10s)` and the push loop's
+`delay(pushInterval)` simply never fire — and the socket goes unread and unwritten with them. The
+service was there the whole time, asleep, exactly as the OS intends by default.
+
+`CollectorService` now holds a `PARTIAL_WAKE_LOCK` for as long as it is collecting, tagged
+`sentinel:collector` so it is identifiable in `dumpsys power`, not reference-counted (START_STICKY
+can redeliver a start, and a surplus acquisition would outlive the single release), with no timeout
+(a timeout reintroduces this exact bug, later and harder to reproduce), and released on every path
+that stops collecting. Failing to acquire it is logged and survived rather than fatal — a collector
+that samples only while the screen is on is degraded; one that refuses to start is useless.
+
+The battery cost is real and is the point of the trade, not a side effect: a partial wake lock keeps
+the CPU out of suspend, which is the largest thing an app can do to a phone's battery. It is right
+here because the alternative is not a cheaper collector, it is one that reports nothing for the
+majority of a phone's day — and the manifest's own specialUse justification ("monitoring must
+continue while the app is backgrounded or closed") is simply false without it. The cheaper mechanism
+does not reach: `setExactAndAllowWhileIdle` is throttled to roughly one firing per app per minute
+awake and far less under Doze, so it cannot drive a 10s cadence, let alone live mode's 1s. And the
+wake lock does **not** buy immunity from Doze, which ignores wake locks outright once a device has
+been stationary long enough — the battery-optimisation exemption the collector screen already offers
+when `batteryOptimizationExempt` is false is the other half of the same guarantee, not an
+alternative to it.
+
+Not covered by a test, and worth saying so: the collector's 40 Kotlin tests are pure JVM unit tests
+with no Android framework in them (`make mobile-collector-test` needs no emulator, deliberately), and
+a `PowerManager.WakeLock` cannot be exercised there. It compiles and the suite is green; whether the
+lock actually holds through a screen-off is a claim only a real phone can settle.
+
+**Live Monitoring's default window is 1m, on both halves.** Every window draws the same samples at
+the same rate; all the width changes is how far one new second moves the trace, so the narrowest
+option is the one that reads as live and the widest is the one that reads as frozen. Somebody who
+wants more context can widen it; somebody staring at a chart wondering whether it has stopped cannot
+tell that the fix is to narrow it. `DEFAULT_LIVE_WINDOW_SECONDS` is 60 (was 120) and the web picker's
+"2m" is now a literal rather than the default it used to name.
+
+The phone has no picker, which is the other half of the argument for putting it at the lively end
+rather than the middle: `chartFrame.ts`'s `MAX_POINTS` is 60 (was 180). That renderer has no time
+axis — x is the point's index, so the count *is* the window, and at the live 1s cadence 60 points is
+the same one minute the web page now defaults to. At 180 each new sample moved the trace by a third
+of what it does at 60, which is a chart drawing every point and visibly doing nothing.
+
+**Android's CPU, disk-I/O and process panels are gone from Live Monitoring rather than permanently
+empty.** `HistoryScreen` and `DeviceHistoryPage` have made this decision since Phase 10b; the two
+live surfaces never did, so a phone rendered three panels reading "No data yet." forever — which is
+how a working collector comes to look like a broken agent, the precise impression
+`lib/deviceReadings.ts` exists to prevent. Both live surfaces now fetch the device and gate on
+`platform`, and both state the exclusion in words rather than being quietly shorter.
+
+The gate is deliberately "appear when known to be a desktop", never "disappear when known to be a
+phone": a CPU card drawn for one frame and then taken away is the same wrong impression, just
+briefer. The panels every platform can fill are not gated at all, so the page is never blank while
+that fetch is in flight, and a failed fetch is a settled answer that falls back to desktop.
+
+**A sample that overruns its own interval now says so in the agent's log.** This is the one agent
+failure mode invisible from every other vantage point: it connects, handshakes and pushes exactly as
+a healthy agent does, and the only symptom is samples stamped further apart than the resolution they
+claim — which surfaces as a live chart advancing in jumps and reads as a slow network, a server
+problem, or a chart bug. `_warn_if_overrunning()` logs the measured cost, the budget it missed, and
+`sentinel-agent sample --timing` as the next step, once immediately and then at most once a minute
+(a machine that is slow is slow on every sample; a warning per second buries the log it is trying to
+make readable). Recovering re-arms it, so a burst that clears on its own is two events rather than
+one open-ended one.
+
+It exists because of where this project is developed. The two most expensive probes in a sample cost
+almost nothing on macOS *because* the OS denies them and they fail fast, and real milliseconds on
+Windows where they succeed — so the machine with the problem is the only one that can report it, and
+until now it had no way to.
+
+174 agent tests (was 170), 81 mobile JS, 40 Kotlin, and 73 web — 73, not the 65 recorded in Phase 15:
+nothing here adds a web test, and `vitest run` counts 73 across six files, so that earlier figure was
+miscounted the same way the Kotlin one was. The backend was not touched and its suite was not re-run.
+
+### The Windows agent, and whether the project should move there
+
+Asked whether to install Claude Code on the Windows machine and move the project to it. Mostly
+overkill, for a specific reason: **the defect it would be moved to fix is already fixed in this
+tree**. The binary that machine is running was built by the CI matrix on 2026-08-25 and predates
+every Phase 15 sampling change — the process walk and `net_connections()` throttles, the
+`asyncio.to_thread` move, and `idle()` reading the socket while it waits. Those are exactly the
+changes that stop a Windows agent from being unable to keep a 1s budget, which is what a trace that
+crawls and occasionally stalls looks like. The path to that machine is a rebuild and a re-download,
+not a second development environment.
+
+Moving the tree would also split a setup that is entirely anchored here: the release keystore in
+`~/.sentinel-keys/`, the Tailscale Funnel front door, TimescaleDB and Redis in Docker on this Mac,
+and this Mac's own launchd agent. Two working copies of a repo whose halves are wired to one host is
+a cost paid continuously for a benefit needed occasionally.
+
+What a Windows checkout *would* genuinely buy is a minutes-long edit/run loop against Windows-only
+behaviour instead of a CI round trip — which is real, and is why `sample --timing` and the overrun
+warning above exist: both were built so that question can be answered from the machine that has the
+problem without a development environment on it.
