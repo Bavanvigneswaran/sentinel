@@ -28,6 +28,27 @@
   <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
   <!--
+    A foreground service is not a running CPU.
+
+    FOREGROUND_SERVICE keeps the *process* from being reclaimed; it does nothing
+    about the application processor suspending, which is what happens within
+    seconds of the screen going off unless something holds a wake lock. A
+    suspended SoC does not run kotlinx's timer thread, so the sample loop's
+    `delay(10s)` and the push loop's `delay(pushInterval)` simply do not fire —
+    and the socket goes unread and unwritten with them.
+
+    The visible result was a phone that went "offline · not currently connected"
+    the moment its screen was turned off and came back the moment it was turned
+    on, which reads as the app being killed and is not: nothing was killed,
+    nothing crashed, and the service was still there the whole time. It was
+    asleep, exactly as the OS intends by default.
+
+    See CollectorService for the battery cost this buys and why it is the right
+    trade for this particular service.
+  -->
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+  <!--
     The collector runs in the app's own process, not a :collector one.
 
     What the phase requires is that the collector never depends on the React
