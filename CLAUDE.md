@@ -1091,6 +1091,11 @@ detected, not configured; nothing to set up beyond having Funnel running.
 - **Two database roles.** The app connects as `sentinel_app` (NOSUPERUSER, NOBYPASSRLS) so RLS is
   actually enforced; `sentinel` owns the tables and is used only by Alembic, tests, and the pre-auth
   paths. A superuser bypasses RLS silently, which would make every policy decorative.
+  **The test suite has a third, `sentinel_app_test`** — same attributes, its own password, created by
+  the same migration 0001 from `APP_DB_ROLE`. A ROLE is cluster-wide while a GRANT is per-database,
+  so `sentinel_test` being a separate database never isolated the suite from the *credential* it
+  logged in with; `tests/conftest.py`'s `_no_shared_credential()` refuses to run as a role that does
+  not end in `_test`, and refuses a `DATABASE_URL` whose username disagrees with `APP_DB_ROLE`.
 - **`get_unscoped_session()` is for `auth_service` only.** It reaches past RLS. A test walks the AST
   of `app/` to enforce this — if you need it somewhere new, that is a design discussion.
 - **Tenant scoping goes through `scope_to_user()`**, never a raw `SET LOCAL` (which cannot take bind
@@ -1825,6 +1830,31 @@ until now it had no way to.
 174 agent tests (was 170), 81 mobile JS, 40 Kotlin, and 73 web — 73, not the 65 recorded in Phase 15:
 nothing here adds a web test, and `vitest run` counts 73 across six files, so that earlier figure was
 miscounted the same way the Kotlin one was. The backend was not touched and its suite was not re-run.
+
+**The test suite has its own database role now, and that is a correctness fix rather than
+housekeeping.** Rotating `sentinel_app`'s password for the public Funnel front door — an `ALTER
+ROLE`, which is the correct way to rotate it — broke 222 backend tests that had nothing to do with
+it. A Postgres role is cluster-wide and a grant is per-database, so `sentinel_test` being its own
+database bought no isolation at all from the login it connected with: the suite and the real
+deployment were sharing one credential on one cluster, and `.env.test` is committed while a real
+deployment's password is not. The only two repairs available were to commit the live credential or
+to hand-patch `.env.test` after every rotation, which is a chore that silently becomes 222 confusing
+failures the one time somebody forgets.
+
+The fix cost no code: migration 0001 has taken its role name from `APP_DB_ROLE` since Phase 1 and
+creates it when missing (roles being cluster-wide is exactly what makes that `IF NOT EXISTS` guard
+idempotent), and 0003 and 0005 grant to the same setting — so pointing `.env.test` at
+`sentinel_app_test` was configuration. Verified at the cluster: the new role is NOSUPERUSER,
+NOBYPASSRLS, NOCREATEROLE, and `test_rollup_tenancy.py` passes against it, which is the real proof
+RLS is still enforced rather than the attribute flags being the claim.
+
+What is new is `conftest.py`'s `_no_shared_credential()`, the twin the existing "database name must
+end in `_test`" assertion never had. Its second check is the one that earns its place: migrations
+grant to `APP_DB_ROLE` while the engine connects as whoever `DATABASE_URL` names, so a half-finished
+edit to that file grants one role and logs in as another — and fails as an authentication error
+naming neither setting. Both assertions were proved by reproducing the conditions they exist for:
+`APP_DB_ROLE=sentinel_app` now stops the run with a sentence naming the cause, where before it
+produced 222 `InvalidPasswordError`s.
 
 ### The Windows agent, and whether the project should move there
 

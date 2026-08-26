@@ -1,10 +1,19 @@
 """Test harness.
 
-The suite owns its database: it drops and recreates `sentinel_test` on the same
-Timescale container, migrates it, and points the app engines at it. Migration
-0001 finds `sentinel_app` already present (roles are cluster-global) and skips
-creating it, while the per-database grants still apply — which is exactly why
-that migration guards with IF NOT EXISTS.
+The suite owns its database *and* its role: it drops and recreates
+`sentinel_test` on the same Timescale container, migrates it, and points the app
+engines at it as `sentinel_app_test` — never as the `sentinel_app` a real
+deployment uses. Migration 0001 takes the role name from APP_DB_ROLE and creates
+it when missing, guarded by IF NOT EXISTS because roles are cluster-global; the
+per-database grants are re-applied on every run regardless.
+
+That separation is load-bearing rather than tidy. A ROLE is cluster-wide and a
+GRANT is per-database, so a test database on a shared cluster is not isolated
+from the credential it logs in with. While the two shared one, rotating the
+deployment's password with ALTER ROLE — the correct way to rotate it — broke the
+entire suite, and the only repairs on offer were to commit a live credential to
+the repo or to hand-patch .env.test after every rotation. `_no_shared_credential`
+below is what stops the two quietly growing back together.
 
 Environment MUST be configured before anything under `app.` is imported: Settings
 is lru_cached, and app.db builds its engines at import time.
@@ -39,6 +48,34 @@ def _server_url(url: str, database: str) -> str:
     return sa.make_url(url).set(database=database).render_as_string(hide_password=False)
 
 
+def _no_shared_credential(settings) -> None:  # noqa: ANN001
+    """Refuse to run as a role that is not exclusively the suite's.
+
+    The database-name check above has a twin, and for a long time only one of
+    them existed. `sentinel_test` being a separate *database* says nothing about
+    the *role*: roles live in the cluster, so pointing the suite at a deployment's
+    login means every credential rotation over there is a broken test run here,
+    and every fix is either a committed secret or a manual edit.
+
+    The second assertion is the one that catches a half-finished change to
+    .env.test: migrations grant to APP_DB_ROLE while the engine connects as
+    whoever DATABASE_URL names, so editing one and not the other yields a suite
+    that grants the test role and then logs in as the production one — which
+    fails as an authentication error naming neither setting.
+    """
+    role = settings.app_db_role
+    assert role.endswith("_test"), (
+        f"the suite must have its own database role, not {role!r} — a role is "
+        f"cluster-wide, so sharing one with a real deployment means its next "
+        f"password rotation breaks this suite. See backend/.env.test."
+    )
+    login = sa.make_url(settings.database_url).username
+    assert login == role, (
+        f"DATABASE_URL connects as {login!r} but APP_DB_ROLE is {role!r}; "
+        f"migrations would grant one role and the engine log in as another."
+    )
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _database() -> None:
     """Drop, recreate, and migrate the test database once per session."""
@@ -47,6 +84,7 @@ def _database() -> None:
 
     target = sa.make_url(settings.admin_database_url).database
     assert target and target.endswith("_test"), f"unsafe test database name: {target!r}"
+    _no_shared_credential(settings)
 
     import asyncio
 
