@@ -20,6 +20,7 @@ Metric = Literal[
 ]
 Comparison = Literal[">", ">=", "<", "<=", "=="]
 RuleType = Literal["threshold", "anomaly", "forecast"]
+RuleSource = Literal["user", "builtin"]
 AlertState = Literal["ok", "pending", "firing"]
 EventStatus = Literal["firing", "resolved"]
 
@@ -97,6 +98,10 @@ class AlertRuleOut(BaseModel):
     threshold: float | None
     for_duration_seconds: int
     enabled: bool
+    #: "builtin" for a rule the product seeded so the account detects things
+    #: out of the box, "user" for one somebody wrote. The clients group by
+    #: this and explain the builtin ones; nothing in the evaluator reads it.
+    source: RuleSource
     created_at: datetime
     updated_at: datetime
 

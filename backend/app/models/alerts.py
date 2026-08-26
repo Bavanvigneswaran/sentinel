@@ -65,6 +65,11 @@ METRICS = (
 )
 COMPARISONS = (">", ">=", "<", "<=", "==")
 RULE_TYPES = ("threshold", "anomaly", "forecast")
+#: Where a rule came from. "builtin" rows are seeded by
+#: app/alerts/defaults.py so an account detects things without having been
+#: configured; they are ordinary rules in every other respect, including
+#: being editable and deletable.
+RULE_SOURCES = ("user", "builtin")
 ALERT_STATES = ("ok", "pending", "firing")
 EVENT_STATUSES = ("firing", "resolved")
 
@@ -84,6 +89,7 @@ class AlertRule(TimestampMixin, Base):
         sa.CheckConstraint(in_check("metric", METRICS), name="metric"),
         sa.CheckConstraint(in_check("comparison", COMPARISONS), name="comparison"),
         sa.CheckConstraint(in_check("rule_type", RULE_TYPES), name="rule_type"),
+        sa.CheckConstraint(in_check("source", RULE_SOURCES), name="source"),
         sa.CheckConstraint(
             "(rule_type IN ('threshold', 'forecast') AND threshold IS NOT NULL "
             "AND comparison IS NOT NULL) "
@@ -108,6 +114,12 @@ class AlertRule(TimestampMixin, Base):
     #: AnomalyBaseline row instead. See module docstring.
     rule_type: Mapped[str] = mapped_column(
         sa.Text, nullable=False, server_default=sa.text("'threshold'")
+    )
+    #: "user" for a hand-written rule, "builtin" for one from
+    #: app/alerts/defaults.py. Presentation only — the evaluator does not read
+    #: it, and a builtin rule is edited and deleted like any other.
+    source: Mapped[str] = mapped_column(
+        sa.Text, nullable=False, server_default=sa.text("'user'")
     )
     metric: Mapped[str] = mapped_column(sa.Text, nullable=False)
     comparison: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
