@@ -1876,3 +1876,24 @@ What a Windows checkout *would* genuinely buy is a minutes-long edit/run loop ag
 behaviour instead of a CI round trip — which is real, and is why `sample --timing` and the overrun
 warning above exist: both were built so that question can be answered from the machine that has the
 problem without a development environment on it.
+
+**The matrix was run and all four binaries are published**, which retires Phase 15's standing note
+that the Windows machine could not get the sampling fix. Run 33007520006 off
+`review/codebase-fixes`: four green jobs plus the merge, windows-x64 in 1m3s, and its smoke step ran
+`--version` *and* `sample` under `bash -e -o pipefail` — `sample` being the one that proves psutil's
+compiled extension made it into the bundle. Every artifact's SHA-256 and byte count was matched
+against the manifest on download and again after publishing, and the freshly built macOS arm64
+binary was run here: it answers `sample --timing`, a subcommand that exists only in the new code, so
+the fix demonstrably shipped rather than merely having been committed before the build.
+
+The manifest was **merged, not replaced** — CI does not build the APK, and `merge_manifests()` keys
+on `(os, arch)` with the newest `built_at` winning, so the android entry survived while all four
+desktop entries were superseded. The running server needed no restart: `download_service` documents
+its refusal to cache the manifest for exactly this case, and its catalogue was re-read in-process to
+confirm `unavailable_reason` is None, all five builds resolve, and a `../../../etc/passwd` filename
+is still refused by the allow-list.
+
+This Mac's own LaunchAgent was restarted onto the fixed code (an editable install, so the source was
+already there and only the running process was stale) — reconnected as the same `device_id`, so its
+history is continuous, and its log carries no overrun warnings, consistent with the 1.0ms it
+measures.
