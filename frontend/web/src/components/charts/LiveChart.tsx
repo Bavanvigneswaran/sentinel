@@ -28,11 +28,17 @@ const REDRAW_INTERVAL_MS = 250
  * second moves the trace by 1/300th of the width and then less. It is
  * genuinely drawing every sample; it just cannot be seen doing it.
  *
- * A fixed window makes the scroll rate constant: at 120s each new second is
- * a visible 1/120th step, and it stays that way however long the screen is
- * left open.
+ * A fixed window makes the scroll rate constant: at 60s each new second is a
+ * visible 1/60th step, and it stays that way however long the screen is left
+ * open.
+ *
+ * The default is the *shortest* option on purpose. Every window shows the same
+ * data at the same rate; the only thing the choice changes is how far one
+ * second moves the trace, so the narrowest one is the one that reads as live.
+ * Somebody who wants more context can widen it; somebody staring at a chart
+ * wondering whether it is frozen cannot tell that they should narrow it.
  */
-export const DEFAULT_LIVE_WINDOW_SECONDS = 120
+export const DEFAULT_LIVE_WINDOW_SECONDS = 60
 
 interface LiveChartProps {
   title: string
