@@ -1897,3 +1897,29 @@ This Mac's own LaunchAgent was restarted onto the fixed code (an editable instal
 already there and only the running process was stale) — reconnected as the same `device_id`, so its
 history is continuous, and its log carries no overrun warnings, consistent with the 1.0ms it
 measures.
+
+**The APK was rebuilt and re-registered**, because the wake lock is a native manifest change and
+Metro fast-refresh cannot carry one — the registered APK would otherwise have been the app without
+the fix this phase is mostly about. `make mobile-apk` runs `expo prebuild --clean` itself, which is
+what merges the collector module's manifest, and the check that matters is that
+`aapt2 dump permissions` on the *built* APK lists `android.permission.WAKE_LOCK`: the module's
+manifest being right is not the same claim as the merge having happened. `apksigner`'s certificate
+SHA-256 was matched against `keytool`'s own fingerprint for the keystore rather than against the
+value written down here (`A6:A7:8F:80…8469`, the real release key, not React Native's public debug
+one), and the Funnel URL plus this session's new Android-gating copy were both found in the shipped
+**Hermes bytecode** via `strings` — plain `grep` finds nothing in it, which is its own small trap
+already recorded in Phase 14.
+
+Two absences were verified as well, since both are failure modes this project has actually shipped
+before. The APK carries **no** `networkSecurityConfig` and **no** `usesCleartextTraffic` at the
+application level, which is correct now that `EXPO_PUBLIC_API_URL` is the `https://` Funnel address —
+Phase 11's cleartext exception exists for plain-http backends and an https one needs none. And
+because no config is generated at all, the RN template's own debug-variant `usesCleartextTraffic`
+is left unopposed, so the Metro dev loop still works: that is precisely the Phase 13 defect where a
+config dropped into `src/main/res` silently outranked it and killed `expo run:android`. The Kotlin
+suite was re-run against the regenerated project too, since `android/` is generated and Phase 13's
+other lesson is that regenerating it is exactly when unrelated Gradle targets break.
+
+`agent/dist/` now holds five artifacts whose manifest matches the bytes on disk for every one, the
+served APK is byte-identical to the one just built, and the server's own catalogue re-reads all five
+with `unavailable_reason` None.
