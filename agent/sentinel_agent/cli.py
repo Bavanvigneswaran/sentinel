@@ -33,14 +33,14 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from sentinel_agent import __version__
+from sentinel_agent.collectors import latency as latency_mod
+from sentinel_agent.collectors.resources import collect_processes
 from sentinel_agent.config import (
     DEFAULT_CONFIG_PATH,
     AgentConfig,
     ConfigError,
     requires_tls,
 )
-from sentinel_agent.collectors import latency as latency_mod
-from sentinel_agent.collectors.resources import collect_processes
 from sentinel_agent.enroll import EnrollmentError, enroll
 from sentinel_agent.paths import SCOPES, Scope, config_path, is_private
 from sentinel_agent.runner import LATENCY_INTERVAL_SECONDS, PROCESS_INTERVAL_SECONDS, Agent
