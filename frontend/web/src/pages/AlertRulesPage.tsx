@@ -98,6 +98,16 @@ export function AlertRulesPage() {
                   {deviceName(rule.device_id)} · {rule.metric} anomaly detection
                   {sensitivity && <> · sensitivity: {sensitivity}</>}
                 </>
+              ) : rule.rule_type === "multivariate" ? (
+                <>
+                  {/* `novelty_score` is a schema detail, not something to show
+                      a person: every other rule type has a metric name that
+                      means something on its own, and this one does not. The
+                      threshold is a percentile, so it gets a /100 rather than
+                      being left as a bare number. */}
+                  {deviceName(rule.device_id)} · unusual combination of readings{" "}
+                  {rule.comparison} {rule.threshold}/100 for {rule.for_duration_seconds}s
+                </>
               ) : (
                 <>
                   {deviceName(rule.device_id)} · {rule.metric}{" "}

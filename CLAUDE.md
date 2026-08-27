@@ -2251,7 +2251,20 @@ prove the path and its threshold was chosen to fire — retune or delete it; the
 "(verify)" in the name is there so its origin is not mistaken for a real
 default.
 
-Not verified: **the rule form's fourth toggle has not been seen in a browser.**
-tsc, oxlint and all three suites pass, and the backend path is confirmed end to
-end, but the server restart dropped the session again. Same outstanding check as
-the novelty card had, one commit earlier.
+**Seen in the browser**, and it found one more raw-key leak that three earlier
+passes had missed: both rules *lists* rendered "novelty_score > 71 for 0s". The
+generator, notify.py and the rule form had each been taught about the new type;
+the list summaries had not. They now read "unusual combination of readings >
+71/100" — with the /100, because the threshold is a percentile and a bare 71 is
+71 of nothing. That makes five display surfaces this rule type had to reach, and
+the fourth and fifth were both found by looking rather than by a test.
+
+The form itself renders as designed: four toggles, and selecting Combination
+replaces the metric `<select>` with "All of them at once — the novelty score."
+
+One tooling note, recorded so it is not re-diagnosed as a product bug: while the
+Browser pane had an *emulated* viewport (`resize_window` with explicit
+width/height), pointer clicks landed on the right CSS coordinates and had no
+effect — neither "New rule" nor "Edit" opened anything, with every API call 200
+and no console error. Clearing the emulation (`preset: "desktop"`) fixed it
+immediately. Nothing wrong with the page.

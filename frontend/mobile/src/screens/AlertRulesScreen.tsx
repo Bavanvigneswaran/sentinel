@@ -136,9 +136,15 @@ export function AlertRulesScreen({ route }: RootStackScreenProps<"AlertRules">) 
               {rule.rule_type === "anomaly"
                 ? `${deviceLabelFor(rule.device_id)} · ${rule.metric} anomaly detection` +
                   (sensitivity ? ` · sensitivity: ${sensitivity}` : "")
-                : `${deviceLabelFor(rule.device_id)} · ${rule.metric} ` +
-                  (rule.rule_type === "forecast" ? "predicted " : "") +
-                  `${rule.comparison} ${rule.threshold} for ${rule.for_duration_seconds}s`}
+                : rule.rule_type === "multivariate"
+                  ? // `novelty_score` is a schema detail, not something to show a
+                    // person, and its threshold is a percentile rather than a
+                    // bare number — so it reads "/100" here.
+                    `${deviceLabelFor(rule.device_id)} · unusual combination of readings ` +
+                    `${rule.comparison} ${rule.threshold}/100 for ${rule.for_duration_seconds}s`
+                  : `${deviceLabelFor(rule.device_id)} · ${rule.metric} ` +
+                    (rule.rule_type === "forecast" ? "predicted " : "") +
+                    `${rule.comparison} ${rule.threshold} for ${rule.for_duration_seconds}s`}
             </Text>
             <View style={styles.actions}>
               <Button
