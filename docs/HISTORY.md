@@ -1892,3 +1892,102 @@ check what `WebConsoleMiddleware` will do with it before believing a live phone 
 
 995 tests green in total: 613 backend (+7 for the ticket mint/redeem/scoping and the APK MIME type),
 174 agent, 80 web, 88 mobile JS, 40 Kotlin. `make lint` and `make typecheck` both clean.
+
+### Notification channels: three that existed, none that had ever delivered
+
+The question was plain enough — "does any of this actually work?" — and the answer was no, for all
+three channels, in a way that every surface had been reporting honestly the whole time.
+
+Web push, email and FCM had been code-complete since Phase 5 and Phase 10a: correct best-effort
+dispatch, correct per-channel isolation, correct gating, correct error copy. What none of them had
+was a credential. `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` and `SMTP_HOST` were all
+blank in `backend/.env`, and `frontend/mobile/google-services.json` did not exist. Every "firing"
+notification since Phase 5 had been logged and dropped by the three unconfigured-guard branches in
+`notify.py` — which is exactly the graceful-absence posture those branches were written for, and
+also exactly why nobody had noticed: the system says "not configured" in a tone indistinguishable
+from "not implemented", and the difference only shows up if you go and read the env file.
+
+The account email was the sharper version of the same problem. The console offered to fall back to
+the signed-in user's own address, which was `phase10a@example.com` — a real `users` row created
+during Phase 10a's mobile-auth work, still the account in daily use, on IANA's reserved
+documentation domain. It has no MX record and never will. So even a fully configured SMTP server
+would have delivered to nowhere, and the UI's "we'll email your account address" would have been
+true and useless at the same time.
+
+**Setting up web push, and not trusting the key format.** The keypair is two different encodings of
+the same secret, and getting either wrong fails silently in a place that looks like a server
+problem: the private key is the raw 32-byte scalar, base64url unpadded, which is what pywebpush
+hands to `Vapid.from_string()`; the public key is the uncompressed P-256 point (65 bytes, leading
+`0x04`), which is what the browser wants as its `applicationServerKey`. This py_vapid has no
+`public_key_urlsafe_base64()`, so the app-server key is derived directly with
+`public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)`.
+
+Rather than paste the keys in and let the browser be the test, the generation script asserted the
+private key round-trips to the same public key, and a second script ran pywebpush's own
+`webpush(..., curl=True)` — which builds the encrypted payload and signs the VAPID JWT but returns
+the request instead of sending it. That caught nothing in the end, but it is the check worth keeping:
+it proves the format against the library that will actually consume it, offline, before any state
+exists in a browser. Two incidental findings from it — the signed header is lowercase
+`authorization: vapid`, and `curl=True` writes the encrypted payload to `encrypted.data` in the
+current working directory, which is stray repo litter if you run it from `backend/`.
+
+`VAPID_SUBJECT` took the deployment's own Tailscale Funnel `https://` URL rather than a personal
+`mailto:`. The spec accepts either; the subject is transmitted to the push service in the signed JWT
+on every single send, so the Funnel URL says the same "here is who operates this sender" without
+putting a personal address in front of Google and Apple a few thousand times a day.
+
+**Verified by firing a real rule on real data.** The Mac was sitting at ~74.8% memory, so a
+threshold rule at `mem_percent > 70` was genuinely true — no synthesised reading, no hand-inserted
+event, no shortcut past the evaluator. It walked `ok → pending → firing` across two 15s sweeps
+exactly as `step()` requires (`for_duration_seconds=0` still cannot fire on the tick it enters
+PENDING), fired at `value_at_fire=74.9`, and pushed through `notify._dispatch` to
+`web.push.apple.com` — Safari, so Apple's push service rather than Google's. Confirmed on screen.
+Worth noting the gate that a direct `_send_web_push` call skips: the real path checks
+`NotificationSettings.web_push_enabled` first, so that column being `true` had to be confirmed
+separately from the subscription row existing.
+
+**What the cleanup found.** Deleting the test rule afterwards surfaced an edge worth knowing about.
+`alert_events.rule_id` is `ON DELETE SET NULL` and `alert_states.rule_id` is `ON DELETE CASCADE` —
+both deliberate, because firing history is meant to outlive its rule (which is why `rule_name` and
+`rule_type` are snapshotted onto the event) while live evaluation state is not. The consequence is
+that **deleting a rule while it is FIRING leaves an event that nothing will ever resolve**: no rule,
+no evaluator tick, `status` stuck at `firing` forever.
+
+There were fifteen of these, and fourteen predated this session — `Memory above 50%` twelve times
+from Aug 23–25, `Swap` twice from Aug 25, all from earlier test rules deleted mid-fire. Between them
+they had been holding **eleven incidents open** since Aug 23, which is most of why the incident
+workspace looked permanently busy.
+
+Closing them out had one decision in it. `resolved_value` was left NULL on all fifteen, because no
+reading resolved them — they were closed administratively, and writing the last known value or the
+threshold there would have been a synthesised measurement that was indistinguishable from a real one
+the moment it landed. The contrast is visible in the data and is the point: a `Swap` event that
+resolved naturally on Aug 25 carries `42.57`, and the ones closed by hand carry nothing.
+`resolved_at` is the close time rather than a backdated guess, because they were genuinely open
+until then. The scope was `status='firing' AND rule_id IS NULL`, so nothing whose rule still exists
+was touched — the evaluator owns those, and the next sweep would have contradicted any hand-close
+anyway. Incident bookkeeping went through the real `maybe_close_incident()` rather than an UPDATE,
+so the flush-before-counting ordering held; eleven closed and one correctly stayed open on a
+genuinely-firing multivariate event.
+
+**Why Android still needs Firebase, and why that reads as overkill until you look at it.** Two
+reasonable objections came up. The first: the APK already shows a notification without any Firebase
+at all. It does — `CollectorNotification.kt` builds it on-device with Android's local
+`NotificationManager`, and it is the foreground service's mandatory status line, not a message from
+anywhere. Nothing about it involves a server. The second: web push needed no Firebase project, so
+why should the app. The answer is that web push *does* go through FCM for Chrome — the endpoint is
+literally `fcm.googleapis.com` — but the W3C standardised VAPID so any server can push through it
+without registering a Google Cloud project, and that is the whole reason browser push is
+config-free. Native Android has no VAPID equivalent. Waking a closed app from outside is a
+capability the OS grants through FCM (or UnifiedPush, which needs a distributor app the user
+installs); `expo-notifications` speaks only the former. So the Firebase project is a platform
+constraint, not a choice this codebase made, and it buys exactly one thing the other two channels
+do not already cover: alerts reaching the phone with no browser open.
+
+Windows, by contrast, needs nothing built. VAPID keys identify the *application server*, not a
+browser or a machine, so the keypair configured here already covers Chrome and Edge on any machine
+that can reach the Funnel URL — each browser simply creates its own `web_push_subscriptions` row and
+a firing alert fans out to all of them. The only requirement is loading the console over the Funnel
+`https://` origin rather than a LAN IP, since the Push API is not exposed on an insecure origin at
+all and its absence is reported as "this browser does not support push notifications", which reads
+like a browser problem and is not one.

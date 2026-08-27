@@ -63,7 +63,7 @@ react-native-svg for charts) in `mobile/`, plus a Kotlin collector module in Pha
 `review/codebase-fixes` do not have the novelty model, the fourth rule type, or migration `0015`.
 If a checkout suddenly has no `app/analysis/multivariate.py`, that is why — check the branch first.
 
-Two things live outside git and will not survive a fresh clone:
+Three things live outside git and will not survive a fresh clone:
 
 * **`NOVELTY_MODEL_DIR=/Users/bavan/PDD_Project/backend/var/models`** is set in `backend/.env`,
   which is gitignored. Without it the API reports no novelty score at all — correctly, and with a
@@ -71,6 +71,9 @@ Two things live outside git and will not survive a fresh clone:
 * **`backend/var/models/*.joblib`** are the trained models themselves, gitignored on purpose
   (generated artifacts, rebuilt from TimescaleDB). `make train-novelty` recreates them; only
   devices with 200+ usable rows get one, which today means this Mac and nothing else.
+* **The VAPID keypair** in the same gitignored `backend/.env`, generated 2026-08-28. Regenerating it
+  is not free: a browser binds a subscription to the key it was created with, so new keys mean every
+  row in `web_push_subscriptions` is dead and every browser has to enable push again.
 
 Also outside git, unchanged from earlier phases: the release keystore in `~/.sentinel-keys/`, and
 `agent/dist/` with its five published builds.
@@ -89,6 +92,53 @@ inspect the schema, run a dev server rather than concluding the route is missing
 The honest limits, unchanged: no code-signing certificates exist, so all four desktop builds are
 unsigned and Gatekeeper/SmartScreen interrupt every install; and there is no cloud deployment — if
 Tailscale or `make serve` is not running on this Mac, nothing is reachable.
+
+### Notification channels: what is actually configured
+
+Code-complete since Phase 5 and Phase 10a, but a channel only delivers if it has a credential, and
+until 2026-08-28 none of them did. Current state:
+
+* **Web push — working, verified end to end.** VAPID keypair in `backend/.env`, subject set to the
+  Funnel URL. Proven by a real threshold rule firing on a real reading and arriving in Safari.
+  **Windows and any other browser need nothing built** — VAPID identifies the application server,
+  not a machine, so the same keys cover Chrome/Edge anywhere; each browser adds its own
+  `web_push_subscriptions` row and an alert fans out to all of them. The one requirement is loading
+  the console over the Funnel `https://` origin: the Push API does not exist on an insecure origin,
+  and the app reports that as "this browser does not support push notifications", which reads like a
+  browser problem and is not one.
+* **Email — not configured, and blocked on two things, not one.** `SMTP_HOST` is blank *and* the
+  signed-in account's address is `phase10a@example.com`, a Phase 10a test row on IANA's reserved
+  documentation domain with no mailbox. Configuring SMTP alone would deliver nowhere. The plan is
+  Gmail + an app password, pending the user generating one.
+* **FCM — not configured, and it is the only way native Android push can work.** No
+  `frontend/mobile/google-services.json`, no `FCM_PROJECT_ID`/`FCM_SERVICE_ACCOUNT_FILE`. Two
+  objections to this are worth pre-empting because both are reasonable: the persistent notification
+  the APK already shows is `CollectorNotification.kt`, built on-device by the foreground service, and
+  involves no server; and web push avoids Firebase only because the W3C standardised VAPID over an
+  endpoint that *is* `fcm.googleapis.com` for Chrome. Native Android has no VAPID equivalent, so this
+  is a platform constraint rather than an implementation choice. Skipping it costs exactly one thing:
+  alerts reaching the phone with no browser open.
+
+**Deleting an alert rule while it is FIRING orphans its event.** `alert_events.rule_id` is `ON
+DELETE SET NULL` (firing history outlives its rule — hence the snapshotted `rule_name`/`rule_type`)
+while `alert_states.rule_id` is `ON DELETE CASCADE`, so the event survives with no rule, no
+evaluator tick, and `status` stuck at `firing` forever. Fifteen had accumulated from test rules and
+were holding eleven incidents open since Aug 23; all are now closed. If it happens again, close them
+with `status='firing' AND rule_id IS NULL` as the scope, leave `resolved_value` **NULL** — nothing
+measured them resolving, and a last-known value written there is a synthesised reading that is
+indistinguishable from a real one afterwards — and go through `maybe_close_incident()` rather than
+an UPDATE so the
+flush-before-counting ordering holds.
+
+**Picking this up again.** Email is the next piece and is blocked only on credentials the user has
+to generate. In order: create a Gmail app password (Google account → 2-Step Verification → App
+passwords → Mail); set `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_USE_TLS=true`, and
+`SMTP_USERNAME`/`SMTP_PASSWORD`/`SMTP_FROM` to that address and password in `backend/.env`; change
+the signed-in account's `users.email` off `phase10a@example.com` to a real address, or email will
+still go nowhere; restart the backend (`get_settings()` is `@lru_cache`d, so a running server keeps
+the old values); then verify by calling `notify._send_email` on the real path rather than trusting
+the config. Firebase/FCM was considered and deliberately deferred — the reasoning is in the bullet
+above, and nothing is broken by leaving it unset.
 
 ### How the history is filed
 
