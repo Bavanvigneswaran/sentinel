@@ -71,6 +71,9 @@ class Agent:
         self._last_latency_at = 0.0
         self._latest_processes: list[dict] = []
         self._last_processes_at = 0.0
+        #: The in-flight background refresh, if one is running. Never awaited
+        #: from sample_once — see the comment there for why.
+        self._process_task: asyncio.Task[None] | None = None
         #: None while sampling keeps time; the monotonic stamp of the first of
         #: the current run of overruns otherwise. See _warn_if_overrunning.
         self._overrun_since: float | None = None
@@ -86,15 +89,24 @@ class Agent:
             self._last_latency_at = now
             self._latest_latency = await latency_mod.measure_all(self._targets)
 
-        if self.config.collect_processes and (
-            now - self._last_processes_at >= PROCESS_INTERVAL_SECONDS
+        if (
+            self.config.collect_processes
+            and now - self._last_processes_at >= PROCESS_INTERVAL_SECONDS
+            and (self._process_task is None or self._process_task.done())
         ):
             self._last_processes_at = now
-            # Off the event loop: process_iter() is blocking, and on a machine
-            # with a few hundred processes it is long enough to stall every
-            # other task in the agent — including the socket read that carries
-            # the live-mode frame.
-            self._latest_processes = await asyncio.to_thread(collect_processes)
+            # Fired, not awaited: process_iter() runs off the event loop via
+            # to_thread already, but awaiting it *here* would still hold up
+            # this sample's own CPU/memory/disk/net collection and timestamp
+            # behind it, on top of whatever it does to the event loop — on a
+            # slow Windows box that is a real, ~2s stall stamped onto an
+            # otherwise-fast sample, not just a stale process list. The
+            # process field is already documented to carry a slightly-old
+            # value between probes; letting the refresh run concurrently
+            # rather than inline is what actually keeps that staleness
+            # confined to processes instead of leaking into every other
+            # metric in the same sample.
+            self._process_task = asyncio.create_task(self._refresh_processes())
 
         return {
             "ts": datetime.now(UTC).isoformat(),
@@ -107,6 +119,18 @@ class Agent:
             "latency": self._latest_latency,
             "processes": self._latest_processes if self.config.collect_processes else [],
         }
+
+    async def _refresh_processes(self) -> None:
+        # Off the event loop: process_iter() is blocking, and on a machine
+        # with a few hundred processes it is long enough to stall every other
+        # task in the agent — including the socket read that carries the
+        # live-mode frame. Exceptions are handled here, not in _sample_loop's
+        # try/except, because this task is fired rather than awaited from
+        # sample_once.
+        try:
+            self._latest_processes = await asyncio.to_thread(collect_processes)
+        except Exception:
+            logger.exception("process refresh failed; keeping the last known list")
 
     async def _sample_loop(self) -> None:
         while not self._stopping.is_set():
@@ -299,6 +323,12 @@ class Agent:
                 await sampler
             except asyncio.CancelledError:
                 pass
+            if self._process_task is not None and not self._process_task.done():
+                self._process_task.cancel()
+                try:
+                    await self._process_task
+                except asyncio.CancelledError:
+                    pass
 
     def stop(self) -> None:
         self._stopping.set()

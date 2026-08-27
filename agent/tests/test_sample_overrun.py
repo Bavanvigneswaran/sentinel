@@ -16,6 +16,7 @@ only one that can report it, which is what these warnings are for.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import pytest
@@ -93,3 +94,46 @@ def test_recovering_re_arms_the_warning(agent: Agent, caplog, monkeypatch) -> No
         agent._warn_if_overrunning(2.5)
 
     assert len(caplog.records) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_slow_process_walk_does_not_delay_the_sample(
+    agent: Agent, monkeypatch  # noqa: ANN001
+) -> None:
+    """The process refresh must not sit on the critical path of sample_once.
+
+    On Windows, walking every process is the single most expensive collector
+    (see PROCESS_INTERVAL_SECONDS's comment). Awaiting it inline used to stamp
+    that delay onto the *whole* sample — CPU, memory, disk and net included —
+    every time it ran, which is what a live chart freezing for a couple of
+    seconds every ten seconds actually was. It must run concurrently instead,
+    leaving only the process field briefly stale.
+    """
+    monkeypatch.setattr("sentinel_agent.runner.PROCESS_INTERVAL_SECONDS", 0)
+
+    release = asyncio.Event()
+
+    async def slow_collect_processes() -> list[dict]:
+        await release.wait()
+        return [{"pid": 1, "name": "slow"}]
+
+    monkeypatch.setattr(
+        "sentinel_agent.runner.collect_processes",
+        lambda: pytest.fail("collect_processes must run via to_thread, not inline"),
+    )
+    monkeypatch.setattr(
+        "sentinel_agent.runner.asyncio.to_thread",
+        lambda fn: slow_collect_processes(),
+    )
+
+    loop = asyncio.get_event_loop()
+    started = loop.time()
+    sample = await asyncio.wait_for(agent.sample_once(), timeout=1.0)
+    elapsed = loop.time() - started
+
+    assert elapsed < 0.5
+    assert sample["processes"] == []  # stale (empty) value, not blocked-for
+
+    release.set()
+    await agent._process_task
+    assert agent._latest_processes == [{"pid": 1, "name": "slow"}]
