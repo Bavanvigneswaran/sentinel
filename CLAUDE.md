@@ -2305,7 +2305,19 @@ verification pass was the hash of a **401 error body**, because the minted acces
 token had expired inside its 15-minute TTL. The command reported a hash either
 way; only the HTTP status showed it was worthless.
 
-Not verified: **the phone's own Combination toggle has not been seen rendered.**
-Its web twin is confirmed, the strings are in the running bundle and in the
-shipped APK, tsc and all suites pass — but signing in on the emulator needs a
-password typed, which is not something to automate.
+**Seen on the phone.** Driven through the real emulator against the real
+backend: More → Alert rules shows the retuned rule as "unusual combination of
+readings > 95/100 for 300s", New rule offers four toggles, and selecting
+Combination replaces the metric row with "All of them at once — the novelty
+score." and renders the explanation — em-dash, en-dash and curly quotes all
+correct, which is what confirms the JSX-escape fix from two commits earlier.
+
+Doing that found three more strings that predated a change rather than broke
+with one, all the same class as everything else this session: the phone's More
+menu described Incidents as carrying "the AI summary" (false since Phase 17) and
+alert rules as "the thresholds, anomaly and forecast rules" (three of four), and
+both rules screens' subtitles named three sources. Fixed on both halves, plus
+three stale module docstrings. The web one is confirmed rendering "the four
+sources"; the three mobile strings are typechecked and were not re-seen on the
+device — the dev launcher would not reconnect afterwards, and they are text in
+files whose neighbours were just watched rendering.

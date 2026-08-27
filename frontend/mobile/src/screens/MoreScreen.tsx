@@ -27,7 +27,7 @@ const ENTRIES: Entry[] = [
   {
     route: "Incidents",
     title: "Incidents",
-    body: "Alerts that fired together on one machine, with the AI summary.",
+    body: "Alerts that fired together on one machine, with a plain-English summary.",
   },
   {
     route: "Anomalies",
@@ -47,7 +47,7 @@ const ENTRIES: Entry[] = [
   {
     route: "AlertRules",
     title: "Alert rules",
-    body: "The thresholds, anomaly and forecast rules that decide what pages you.",
+    body: "The threshold, anomaly, forecast and combination rules that decide what pages you.",
   },
   {
     route: "Settings",

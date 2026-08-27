@@ -1,6 +1,6 @@
 /**
- * Incidents — correlated alerts on one device, with the AI summary when there
- * is one. Ported from web/src/pages/IncidentsPage.tsx.
+ * Incidents — correlated alerts on one device, with the generated summary when
+ * there is one. Ported from web/src/pages/IncidentsPage.tsx.
  *
  * The summary is rendered as inert display text and nothing here parses it
  * back into structure, which is CLAUDE.md's "the LLM explains; it does not

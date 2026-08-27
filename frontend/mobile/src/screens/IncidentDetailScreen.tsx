@@ -1,7 +1,12 @@
 /**
- * One incident: its correlated-alert timeline, the AI summary (Haiku) and the
- * root-cause analysis (Sonnet). The phone counterpart of
+ * One incident: its correlated-alert timeline, the generated summary and the
+ * root-cause analysis. The phone counterpart of
  * web/src/pages/IncidentDetailPage.tsx.
+ *
+ * Both texts came from Claude (Haiku and Sonnet) until Phase 17 replaced them
+ * with local templates; the screen renders whatever `*_model` says produced
+ * them, so it needed no change beyond dropping the two model names from its
+ * captions.
  *
  * The list screen deliberately showed only the summary sentence, because
  * `GET /incidents` returns `Incident` and not `IncidentDetail` — fetching the

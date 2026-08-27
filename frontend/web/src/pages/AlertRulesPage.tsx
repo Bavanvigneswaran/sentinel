@@ -140,7 +140,8 @@ export function AlertRulesPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Alert rules</h1>
           <p className="text-sm text-muted-foreground">
-            Static thresholds and adaptive anomaly rules that drive the alerts triage page.
+            Static thresholds, adaptive anomaly rules, forecast breaches and whole-machine
+            combination rules — the four sources that drive the alerts triage page.
           </p>
         </div>
         <div className="flex gap-2">

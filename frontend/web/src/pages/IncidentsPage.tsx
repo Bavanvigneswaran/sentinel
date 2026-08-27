@@ -32,7 +32,7 @@ function formatRelativeTime(iso: string): string {
 
 /**
  * Fleet-wide incidents workspace: every device-level grouping of correlated
- * alerts, newest first, with whatever AI summary the insights worker (or a
+ * alerts, newest first, with whatever summary the insights worker (or a
  * manual regenerate on the detail page) has produced so far. The full
  * correlated-event timeline lives on IncidentDetailPage.
  */

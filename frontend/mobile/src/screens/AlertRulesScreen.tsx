@@ -174,8 +174,8 @@ export function AlertRulesScreen({ route }: RootStackScreenProps<"AlertRules">) 
         </Text>
       )}
       <Text style={text.small}>
-        Static thresholds, adaptive anomaly rules and forecast rules — the three sources that
-        drive alerts triage.
+        Static thresholds, adaptive anomaly rules, forecast breaches and whole-machine
+        combination rules — the four sources that drive alerts triage.
       </Text>
 
       {error && <ErrorNote message={error} />}
