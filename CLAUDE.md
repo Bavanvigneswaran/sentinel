@@ -2086,3 +2086,97 @@ still holding.
 
 Nothing here is committable: `agent/dist/` is gitignored in full, so the rebuild is a local artifact
 change and only this record lands in git.
+
+### Layer 4: a model that is actually trained
+
+Asked for a genuinely built-and-trained ML model, completable in a day. The
+honest starting point was that this project had none: detection is EWMA/MAD
+(Phase 6) and Holt-Winters/Theil-Sen (Phase 7), both refit from scratch on every
+tick with no learned artifact anywhere, and explanation became templates in
+Phase 17. Nothing here was ever a trained model, and `find` for `.pkl`/`.joblib`
+/`.onnx` across the repo confirmed it.
+
+**The pick was layer 4, because it was already designed and never built.**
+docs/ARCHITECTURE.md has said since Phase 0: "`river.anomaly.HalfSpaceTrees`
+online, or nightly-retrained IsolationForest over the joint metric vector.
+Catches correlated weirdness no single threshold sees." Building it closes a
+documented gap rather than bolting ML onto a system that did not ask for it —
+and it is a real capability gain, not a duplicate, because every existing
+detector is *univariate*. `app/analysis/multivariate.py` is the pure half:
+feature assembly, `IsolationForest.fit()`, scoring. There is a test asserting
+the thing the layer exists for — a vector whose every component is individually
+ordinary, flagged because the *combination* never occurs.
+
+**Feasibility was measured before anything was written**, because the whole plan
+dies without data: this Mac had 3,361 real 1m rows over 4.7 days. That check
+also decided the feature set. `ctx_switches_per_s` and `active_connections` sit
+in the same rollup table and look useful, and are **100% populated on Windows
+and 0% on macOS** — psutil's `net_connections()` needs root there (Phase 15) and
+`ctx_switches` is a per-interval delta (Phase 2). Including either would drop
+every macOS row under the no-imputation rule, i.e. no model at all on the
+platform this is developed on. Seven features survive; the exclusion is
+recorded beside them.
+
+Two rules are this codebase's rather than scikit-learn's, and both are the same
+rule twice. **A row missing any feature is dropped, never imputed** — a column
+mean or a zero is exactly the synthesised metric CLAUDE.md forbids, and it is
+worse here than on a chart, because the model would *learn* the fabricated value
+as normal and then never flag it. **Below 200 usable rows there is no model
+rather than a bad one**, matching anomaly.py's WARMUP_SAMPLES.
+
+**Scores are a percentile against the device's own training distribution**, not
+sklearn's raw `score_samples()` output, which is unbounded, dataset-specific and
+not comparable between two machines. The stored quantiles are what make "more
+unusual than 99.4% of this machine's own history" sayable.
+
+Training is `backend/scripts/train_novelty_model.py` (`make train-novelty`), run
+**by hand, not by a worker** — deliberately, as the first step. A scheduled
+retrain is a small addition on top, but a model whose training nobody watches is
+a bad thing to introduce to a system whose premise is that every number came
+from somewhere real. It lives under `scripts/` rather than `app/` because it
+enumerates every device across every tenant, which is precisely what
+`test_unscoped_import_guard.py` exists to keep out of `app/`.
+
+**Validated past "it fit."** Scoring the training history back and reading the
+top-scoring real moments gives unmistakable load events — `cpu 99.8% / load1
+23.4`, `cpu 97.3% / load1 44.6` — against a median row of `cpu 12.1% / load1
+1.99`. Those spikes are this project's own build and test runs. Worth being
+precise about what proves what: the ~1% of history scoring >=99 is *by
+construction* of the percentile mapping and confirms the calibration, not the
+detection; the top-moments check is what confirms the detection.
+
+Serving is `GET /devices/{id}/novelty`, 200 with `available: false` rather than
+404 when there is no score — the device exists, and "nothing trained yet" is a
+state to explain. Each of the four no-score cases carries its own reason, and
+the last one names the missing columns, which is docs/ANDROID_METRICS.md's rule
+arriving in a feature written long after it. Models are cached by
+`(path, mtime_ns)`, so a retrain is picked up on the next request with no
+restart — download_service's posture with the build manifest. `joblib.load` is
+pickle, and the docstring says plainly why that is acceptable (operator-written
+files, never uploaded, never fetched) and what would have to change if it
+stopped being true. Unset `NOVELTY_MODEL_DIR` is supported, like AGENT_DIST_DIR.
+
+Verified through the live server against the real models: this Mac scores **95.2
+on a model fitted to 2,827 of its own rows** — it was busy running these builds —
+while the Android phone and the Windows box return the honest "no model yet".
+
+One bug caught before it shipped, worth recording because the fix looked
+harmless: the first attempt at silencing ruff's S608 put the `# noqa` comment
+*inside* the triple-quoted SQL, making it part of the query text — and `#` is not
+a Postgres comment, so every call would have been a syntax error. The
+interpolation is guarded at import instead (FEATURES must all be identifiers),
+mirroring config.py's ROLE_PASSWORD_RE.
+
+593 backend tests (was 571), 73 web. Built on `feature/ml-anomaly` in four
+commits so any slice can be dropped on its own.
+
+Still to come, if picked back up: a retraining worker (the shape is the four
+existing workers'); a `"multivariate"` fourth `rule_type` so a novelty spike can
+open an incident through the same evaluator sweep and `state_apply.py` the other
+three share; and per-platform feature sets so Android — which can fill neither
+CPU nor load1 — gets a model over what it *can* measure rather than none.
+
+Not verified: **the card has not been seen rendered in a browser.** The score is
+confirmed end to end through the API against real models, and tsc/oxlint/73 web
+tests pass, but the server restart that picked up NOVELTY_MODEL_DIR dropped the
+browser session and it was not signed back in. That check is outstanding.
