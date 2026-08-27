@@ -25,6 +25,7 @@ import { StyleSheet, Text, View } from "react-native"
 import { AlertStatusBadge } from "@/components/Badges"
 import { Screen } from "@/components/Screen"
 import { Button, Card, CardTitle, ErrorNote } from "@/components/ui"
+import { describeEventCondition } from "@/lib/alertCopy"
 import { ApiError, apiFetch } from "@/lib/api"
 import { DEVICE_LIST_WITH_REMOVED, deviceLabel, indexDevices } from "@/lib/deviceNames"
 import { formatRelative } from "@/lib/timeRanges"
@@ -152,10 +153,7 @@ export function IncidentDetailScreen({ route }: RootStackScreenProps<"IncidentDe
                     <AlertStatusBadge status={event.status} />
                   </View>
                   <Text style={text.small}>
-                    {event.metric}{" "}
-                    {event.rule_type === "anomaly"
-                      ? `anomaly (${event.severity ?? "unclassified"})`
-                      : `${event.rule_type === "forecast" ? "predicted " : ""}${event.comparison} ${event.threshold}`}
+                    {describeEventCondition(event)}
                   </Text>
                   <Text style={text.tiny}>
                     {event.status === "firing"

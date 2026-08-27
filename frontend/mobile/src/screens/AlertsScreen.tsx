@@ -20,6 +20,7 @@ import { AlertStatusBadge, SeverityBadge } from "@/components/Badges"
 import { EmptyState, Screen } from "@/components/Screen"
 import { Button, Card, ErrorNote, Segmented } from "@/components/ui"
 import { usePolledResource } from "@/hooks/usePolledResource"
+import { describeEventCondition, describeEventEvidence } from "@/lib/alertCopy"
 import { apiFetch } from "@/lib/api"
 import {
   DEVICE_LIST_WITH_REMOVED,
@@ -171,7 +172,7 @@ function AlertCard({
             {event.rule_name}
           </Text>
           <Text style={text.small} numberOfLines={2}>
-            {deviceName} · {event.metric} · {describeCondition(event)}
+            {deviceName} · {describeEventCondition(event)}
           </Text>
         </View>
         <View style={styles.headRight}>
@@ -208,14 +209,6 @@ function AlertCard({
   )
 }
 
-/** `rule_type` is the discriminator, not `comparison` — a forecast event sets
- * comparison/threshold exactly like a threshold event does. */
-function describeCondition(event: AlertEvent): string {
-  if (event.rule_type === "anomaly") return `anomaly (${event.severity ?? "—"})`
-  const clause = `${event.comparison ?? ""} ${event.threshold ?? ""}`.trim()
-  return event.rule_type === "forecast" ? `predicted ${clause}` : clause
-}
-
 function describeEvidence(event: AlertEvent): string {
   const parts: string[] = []
   if (event.rule_type === "forecast" && event.predicted_value !== null) {
@@ -223,7 +216,7 @@ function describeEvidence(event: AlertEvent): string {
     if (event.predicted_breach_at) parts.push(formatDaysUntil(event.predicted_breach_at))
     parts.push(`live: ${event.value_at_fire}`)
   } else {
-    parts.push(`value at fire: ${event.value_at_fire}`)
+    parts.push(describeEventEvidence(event))
   }
   if (event.rule_type === "anomaly" && event.baseline_mean !== null) {
     parts.push(`baseline was ${event.baseline_mean.toFixed(1)}`)

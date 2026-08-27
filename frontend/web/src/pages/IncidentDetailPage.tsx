@@ -5,6 +5,7 @@ import { AlertStatusBadge } from "@/components/AlertStatusBadge"
 import { AppLayout } from "@/components/AppLayout"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { describeEventCondition } from "@/lib/alertCopy"
 import { apiFetch, ApiError } from "@/lib/api"
 import { DEVICE_LIST_WITH_REMOVED, deviceLabel } from "@/lib/deviceNames"
 import { cn } from "@/lib/utils"
@@ -170,15 +171,7 @@ export function IncidentDetailPage() {
                 <div className="flex flex-col gap-1">
                   <span className="font-medium">{event.rule_name}</span>
                   <span className="text-sm text-muted-foreground">
-                    {event.metric}{" "}
-                    {event.rule_type === "anomaly" ? (
-                      <>anomaly ({event.severity})</>
-                    ) : (
-                      <>
-                        {event.rule_type === "forecast" ? "predicted " : ""}
-                        {event.comparison} {event.threshold}
-                      </>
-                    )}
+                    {describeEventCondition(event)}
                   </span>
                 </div>
                 <div className="flex flex-col items-end gap-1">

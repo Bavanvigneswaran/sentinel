@@ -6,6 +6,7 @@ import { AppLayout } from "@/components/AppLayout"
 import { SilenceForm } from "@/components/SilenceForm"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { describeEventCondition, describeEventEvidence } from "@/lib/alertCopy"
 import { apiFetch } from "@/lib/api"
 import {
   DEVICE_LIST_WITH_REMOVED,
@@ -134,15 +135,8 @@ export function AlertsPage() {
                   <div className="flex flex-col gap-1">
                     <span className="font-medium">{event.rule_name}</span>
                     <span className="text-sm text-muted-foreground">
-                      {deviceLabel(devicesById, event.device_id)} · {event.metric}{" "}
-                      {event.rule_type === "anomaly" ? (
-                        <>anomaly ({event.severity})</>
-                      ) : (
-                        <>
-                          {event.rule_type === "forecast" ? "predicted " : ""}
-                          {event.comparison} {event.threshold}
-                        </>
-                      )}
+                      {deviceLabel(devicesById, event.device_id)} ·{" "}
+                      {describeEventCondition(event)}
                     </span>
                   </div>
                   <div className="flex flex-col items-end gap-1">
@@ -166,7 +160,7 @@ export function AlertsPage() {
                         {event.value_at_fire}
                       </>
                     ) : (
-                      <>value at fire: {event.value_at_fire}</>
+                      <>{describeEventEvidence(event)}</>
                     )}
                     {event.status === "firing" && event.last_value !== null && (
                       <> · latest: {event.last_value}</>
