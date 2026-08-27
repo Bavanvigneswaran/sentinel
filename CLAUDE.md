@@ -2183,3 +2183,75 @@ best evidence was accidental: the score read **95.2 while this Mac was running
 the builds, 48 once they finished, and 43 a few minutes later** — the model
 tracking a machine that genuinely changed, rather than printing a constant. It
 reads "ordinary for this machine · vs 2,827 of its own readings" at rest.
+
+### Layer 4 can alert: a fourth rule type
+
+The novelty model detected and told nobody — readable at
+`GET /devices/{id}/novelty` and nowhere else. A multivariate rule is now an
+ordinary `alert_rules` row: same evaluator sweep, same OK/PENDING/FIRING
+machine, same incident correlation, same notification path. That refusal to add
+a second evaluation path is what Phases 6, 7 and 8 each made, and it is why this
+was a small change rather than a large one.
+
+**No new tables and no new columns.** Migration `0015` widens three CHECKs and
+adds one. The added one is the interesting half: `(rule_type = 'multivariate') =
+(metric = 'novelty_score')` makes the type and the reserved metric imply each
+other **in both directions**. Without the reverse, a *threshold* rule could be
+pointed at `novelty_score` — accepted, perfectly plausible on the page, and
+silently never firing, because nothing writes that column. There is a test for
+that direction specifically, and a second asserting the database refuses it even
+past the Pydantic validator.
+
+A nullable `metric` would have been the more honest model, since a multivariate
+rule genuinely judges the joint vector. It was weighed and rejected: `metric` is
+read for display by both frontends, `notify.py` and the insights generator, so a
+null pushes a check into all four for one rule type. A reserved name keeps them
+working, and `RULE_METRICS` widens **only** the alert_rules CHECK —
+`anomaly_baselines` and both forecast tables keep their narrower one, so nothing
+can create a baseline or a forecast for what is a model output rather than a
+measurement. `AnomalyBaselineOut.metric` stays the narrow type for the same
+reason, on both the wire schema and the web's types.
+
+`score_devices()` reads every scorable device in one query, matching the "at most
+three queries regardless of how many rules or devices" budget the sweep already
+keeps, and runs only when the user actually has a multivariate rule. A device
+with no model is **absent** from the result rather than present with a null, so
+the state machine sees unknown rather than normal — an open alert is not
+auto-resolved by a model being retrained away, matching Phase 5's rule.
+
+**Running it immediately found two defects, both the same class as Phase 17's
+"(None None)" bug** — a new rule type reaching a display surface nobody taught
+about it. The insights generator printed the raw key ("CPU, memory and
+novelty_score alerted") and recited a hardcoded "across threshold, anomaly and
+forecast rules", which described the wrong set the moment a fourth type existed;
+it names the kinds actually present now. And both `_condition()` implementations
+fell through to the threshold shape, rendering `> 71.0` — 71 of what? A
+percentile is not a reading, and saying so is the whole difference. `notify.py`'s
+`_body` branches too, because `novelty_score = 80.9` leaks a schema detail into
+an email. The firing notification then dropped its `_condition` clause after
+reading it back: stacking the two said "unusual" three times.
+
+Verified end to end against a real rule on this Mac rather than fixtures: live
+novelty **80.9**, rule at `> 71`, **pending** on the first sweep, **firing** on
+the second, deduped on the third, and the event **correlated into an incident** —
+the same pipeline, demonstrably. The notification reads "Its readings together
+score 79/100 for how unusual they are for this machine, past the 71 you set."
+
+605 backend tests (was 593), 73 web, 81 mobile JS. Both rule forms gained a
+fourth "Combination" toggle, and both hide the metric picker for it — a
+combination rule judges all of them, and a select with one option is worse than
+a sentence saying so. Adding it made the typechecker find two places that had
+assumed `metric` is always measured (`AnomalyEvidenceChart`, and RuleForm's
+metric state); both are narrowed rather than cast, so the reasoning stays
+checkable.
+
+Left behind deliberately: a rule named **"Unusual combination (verify)"** on the
+`phase10a@example.com` account, threshold 71, currently firing. It was created to
+prove the path and its threshold was chosen to fire — retune or delete it; the
+"(verify)" in the name is there so its origin is not mistaken for a real
+default.
+
+Not verified: **the rule form's fourth toggle has not been seen in a browser.**
+tsc, oxlint and all three suites pass, and the backend path is confirmed end to
+end, but the server restart dropped the session again. Same outstanding check as
+the novelty card had, one commit earlier.
