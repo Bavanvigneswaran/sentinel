@@ -2176,7 +2176,10 @@ open an incident through the same evaluator sweep and `state_apply.py` the other
 three share; and per-platform feature sets so Android — which can fill neither
 CPU nor load1 — gets a model over what it *can* measure rather than none.
 
-Not verified: **the card has not been seen rendered in a browser.** The score is
-confirmed end to end through the API against real models, and tsc/oxlint/73 web
-tests pass, but the server restart that picked up NOVELTY_MODEL_DIR dropped the
-browser session and it was not signed back in. That check is outstanding.
+**Seen rendered, and the number moved.** The card sits in its own column beside
+Health and Time-to-capacity on /devices/:id/history, at both pane width and
+1440, in a clean tab with zero console logs and `GET .../novelty -> 200`. The
+best evidence was accidental: the score read **95.2 while this Mac was running
+the builds, 48 once they finished, and 43 a few minutes later** — the model
+tracking a machine that genuinely changed, rather than printing a constant. It
+reads "ordinary for this machine · vs 2,827 of its own readings" at rest.
