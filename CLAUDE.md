@@ -75,8 +75,8 @@ Two things live outside git and will not survive a fresh clone:
 Also outside git, unchanged from earlier phases: the release keystore in `~/.sentinel-keys/`, and
 `agent/dist/` with its five published builds.
 
-**Everything is green as of 2026-08-27.** 613 backend tests, 174 agent, 80 web, 88 mobile JS, 40
-Kotlin — 995 in total — plus `make lint` and `make typecheck`. Migrations are at head (`0015`).
+**Everything is green as of 2026-08-27.** 613 backend tests, 175 agent, 80 web, 88 mobile JS, 40
+Kotlin — 996 in total — plus `make lint` and `make typecheck`. Migrations are at head (`0015`).
 
 **Deployment is this Mac and nothing else.** `make serve` builds the console and serves it, the REST
 API and the viewer socket on one origin; Tailscale Funnel gives that port a stable public

@@ -1142,6 +1142,14 @@ running came from the CI matrix and predates all of the above; the fix is in the
 that machine means re-running `.github/workflows/agent-build.yml` and re-downloading. Same for the
 live-upshift fix on any enrolled desktop.
 
+**The process refresh was later decoupled from the sample's critical path.** Phase 15 moved
+`collect_processes()` to a thread and throttled it to 10s, but the sample loop still awaited it
+inline, which meant every 10th sample's *entire* payload (not just processes) was stamped 1–2s late,
+causing Live Monitoring to freeze every 10 seconds on Windows. Now the refresh fires as its own
+background task so the process list can lag by design without delaying CPU/memory/disk/net or the
+sample timestamp itself. Same pattern as latency probes — the measurement is always real, just
+slightly older. Added a regression test and cleanup of the background task on shutdown.
+
 
 ### Phase 16: a phone that sleeps, panels that can never fill, and a window narrow enough to see move
 
