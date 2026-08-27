@@ -1826,3 +1826,61 @@ type's surfaces were found by looking rather than by testing, that is a real gap
 
 988 tests green in total: 606 backend (+1 for the cache guard), 174 agent, 80 web (+7), 88 mobile JS
 (+7), 40 Kotlin. `make lint` and `make typecheck` both clean.
+
+### The APK, a fourth time: a download link that isn't a fetch()
+
+Started from a real user report: the Funnel download page showed "The download failed. The build
+may have been removed from this server" on a phone, while the server logs showed the exact opposite
+— the request had reached `/downloads/agent/app-release.apk` and been served with a `200`. The page
+served fetching the 85 MB binary into a `Blob` via `apiDownload()`, then handing the finished blob to
+an `<a download>` link — meaning the *entire* file had to arrive in one unbroken JS-visible request
+before anything reached disk, and any interruption on a mobile connection failed the whole thing with
+a message that conflated "gone from the server" with "the network hiccuped," because the `catch`
+block couldn't tell the two apart.
+
+The fix minted a short-lived, filename-scoped ticket over the authenticated REST API and handed *that*
+to a real `<a download>` link, mirroring the WebSocket ticket in `app/live/tickets.py` but not
+single-use: a stalled transfer resumes with an HTTP Range request against the same URL, and `GETDEL`
+would have burned the ticket on the download manager's own first partial request. The browser's own
+download manager then owns the transfer — Range-resume included — which is exactly what a `Blob` in
+JS memory could never do.
+
+That got the transfer right and still didn't work, for two reasons that took a real phone to find
+because `curl` could not reproduce either:
+
+First, the ticket was minted *inside* the click handler and the resulting link clicked by JS
+afterward. The theory was that a synthetic click issued after an `await` loses whatever "real user
+gesture" a mobile browser needs to treat a same-origin download as a save rather than a navigation —
+plausible, unfalsifiable from here, and wrong, or at least not the actual cause: minting the ticket
+ahead of time so a genuine tap landed on an already-built `<a href>` changed nothing. Same for the
+follow-up guess that Chrome auto-opens a finished download for preview in whichever tab requested it
+and has no viewer for an `.apk`, so `target="_blank"` was added to point that at a background tab —
+also no change. Two rounds of plausible browser-internals reasoning, neither one checkable without a
+device, both wrong.
+
+The actual cause surfaced only when the user checked what Chrome had actually saved: not
+`app-release.apk`, but `app-release.apk.html`. `AgentBuildOut.download_url` is deliberately
+unprefixed (Phase 1's "routes carry no `/api` prefix in FastAPI") — correct for `apiFetch`/
+`apiDownload`, which add the prefix themselves, and exactly what the original blob-based version had
+been going through the whole time. A real `<a href>` a user taps is a browser *navigation*, not a
+`fetch()`, so nothing added that prefix for it. `WebConsoleMiddleware` runs before
+`ApiPrefixMiddleware` strips anything (`app/main.py`, deliberately, so `/devices` can be both a route
+and a page) and reads a bare `/downloads/agent/...` as a client-side route the SPA owns, serving
+`index.html` — 471 bytes of the console's own shell — instead of ever reaching the download route.
+Confirmed by replaying the exact request with `Sec-Fetch-Mode: navigate` and `Accept: text/html`,
+the two headers a real link click sends and `curl` does not by default: the unprefixed URL came back
+`text/html`, 471 bytes; the same URL with `/api` folded in came back the real 85 MB binary with the
+correct `Content-Disposition`. Every `curl` check run earlier in this same investigation — and there
+were several, all reporting the headers as correct — had used default `curl` headers throughout, so
+none of them ever exercised the code path a real browser navigation takes. The blank white page the
+user kept seeing was never a Chrome download-UI quirk at all; it was the console's own React shell,
+loaded from a `content://` URI where its relative asset paths could not resolve, rendering nothing.
+
+One structural note worth keeping alongside Layer 4's ASYNC-rules one: **a passing `curl` check is
+not evidence a same-origin download link works**, for the same reason a clean lint run was not
+evidence nothing blocked the event loop — the tool doesn't exercise the code path that matters.
+`curl -H "Sec-Fetch-Mode: navigate" -H "Accept: text/html"` against a URL is the way to actually
+check what `WebConsoleMiddleware` will do with it before believing a live phone test.
+
+995 tests green in total: 613 backend (+7 for the ticket mint/redeem/scoping and the APK MIME type),
+174 agent, 80 web, 88 mobile JS, 40 Kotlin. `make lint` and `make typecheck` both clean.

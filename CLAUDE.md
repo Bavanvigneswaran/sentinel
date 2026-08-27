@@ -75,8 +75,8 @@ Two things live outside git and will not survive a fresh clone:
 Also outside git, unchanged from earlier phases: the release keystore in `~/.sentinel-keys/`, and
 `agent/dist/` with its five published builds.
 
-**Everything is green as of 2026-08-27.** 606 backend tests, 174 agent, 80 web, 88 mobile JS, 40
-Kotlin — 988 in total — plus `make lint` and `make typecheck`. Migrations are at head (`0015`).
+**Everything is green as of 2026-08-27.** 613 backend tests, 174 agent, 80 web, 88 mobile JS, 40
+Kotlin — 995 in total — plus `make lint` and `make typecheck`. Migrations are at head (`0015`).
 
 **Deployment is this Mac and nothing else.** `make serve` builds the console and serves it, the REST
 API and the viewer socket on one origin; Tailscale Funnel gives that port a stable public
@@ -683,7 +683,24 @@ The other authorities, unchanged: `docs/ARCHITECTURE.md` for design decisions,
   for no gain, since an agent is useless without an enrollment code and minting one requires signing
   in. `AGENT_DOWNLOAD_BASE_URL` is the escape hatch for scale, and the page switches to a plain
   anchor for an absolute URL rather than trying to fetch it with a bearer token it has no business
-  sending cross-origin.
+  sending cross-origin. For a same-origin build, the anchor carries a short-lived, filename-scoped
+  ticket (`app/services/download_tickets.py`) instead of a bearer token — `CurrentUserOrNone` in
+  `app/api/deps.py` accepts either, so a real `<a download>` click still authenticates without an
+  Authorization header a plain link can't send. Unlike the WebSocket ticket in `app/live/tickets.py`,
+  this one is **not** single-use: a mobile connection resuming a stalled transfer replays the same
+  URL as an HTTP Range request, and `GETDEL` would burn the ticket on the download manager's own
+  first byte-range request, breaking resume before it started.
+- **A same-origin download link needs its `/api` prefix added explicitly — nothing does it for you.**
+  `AgentBuildOut.download_url` is deliberately unprefixed (Phase 1's "routes carry no `/api` prefix
+  in FastAPI"), which is fine for `apiFetch`/`apiDownload`, since those add the prefix themselves. A
+  real `<a href>` a user clicks is a browser *navigation*, not a `fetch()`, so nothing adds it
+  automatically — and `WebConsoleMiddleware` runs before `ApiPrefixMiddleware` strips anything
+  (`app/main.py`), so a bare `/downloads/agent/...` URL reads to it as a client-side route the SPA
+  owns and serves `index.html` instead of ever reaching the download route. This shipped once and
+  passed every test and every `curl` check, because `curl` doesn't send the `Sec-Fetch-Mode:
+  navigate` header a real link click does — it only surfaced on a real phone, as a downloaded file
+  literally named `app-release.apk.html`. Any new same-origin download-by-link needs `/api` folded
+  into its `href` by hand.
 - **No APK is published, and the release build must never fall back to the debug key.** `expo
   prebuild` points the release buildType at React Native's *public* debug keystore, which would let
   anyone forge an update Android accepts as the same app. `plugins/withReleaseSigning.js` swaps in a
