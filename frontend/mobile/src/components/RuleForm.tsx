@@ -41,6 +41,7 @@ const RULE_TYPES: { value: RuleType; label: string }[] = [
   { value: "threshold", label: "Threshold" },
   { value: "anomaly", label: "Anomaly" },
   { value: "forecast", label: "Forecast" },
+  { value: "multivariate", label: "Combination" },
 ]
 
 const EXPLANATION: Record<RuleType, string> = {
@@ -52,6 +53,12 @@ const EXPLANATION: Record<RuleType, string> = {
     "Fires when this metric drifts unusually far from its own recent normal for this long, " +
     "adapting as that normal changes. How far counts as unusual is set once for the whole " +
     "account, under Settings → Anomaly sensitivity.",
+  multivariate:
+    "Fires on the combination of this machine's readings rather than any single one \u2014 " +
+    "scored 0\u2013100 against a model trained on its own history, so it can catch a state " +
+    "where every individual metric looks ordinary. 95 means \u201cmore unusual than 95% of " +
+    "everything this machine has done before\u201d, not 95% of anything. A device with no " +
+    "trained model never fires this rule.",
   forecast:
     "Fires when the device's forecast is predicted to cross this threshold, not when the live " +
     "reading does. A device with too little history for a trustworthy forecast simply never " +
@@ -74,7 +81,12 @@ export function RuleForm({
   // "" is the wire's null — one rule applied to every device the caller owns.
   const [deviceId, setDeviceId] = useState(rule?.device_id ?? "")
   const [ruleType, setRuleType] = useState<RuleType>(rule?.rule_type ?? "threshold")
-  const [metric, setMetric] = useState<Metric>(rule?.metric ?? "cpu_percent")
+  // The picker is hidden for a combination rule, whose metric is fixed, so an
+  // existing one falls back to the default rather than selecting a value the
+  // list does not contain.
+  const [metric, setMetric] = useState<Metric>(
+    rule && rule.metric !== "novelty_score" ? rule.metric : "cpu_percent",
+  )
   const [comparison, setComparison] = useState<Comparison>(rule?.comparison ?? ">")
   const [threshold, setThreshold] = useState(
     rule?.threshold != null ? String(rule.threshold) : "90",
@@ -84,7 +96,11 @@ export function RuleForm({
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const needsThreshold = ruleType === "threshold" || ruleType === "forecast"
+  const needsThreshold =
+    ruleType === "threshold" || ruleType === "forecast" || ruleType === "multivariate"
+  // A combination rule judges the joint vector; the API pairs that rule type
+  // exclusively with the reserved metric, in both directions.
+  const isCombination = ruleType === "multivariate"
 
   const submit = async () => {
     if (name.trim() === "") {
@@ -112,7 +128,7 @@ export function RuleForm({
             name,
             device_id: deviceId === "" ? null : deviceId,
             rule_type: ruleType,
-            metric,
+            metric: isCombination ? "novelty_score" : metric,
             comparison,
             threshold: Number(threshold),
             for_duration_seconds: Number(forDuration),
@@ -161,7 +177,11 @@ export function RuleForm({
       </Labelled>
 
       <Labelled label="Metric">
-        <Segmented options={METRICS} value={metric} onChange={setMetric} />
+        {isCombination ? (
+          <Text style={text.small}>All of them at once — the novelty score.</Text>
+        ) : (
+          <Segmented options={METRICS} value={metric} onChange={setMetric} />
+        )}
       </Labelled>
 
       {needsThreshold && (

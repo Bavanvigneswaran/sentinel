@@ -52,7 +52,12 @@ export function RuleForm({ devices, rule, onSaved, onCancel }: RuleFormProps) {
   const [name, setName] = useState(rule?.name ?? "")
   const [deviceId, setDeviceId] = useState(rule?.device_id ?? "")
   const [ruleType, setRuleType] = useState<RuleType>(rule?.rule_type ?? "threshold")
-  const [metric, setMetric] = useState<Metric>(rule?.metric ?? "cpu_percent")
+  // The picker is hidden for a combination rule, whose metric is fixed, so an
+  // existing one falls back to the default rather than trying to select a
+  // value the list does not contain.
+  const [metric, setMetric] = useState<Metric>(
+    rule && rule.metric !== "novelty_score" ? rule.metric : "cpu_percent",
+  )
   const [comparison, setComparison] = useState<Comparison>(rule?.comparison ?? ">")
   const [threshold, setThreshold] = useState(rule?.threshold != null ? String(rule.threshold) : "90")
   const [forDuration, setForDuration] = useState(
@@ -67,13 +72,16 @@ export function RuleForm({ devices, rule, onSaved, onCancel }: RuleFormProps) {
     setError(null)
     setSubmitting(true)
     try {
+      // A combination rule's metric is fixed by the API on both sides of the
+      // constraint, so it is sent explicitly rather than taken from a picker
+      // the form does not show for this type.
       const body =
-        ruleType === "threshold" || ruleType === "forecast"
+        ruleType === "threshold" || ruleType === "forecast" || ruleType === "multivariate"
           ? {
               name,
               device_id: deviceId === "" ? null : deviceId,
               rule_type: ruleType,
-              metric,
+              metric: ruleType === "multivariate" ? "novelty_score" : metric,
               comparison,
               threshold: Number(threshold),
               for_duration_seconds: Number(forDuration),
@@ -145,6 +153,14 @@ export function RuleForm({ devices, rule, onSaved, onCancel }: RuleFormProps) {
           >
             Forecast
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={ruleType === "multivariate" ? "default" : "outline"}
+            onClick={() => setRuleType("multivariate")}
+          >
+            Combination
+          </Button>
         </div>
       </div>
 
@@ -166,23 +182,37 @@ export function RuleForm({ devices, rule, onSaved, onCancel }: RuleFormProps) {
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="rule-metric">Metric</Label>
-          <select
-            id="rule-metric"
-            className={selectClassName()}
-            value={metric}
-            onChange={(e) => setMetric(e.target.value as Metric)}
-          >
-            {METRICS.map((m) => (
-              <option key={m.value} value={m.value}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        {ruleType === "multivariate" ? (
+          <div className="flex flex-col gap-2">
+            <Label>Metric</Label>
+            {/* Not a picker: a combination rule judges the joint vector, and
+                the API rejects any metric but the reserved one. Stating that
+                beats an empty control or a select with one option. */}
+            <p className="pt-2 text-sm text-muted-foreground">
+              All of them at once — the novelty score.
+            </p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="rule-metric">Metric</Label>
+            <select
+              id="rule-metric"
+              className={selectClassName()}
+              value={metric}
+              onChange={(e) => setMetric(e.target.value as Metric)}
+            >
+              {METRICS.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
-        {(ruleType === "threshold" || ruleType === "forecast") && (
+        {(ruleType === "threshold" ||
+          ruleType === "forecast" ||
+          ruleType === "multivariate") && (
           <div className="flex flex-col gap-2">
             <Label htmlFor="rule-comparison">Condition</Label>
             <select
@@ -202,7 +232,9 @@ export function RuleForm({ devices, rule, onSaved, onCancel }: RuleFormProps) {
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        {(ruleType === "threshold" || ruleType === "forecast") && (
+        {(ruleType === "threshold" ||
+          ruleType === "forecast" ||
+          ruleType === "multivariate") && (
           <div className="flex flex-col gap-2">
             <Label htmlFor="rule-threshold">Threshold</Label>
             <Input
@@ -252,6 +284,15 @@ export function RuleForm({ devices, rule, onSaved, onCancel }: RuleFormProps) {
           is predicted to cross this threshold, not when the live reading does. A device with too
           little history for a trustworthy forecast simply never fires this rule until it has
           enough.
+        </p>
+      )}
+      {ruleType === "multivariate" && (
+        <p className="text-xs text-muted-foreground">
+          Fires on the <em>combination</em> of this machine's readings rather than any single one
+          — scored 0–100 against a model trained on its own history, so it can catch a state
+          where every individual metric looks ordinary. 95 means "more unusual than 95% of
+          everything this machine has done before", not "95%" of anything. A device with no
+          trained model never fires this rule.
         </p>
       )}
 

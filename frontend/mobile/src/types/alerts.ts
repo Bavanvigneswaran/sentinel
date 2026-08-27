@@ -16,7 +16,13 @@ export type Metric =
   | "cpu_iowait_percent"
 
 export type Comparison = ">" | ">=" | "<" | "<=" | "=="
-export type RuleType = "threshold" | "anomaly" | "forecast"
+/** The reserved metric a multivariate ("combination") rule judges: layer 4's
+ *  novelty percentile, not a column anything measures. Kept out of `Metric`
+ *  so the other three rule types cannot be pointed at it — the API rejects
+ *  that pairing in both directions. */
+export type RuleMetric = Metric | "novelty_score"
+
+export type RuleType = "threshold" | "anomaly" | "forecast" | "multivariate"
 /** Where a rule came from. "builtin" rules are seeded for every account so it
  * detects things without being configured (app/alerts/defaults.py); they are
  * ordinary rules otherwise, and are edited and deleted like any other. */
@@ -31,7 +37,7 @@ export interface AlertRule {
   device_id: string | null
   name: string
   rule_type: RuleType
-  metric: Metric
+  metric: RuleMetric
   /** null for an anomaly rule — judged against an adaptive baseline instead. */
   comparison: Comparison | null
   threshold: number | null
@@ -46,7 +52,7 @@ export interface AlertRuleCreate {
   device_id?: string | null
   name: string
   rule_type: RuleType
-  metric: Metric
+  metric: RuleMetric
   comparison?: Comparison | null
   threshold?: number | null
   for_duration_seconds: number
@@ -69,7 +75,7 @@ export interface AlertEvent {
    * longer distinguishes every kind). */
   rule_name: string
   rule_type: RuleType
-  metric: Metric
+  metric: RuleMetric
   comparison: Comparison | null
   threshold: number | null
   status: EventStatus
@@ -98,7 +104,7 @@ export interface AlertEvent {
 
 export interface AnomalyBaseline {
   device_id: string
-  metric: Metric
+  metric: RuleMetric
   mean: number
   /** Unscaled EWMA absolute deviation — see lib/anomaly.ts's scaledSpread(). */
   mad: number

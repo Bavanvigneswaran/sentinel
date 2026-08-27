@@ -374,3 +374,50 @@ def test_the_generator_id_is_stable_and_versioned():
     """It is written into Incident.summary_model, where a Claude model id
     used to go, so rows from either era stay distinguishable."""
     assert GENERATOR_ID.startswith("sentinel-templates/v")
+
+
+# --- the fourth rule type reaching the display surface ---------------------
+
+
+def test_a_combination_event_never_shows_its_raw_threshold_as_a_reading():
+    """A multivariate event's threshold is a percentile against the machine's
+    own history, so the threshold branch's bare "> 71.0" would be actively
+    misleading — 71 of what? Same class as the "(None None)" anomaly bug: a
+    new rule type reaching a display surface nobody taught about it."""
+    bundle = _bundle(
+        events=(
+            _event(
+                rule_type="multivariate",
+                metric="novelty_score",
+                comparison=">",
+                threshold=90.0,
+                value_at_fire=97.5,
+                last_value=97.5,
+            ),
+        )
+    )
+    text = summarize(bundle, now=NOW)
+    assert "novelty_score" not in text
+    assert "> 90.0" not in text
+    assert "scoring above 90/100 for unusualness" in text
+    assert "the overall pattern on prod-db-1" in text
+
+
+def test_the_correlation_sentence_names_the_rule_kinds_actually_present():
+    """It used to recite a fixed "threshold, anomaly and forecast", which
+    started describing the wrong set the moment a fourth type landed."""
+    bundle = _bundle(
+        events=(
+            _event(metric="cpu_percent"),
+            _event(
+                rule_type="multivariate",
+                metric="novelty_score",
+                comparison=">",
+                threshold=90.0,
+                fired_at=OPENED + timedelta(seconds=30),
+            ),
+        )
+    )
+    text = explain(bundle, now=NOW)
+    assert "across multivariate and threshold rules" in text
+    assert "forecast rules" not in text

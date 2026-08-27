@@ -36,13 +36,22 @@ const percent = (v: number) => `${v.toFixed(1)}%`
  * chart legible.
  */
 export function AnomalyEvidenceChart({ event }: { event: AlertEvent }) {
+  // `event.metric` is RuleMetric, which admits the reserved `novelty_score`.
+  // An anomaly event can never carry it — the backend's multivariate_metric
+  // CHECK pairs that metric exclusively with the multivariate rule type, and
+  // this chart is only rendered for anomaly events. Narrowing here rather
+  // than casting keeps that reasoning checkable: if a combination event ever
+  // does reach this component, it renders a sentence instead of indexing a
+  // per-metric table with a key that isn't in it.
+  const metric = event.metric === "novelty_score" ? null : event.metric
   const [series, setSeries] = useState<Series | null>(null)
   const [currentBaseline, setCurrentBaseline] = useState<AnomalyBaseline | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    const domain = METRIC_DOMAIN[event.metric]
+    if (metric === null) return
+    const domain = METRIC_DOMAIN[metric]
     // An hour of context before the fire, through resolution (or now, if
     // still firing) — enough to see the pre-anomaly baseline and the spike.
     const start = new Date(new Date(event.fired_at).getTime() - 3_600_000).toISOString()
@@ -66,12 +75,20 @@ export function AnomalyEvidenceChart({ event }: { event: AlertEvent }) {
     return () => {
       cancelled = true
     }
-  }, [event.id, event.device_id, event.metric, event.fired_at, event.resolved_at])
+  }, [event.id, event.device_id, event.metric, metric, event.fired_at, event.resolved_at])
 
+  if (metric === null) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        This alert is about a combination of metrics, not one of them — there is no single
+        trace to draw.
+      </p>
+    )
+  }
   if (error) return <p className="text-sm text-destructive">{error}</p>
   if (series === null) return <p className="text-sm text-muted-foreground">Loading…</p>
 
-  const trace = observedTrace(series, event.metric)
+  const trace = observedTrace(series, metric)
   if (trace.timestamps.length === 0) {
     return <p className="text-sm text-muted-foreground">No data in this window.</p>
   }

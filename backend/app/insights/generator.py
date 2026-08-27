@@ -63,6 +63,10 @@ _METRICS: dict[str, tuple[str, str]] = {
     "swap_percent": ("swap", "%"),
     "packet_loss_percent": ("packet loss", "%"),
     "cpu_iowait_percent": ("IO wait", "%"),
+    # Layer 4's reserved metric. It is a percentile, not a percentage of
+    # anything, so it carries no unit — "novelty 95%" would read as though 95%
+    # of something were unusual.
+    "novelty_score": ("the overall pattern", ""),
 }
 
 #: Which of several simultaneous alerts is the headline. Follows
@@ -76,6 +80,10 @@ _RANK: dict[str, int] = {
     "packet_loss_percent": 2,
     "swap_percent": 1,
     "cpu_iowait_percent": 1,
+    # Below disk/CPU/memory on purpose: a combination alert says something is
+    # unusual, while those say something is *running out*. When both fire, the
+    # actionable one should lead the sentence.
+    "novelty_score": 2,
 }
 
 #: Below this, a forecast's start-to-end movement is described as flat rather
@@ -122,11 +130,13 @@ def _join(parts: list[str]) -> str:
 # One event, in words.
 #
 # This is app/alerts/notify.py's _condition() applied to an EventSnapshot
-# instead of an AlertEvent — the same three-way branch on rule_type, and the
+# instead of an AlertEvent — the same four-way branch on rule_type, and the
 # same refusal to read comparison/threshold for an anomaly event, which is
 # the bug that put a literal "(None None)" into every anomaly notification.
-# Worth factoring into one shared helper over a Protocol if a third caller
-# ever appears; two is not yet enough to justify the indirection.
+#
+# Adding the multivariate branch meant editing both copies, which is the cost
+# of the duplication finally showing up. Still two callers, so still not worth
+# a shared helper over a Protocol — but a third would settle it.
 # --------------------------------------------------------------------------
 
 
@@ -138,6 +148,15 @@ def _condition(event: EventSnapshot, now: datetime) -> str:
         if normal is None:
             return f"running {event.z_score:+.1f} sigma from its usual range"
         return f"running {event.z_score:+.1f} sigma from its usual {normal}"
+
+    if event.rule_type == "multivariate":
+        # Not a measurement, so the raw "> 71.0" the threshold branch would
+        # produce is meaningless here: the number is a percentile against this
+        # machine's own history, and saying so is the difference between "71"
+        # and "71% of something".
+        if event.threshold is None:
+            return "showing an unusual combination of readings"
+        return f"scoring above {event.threshold:.0f}/100 for unusualness"
 
     target = _fmt(event.metric, event.threshold)
     if event.rule_type == "forecast":
@@ -222,8 +241,13 @@ def _correlation_sentence(bundle: SignalBundle, now: datetime) -> str | None:
         if window.total_seconds() > 0
         else " at the same moment"
     )
-    kinds = {e.rule_type for e in bundle.events}
-    how = " across threshold, anomaly and forecast rules" if len(kinds) > 2 else ""
+    # Name the kinds actually present rather than reciting a fixed list. The
+    # hardcoded "threshold, anomaly and forecast" predated the multivariate
+    # rule type and started describing the wrong set the moment it landed —
+    # the same way notify.py's threshold-shaped body did when anomaly rules
+    # arrived.
+    kinds = sorted({e.rule_type for e in bundle.events})
+    how = f" across {_join(kinds)} rules" if len(kinds) > 1 else ""
     return f"{metrics} alerted{detail}{how}, which is why they correlated into one incident."
 
 

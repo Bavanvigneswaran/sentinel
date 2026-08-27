@@ -49,6 +49,10 @@ def _condition(event) -> str:
             f"unusual for this device — normally around "
             f"{event.baseline_mean:.1f}, now {event.z_score:+.1f} sigma out"
         )
+    if event.rule_type == "multivariate":
+        # A percentile against this machine's own history, not a reading, so
+        # the bare "> 71.0" below would be actively misleading.
+        return f"an unusual combination of readings, scoring above {event.threshold:.0f}/100"
     clause = f"{event.comparison} {event.threshold}"
     if event.rule_type == "forecast":
         when = (
@@ -67,6 +71,25 @@ def _condition(event) -> str:
 
 def _body(event: AlertEvent, device_name: str, *, resolved: bool) -> str:
     condition = _condition(event)
+    if event.rule_type == "multivariate":
+        # `metric` is the reserved "novelty_score", which is a schema detail
+        # rather than something to show a person — every other rule type has a
+        # metric name that means something on its own, and this one does not.
+        if resolved:
+            return (
+                f"{event.rule_name} on {device_name} has resolved.\n"
+                f"The overall pattern of readings is back to normal "
+                f"({event.resolved_value:.0f}/100 for unusualness)."
+            )
+        # `condition` is deliberately unused on this branch: it restates the
+        # threshold, which the sentence below already carries, and stacking
+        # the two said "unusual" three times.
+        threshold = f"{event.threshold:.0f}" if event.threshold is not None else "the threshold"
+        return (
+            f"{event.rule_name} is firing on {device_name}.\n"
+            f"Its readings together score {event.value_at_fire:.0f}/100 for how unusual "
+            f"they are for this machine, past the {threshold} you set."
+        )
     if resolved:
         return (
             f"{event.rule_name} on {device_name} has resolved.\n"

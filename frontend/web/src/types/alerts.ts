@@ -11,8 +11,14 @@ export type Metric =
   | "packet_loss_percent"
   | "cpu_iowait_percent"
 
+/** The reserved metric a multivariate rule judges: layer 4's novelty
+ *  percentile, not a column anything measures. Kept out of `Metric` so the
+ *  other three rule types cannot be pointed at it — the API rejects that
+ *  pairing in both directions. */
+export type RuleMetric = Metric | "novelty_score"
+
 export type Comparison = ">" | ">=" | "<" | "<=" | "=="
-export type RuleType = "threshold" | "anomaly" | "forecast"
+export type RuleType = "threshold" | "anomaly" | "forecast" | "multivariate"
 /** Where a rule came from. "builtin" rules are seeded for every account so it
  * detects things without being configured (app/alerts/defaults.py); they are
  * ordinary rules otherwise, and are edited and deleted like any other. */
@@ -27,7 +33,7 @@ export interface AlertRule {
   device_id: string | null
   name: string
   rule_type: RuleType
-  metric: Metric
+  metric: RuleMetric
   /** null for an anomaly rule — judged against an adaptive baseline instead. */
   comparison: Comparison | null
   threshold: number | null
@@ -42,7 +48,7 @@ export interface AlertRuleCreate {
   device_id?: string | null
   name: string
   rule_type: RuleType
-  metric: Metric
+  metric: RuleMetric
   comparison?: Comparison | null
   threshold?: number | null
   for_duration_seconds: number
@@ -65,7 +71,7 @@ export interface AlertEvent {
    * longer distinguishes every kind). */
   rule_name: string
   rule_type: RuleType
-  metric: Metric
+  metric: RuleMetric
   comparison: Comparison | null
   threshold: number | null
   status: EventStatus
@@ -94,6 +100,9 @@ export interface AlertEvent {
 
 export interface AnomalyBaseline {
   device_id: string
+  /** Narrow `Metric`, not `RuleMetric`: a baseline is always for a measured
+   *  metric. novelty_score is a model output, and there is no baseline of a
+   *  baseline — the backend's own CHECK forbids it. */
   metric: Metric
   mean: number
   /** Unscaled EWMA absolute deviation — see lib/anomaly.ts's scaledSpread(). */
