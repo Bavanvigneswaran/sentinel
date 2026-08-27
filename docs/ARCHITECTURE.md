@@ -13,9 +13,9 @@
                                            │                    │                   │
 [Web app: React+TS]  <── WSS + REST ───────┴────────────  [FastAPI API]  <──────────┘
 [Android viewer: React Native]                                  │
-                                                         [Worker: anomalies,
-                                                          forecasts, alerts,
-                                                          AI insights]
+                                                         [Workers: alerts,
+                                                          forecasts, insights,
+                                                          reports]
 ```
 
 Agents make **outbound** WebSocket connections only. No inbound ports, works behind NAT/corporate firewalls.
@@ -71,7 +71,9 @@ Android exposes far less — see Known Constraints.
 
 State machine per rule per device: `OK → PENDING → FIRING → RESOLVED`. `PENDING` requires the condition to hold for `for_duration` before firing. Dedup key = (device, rule). Notification channels: Web Push (VAPID), FCM (Android), SMTP email.
 
-**Incidents** = alerts correlated by device + time window (default 10 min) + optional dependency graph. AI-suggested root cause runs on the incident's signal bundle.
+**Four rule types, one evaluation path.** `AlertRule.rule_type` discriminates `threshold` (a live reading against a fixed bound), `anomaly` (layer 2's adaptive baseline), `forecast` (layer 5's stored 24h projection) and `multivariate` (layer 4's novelty percentile). All four share one evaluator sweep, one state machine, one set of event/incident bookkeeping and one notification path — adding a rule type means a new judgment function, never a second pipeline.
+
+**Incidents** = alerts correlated by device + time window (default 10 min) + optional dependency graph. The summary and root-cause analysis are generated from the incident's signal bundle by `app/insights/generator.py` — local templates, no hosted model. They were Claude Haiku/Sonnet until that was replaced; see CLAUDE.md's Phase 17.
 
 ## Security
 

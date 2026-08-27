@@ -38,7 +38,13 @@ Alerts triage page, Settings (thresholds, anomaly sensitivity, channels). Web Pu
 
 ### Phase 6 — Anomaly detection  ·  Opus (model design) → Sonnet (build)  ·  ~2 sessions
 Layer 2 (EWMA + MAD z-score) first, ship it, look at real output on your own machine, tune.
-Then layer 3 (STL residual) and layer 4 (HalfSpaceTrees). Anomalies page with severity + evidence charts.
+Then layer 3 (STL residual) and layer 4. Anomalies page with severity + evidence charts.
+
+Layer 2 shipped as planned. **Layer 3 (STL residual) is still not started.** Layer 4 was built
+later, as a per-device `IsolationForest` rather than the `HalfSpaceTrees` sketched here — batch
+retraining from stored history suited a system that already keeps every reading, where an online
+learner mainly suits one that does not. It has its own alert rule type (`"multivariate"`); see
+`app/analysis/multivariate.py` and CLAUDE.md's layer-4 sections.
 
 ### Phase 7 — Forecasting  ·  Opus (design) → Sonnet (build)  ·  ~1–2 sessions
 Holt-Winters 24 h forecasts with prediction intervals; disk/memory time-to-exhaustion.

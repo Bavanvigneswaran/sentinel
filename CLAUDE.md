@@ -2,7 +2,11 @@
 
 Two-part system: **agents** collect real system metrics on monitored machines and push them outbound over
 WebSocket; a **web + Android app** lets a logged-in user view any of their own devices remotely, with
-anomaly detection, forecasting, alerting, and AI-generated insights.
+anomaly detection, forecasting, alerting, and generated plain-English insights.
+
+Detection is statistical and machine-learned on the user's *own* data — EWMA/MAD baselines,
+Holt-Winters and Theil-Sen fits, and a per-device IsolationForest. Explanation is local templates.
+**Nothing in this product calls a hosted AI API**; see the hard rules below.
 
 Read `docs/ARCHITECTURE.md` before making design decisions. Read `docs/ROADMAP.md` to see what phase we're in.
 
@@ -45,6 +49,28 @@ react-native-svg for charts) in `mobile/`, plus a Kotlin collector module in Pha
 - `make mobile-apk` — release APK; refuses without a real keystore. See `docs/PACKAGING.md`.
 - `make mobile-android` — build/install/launch the Android dev build · `make mobile` — Metro only
 - `make mobile-prebuild` — regenerate `frontend/mobile/android/` from `app.config.ts` · `make mobile-test`
+- `make mobile-collector-test` — 40 Kotlin JVM tests, no emulator needed
+- `make train-novelty` — fit the layer-4 IsolationForest per device from real history, and print
+  what it trained on · `make train-novelty-report` — score against the models already on disk
+
+## Where things stand right now
+
+**The ML work is on `feature/ml-anomaly` and is deliberately NOT merged.** 13 commits ahead of
+`review/codebase-fixes`, pushed, reviewed, left on its own branch by choice. `master` and
+`review/codebase-fixes` do not have the novelty model, the fourth rule type, or migration `0015`.
+If a checkout suddenly has no `app/analysis/multivariate.py`, that is why — check the branch first.
+
+Two things live outside git and will not survive a fresh clone:
+
+* **`NOVELTY_MODEL_DIR=/Users/bavan/PDD_Project/backend/var/models`** is set in `backend/.env`,
+  which is gitignored. Without it the API reports no novelty score at all — correctly, and with a
+  reason, but it looks like the feature is missing rather than unconfigured.
+* **`backend/var/models/*.joblib`** are the trained models themselves, gitignored on purpose
+  (generated artifacts, rebuilt from TimescaleDB). `make train-novelty` recreates them; only
+  devices with 200+ usable rows get one, which today means this Mac and nothing else.
+
+Also outside git, unchanged from earlier phases: the release keystore in `~/.sentinel-keys/`, and
+`agent/dist/` with its five published builds.
 
 Phase 5 status: alerts, the evaluator, and notifications complete on top of Phase 4's dashboard.
 Continuous aggregates at 1m/5m/1h behind a tenant-scoped wrapper view, a time-range query planner,
