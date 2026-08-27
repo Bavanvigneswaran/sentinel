@@ -29,8 +29,10 @@ from app.schemas.devices import (
     EnrollRequest,
     EnrollResponse,
 )
+from app.schemas.novelty import DeviceNoveltyOut
 from app.services import enrollment_service as svc
 from app.services.enrollment_service import InvalidEnrollmentCode
+from app.services.novelty_service import NoveltyUnavailable, score_device
 
 router = APIRouter(tags=["devices"])
 
@@ -140,6 +142,33 @@ async def delete_device(
         .values(revoked_at=sa.func.now(), revoked_reason="admin")
     )
     await session.commit()
+
+
+@router.get("/devices/{device_id}/novelty", response_model=DeviceNoveltyOut)
+async def get_device_novelty(
+    device_id: uuid.UUID, user: CurrentUser, session: TenantSession
+) -> DeviceNoveltyOut:
+    """The layer-4 multivariate novelty score for this device's newest reading.
+
+    200 with `available: false` rather than a 404 when there is no score: the
+    device exists, and "no model trained yet" is a state to explain, not an
+    error. The reason string says which of the several no-score situations
+    this is — see app/services/novelty_service.py.
+    """
+    device = await session.get(Device, device_id)
+    if device is None or device.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+
+    outcome = await score_device(session, device_id)
+    if isinstance(outcome, NoveltyUnavailable):
+        return DeviceNoveltyOut(available=False, reason=outcome.reason)
+    return DeviceNoveltyOut(
+        available=True,
+        score=outcome.score,
+        trained_on_samples=outcome.trained_on_samples,
+        feature_names=list(outcome.feature_names),
+        reading_ts=outcome.reading_ts,
+    )
 
 
 @router.get("/devices/{device_id}/tokens", response_model=list[AgentTokenOut])
