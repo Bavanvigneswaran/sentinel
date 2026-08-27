@@ -16,6 +16,7 @@ keeping "removed" and "not loaded" apart.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
@@ -106,10 +107,61 @@ def load_model(device_id: uuid.UUID) -> TrainedModel | None:
     # Drop any older mtime for this same path before inserting: the file has
     # been rewritten, so every previous entry for it describes a model that
     # can never be asked for again.
+    #
+    # `pop(..., None)` rather than `del` because this now runs in a worker
+    # thread (see _load_models): two callers racing on the same freshly
+    # retrained model would both load it and both try to evict the same stale
+    # key. That race is benign — the two loads are equal and one simply wins —
+    # but a bare `del` would turn it into a KeyError.
     for stale in [k for k in _CACHE if k[0] == key[0]]:
-        del _CACHE[stale]
+        _CACHE.pop(stale, None)
     _CACHE[key] = model
     return model
+
+
+def _load_models(device_ids: list[uuid.UUID]) -> dict[uuid.UUID, TrainedModel]:
+    """Every model that exists, for one thread hop rather than N.
+
+    Sync on purpose: the caller runs it through asyncio.to_thread, and doing
+    the whole batch inside one hop keeps the cost independent of how many
+    devices a sweep covers — the same reasoning score_devices() applies to its
+    single query.
+    """
+    return {d: m for d in device_ids if (m := load_model(d)) is not None}
+
+
+def _score_rows(
+    models: dict[uuid.UUID, TrainedModel], rows: list[dict[str, Any]]
+) -> dict[uuid.UUID, float]:
+    """Score every row against its own device's model.
+
+    Called directly on the event loop, **not** through asyncio.to_thread, and
+    that is the opposite of what Phase 7 did for the ETS fit. Measured rather
+    than assumed, because the obvious move is actively worse here: scoring 50
+    devices inline stalls the loop 91.7ms, and the same work through
+    to_thread stalls it 109.6ms. sklearn's score_samples() holds the GIL, so a
+    worker thread does not free the loop — it just adds a hop and GIL
+    contention on top of the same block. to_thread only pays off for work that
+    releases the GIL, which is why load_model() *is* offloaded (joblib.load
+    does file I/O: 9.9ms inline vs 5.1ms offloaded).
+
+    The cost is per *model*, not per row: score_samples() on one row costs
+    1.76ms and on fifty rows 1.75ms, i.e. it is almost entirely fixed per-call
+    overhead. So a sweep pays ~1.8ms per device that has both a model and a
+    multivariate rule. Two devices here; at fifty this would want a real
+    answer — a process pool, or scoring on the training script's schedule
+    rather than every sweep — and not another to_thread.
+    """
+    scores: dict[uuid.UUID, float] = {}
+    for row in rows:
+        device_id = row["device_id"]
+        model = models.get(device_id)
+        if model is None:
+            continue
+        score = score_row(model, row)
+        if score is not None:
+            scores[device_id] = score
+    return scores
 
 
 async def score_device(
@@ -122,7 +174,7 @@ async def score_device(
     if model_dir() is None:
         return NoveltyUnavailable(reason="No novelty models have been trained on this server yet.")
 
-    model = load_model(device_id)
+    model = await asyncio.to_thread(load_model, device_id)
     if model is None:
         return NoveltyUnavailable(
             reason="No model for this device yet — it needs more reporting history."
@@ -143,6 +195,7 @@ async def score_device(
         return NoveltyUnavailable(reason="No reading in the last 90 seconds to score.")
 
     reading = rows[0]
+    # Scored inline, deliberately — see _score_rows() for the measurement.
     score = score_row(model, reading)
     if score is None:
         missing = [f for f in model.feature_names if reading.get(f) is None]
@@ -182,7 +235,11 @@ async def score_devices(
     rather than as normal.
     """
     now = now or datetime.now(UTC)
-    models = {d: m for d in device_ids if (m := load_model(d)) is not None}
+    # One thread hop for every model the sweep needs, not one per device:
+    # joblib.load() releases the GIL for its file I/O, so this genuinely keeps
+    # a cold load off the loop (the sweep runs on the same loop that carries
+    # live-mode agent sockets). Scoring is not offloaded — see _score_rows().
+    models = await asyncio.to_thread(_load_models, device_ids)
     if not models:
         return {}
 
@@ -199,10 +256,4 @@ async def score_devices(
         device_ids=list(models),
     )
 
-    scores: dict[uuid.UUID, float] = {}
-    for row in rows:
-        device_id = row["device_id"]
-        score = score_row(models[device_id], row)
-        if score is not None:
-            scores[device_id] = score
-    return scores
+    return _score_rows(models, rows)
