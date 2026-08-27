@@ -2245,11 +2245,10 @@ assumed `metric` is always measured (`AnomalyEvidenceChart`, and RuleForm's
 metric state); both are narrowed rather than cast, so the reasoning stays
 checkable.
 
-Left behind deliberately: a rule named **"Unusual combination (verify)"** on the
-`phase10a@example.com` account, threshold 71, currently firing. It was created to
-prove the path and its threshold was chosen to fire — retune or delete it; the
-"(verify)" in the name is there so its origin is not mistaken for a real
-default.
+The verification rule was retuned rather than deleted: **"Unusual combination",
+`novelty_score > 95 for 300s`** on the `phase10a@example.com` account. 71 was
+picked to make it fire during verification; 95 is the threshold worth actually
+running, and it resolves the event that firing opened.
 
 **Seen in the browser**, and it found one more raw-key leak that three earlier
 passes had missed: both rules *lists* rendered "novelty_score > 71 for 0s". The
@@ -2268,3 +2267,45 @@ width/height), pointer clicks landed on the right CSS coordinates and had no
 effect — neither "New rule" nor "Edit" opened anything, with every API call 200
 and no console error. Clearing the emulation (`preset: "desktop"`) fixed it
 immediately. Nothing wrong with the page.
+
+
+### Finishing: the phone, and a second Hermes trap
+
+**The mobile app was verified against the running Metro bundle**, not just
+typechecked. The dev client was pointed at `10.0.2.2:8081` — the emulator's host
+alias — after its saved entry turned out to name a *stale* LAN IP
+(`10.23.132.19`, where this Mac is now `10.233.129.19`), which is the same
+address-drift Phase 14 already records for the APK. The app loaded against the
+Funnel URL and every string added this session is in the bundle it is serving.
+
+**The APK was rebuilt**, because the registered one predated the whole session —
+the insights templates, the nav fix, the novelty card and the fourth rule type.
+The same chain as before: `apksigner`'s certificate SHA-256 matched `keytool`'s
+own fingerprint for the keystore (`a6a78f80…8469`), `WAKE_LOCK` survived the
+prebuild merge, no `networkSecurityConfig` and no `usesCleartextTraffic` (correct
+for an `https://` backend, and it leaves the RN template's debug-variant
+permission unopposed), 40 Kotlin tests green after `prebuild --clean` regenerated
+`android/`, and all four SHA-256s agree — built, on disk, in the manifest, and
+served through the real authenticated route.
+
+**A second Hermes trap, one layer past the one Phase 14 records.** That entry
+says plain `grep` silently finds nothing in Hermes bytecode and to use `strings`.
+That is necessary and not sufficient: **Hermes stores any string containing a
+non-ASCII character as UTF-16LE**, so `strings` cannot see it either. Two of this
+session's strings — "All of them at once — the novelty score." and " · unusual
+combination of readings " — contain an em-dash and a middle dot, and both came
+back *zero* under `strings` while "Combination" (pure ASCII) came back one.
+Scanning the raw bytes for both encodings settled it: `ascii=0 utf16le=1` for the
+first two, `ascii=1 utf16le=0` for the third. Trusting `strings` would have meant
+concluding a shipped change had not shipped. On macOS `strings` has no `-e`
+flag, so the check has to be a byte scan rather than a different flag.
+
+Also recorded so it is not re-diagnosed: the `served` hash in the first
+verification pass was the hash of a **401 error body**, because the minted access
+token had expired inside its 15-minute TTL. The command reported a hash either
+way; only the HTTP status showed it was worthless.
+
+Not verified: **the phone's own Combination toggle has not been seen rendered.**
+Its web twin is confirmed, the strings are in the running bundle and in the
+shipped APK, tsc and all suites pass — but signing in on the emulator needs a
+password typed, which is not something to automate.
