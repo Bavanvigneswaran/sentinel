@@ -17,3 +17,7 @@ dist-ssr/
 
 # PyInstaller intermediates (agent/build/ is source; agent/.pyinstaller/ is scratch)
 .pyinstaller/
+
+# Trained novelty models: generated artifacts, rebuilt from TimescaleDB by
+# backend/scripts/train_novelty_model.py. Never source, never in git.
+backend/var/

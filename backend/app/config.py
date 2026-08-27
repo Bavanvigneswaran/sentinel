@@ -165,6 +165,17 @@ class Settings(BaseSettings):
     fcm_project_id: str | None = None
     fcm_service_account_file: str | None = None
 
+    # --- Multivariate novelty models (layer 4) --------------------------------
+    # Where `scripts/train_novelty_model.py` writes its trained per-device
+    # IsolationForests. Unset is a fully supported state, not a broken one:
+    # nothing has been trained yet, so the API reports no novelty score rather
+    # than inventing one — same posture as agent_dist_dir below.
+    #
+    # Deliberately outside app/: these are generated artifacts, rebuilt from
+    # TimescaleDB whenever they are retrained, and nothing about them belongs
+    # in the source tree or in git.
+    novelty_model_dir: str | None = None
+
     # --- Agent distribution (Phase 11) ---------------------------------------
     # Where a CI run's `manifest.json` and its binaries were published. Unset is
     # a fully supported state, not a broken one: the download page then says no

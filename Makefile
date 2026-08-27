@@ -2,6 +2,7 @@
         migrate migrate-down revision db-shell redis-shell reset-db lint typecheck \
         agent-enroll agent-sample agent-status agent-install-service agent-uninstall-service \
         agent-build agent-build-check agent-build-clean \
+        train-novelty train-novelty-report \
         mobile mobile-android mobile-prebuild mobile-test mobile-collector-test \
         mobile-apk \
         mobile-collector-logs
@@ -154,6 +155,24 @@ agent-uninstall-service:
 
 agent-build-check:
 	cd agent && .venv/bin/python build/build.py --check
+
+# --- layer-4 novelty models ---------------------------------------------------
+# Trains one IsolationForest per device from its own real 1m history. Run by
+# hand and read the report it prints: rows trained on, and how the newest real
+# reading scores. NOVELTY_MODEL_DIR defaults to backend/var/models (gitignored);
+# the API reports no score at all until this has been run, rather than
+# inventing one. `train-novelty-report` scores against the models already on
+# disk without retraining.
+NOVELTY_MODEL_DIR ?= var/models
+NOVELTY_DAYS ?= 7
+
+train-novelty:
+	cd backend && NOVELTY_MODEL_DIR=$(NOVELTY_MODEL_DIR) \
+		.venv/bin/python scripts/train_novelty_model.py --days $(NOVELTY_DAYS)
+
+train-novelty-report:
+	cd backend && NOVELTY_MODEL_DIR=$(NOVELTY_MODEL_DIR) \
+		.venv/bin/python scripts/train_novelty_model.py --report
 
 agent-build:
 	cd agent && .venv/bin/pip install -q -e ".[build]" && .venv/bin/python build/build.py
