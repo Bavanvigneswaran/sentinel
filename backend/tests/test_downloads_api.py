@@ -268,6 +268,19 @@ async def test_a_listed_build_downloads(client, monkeypatch, tmp_path):
     assert resp.headers["content-type"] == "application/octet-stream"
 
 
+async def test_an_apk_downloads_with_the_android_package_mime_type(client, monkeypatch, tmp_path):
+    """Android's downloader hands a completed .apk straight to the package
+    installer off the Content-Type it was served with; the generic
+    octet-stream every other build uses left it to guess by extension."""
+    _write_manifest(
+        tmp_path, [_build(os="android", arch="arm64", filename="sentinel-0.1.0.apk")]
+    )
+    _point_at(monkeypatch, tmp_path)
+
+    resp = await client.get(f"{CATALOG}/sentinel-0.1.0.apk", headers=await _auth_headers(client))
+    assert resp.headers["content-type"] == "application/vnd.android.package-archive"
+
+
 async def test_a_file_that_is_not_in_the_manifest_is_not_served(client, monkeypatch, tmp_path):
     """Even though it is sitting right there in the same directory."""
     _write_manifest(tmp_path, [_build()])
@@ -306,6 +319,91 @@ async def test_a_manifest_entry_whose_file_vanished_404s_rather_than_500s(
         f"{CATALOG}/sentinel-agent-0.1.0-macos-arm64", headers=await _auth_headers(client)
     )
     assert resp.status_code == 404
+
+
+async def test_a_ticket_lets_an_unauthenticated_request_download(
+    client, monkeypatch, tmp_path
+):
+    """The credential a plain `<a download>` link carries instead of a bearer
+    token — no Authorization header on this request at all."""
+    _write_manifest(tmp_path, [_build()])
+    _point_at(monkeypatch, tmp_path)
+    filename = "sentinel-agent-0.1.0-macos-arm64"
+
+    ticket = (
+        await client.post(f"{CATALOG}/{filename}/ticket", headers=await _auth_headers(client))
+    ).json()["ticket"]
+
+    resp = await client.get(f"{CATALOG}/{filename}", params={"ticket": ticket})
+    assert resp.status_code == 200
+    assert resp.content == b"not really a binary"
+
+
+async def test_minting_a_ticket_requires_authentication(client, monkeypatch, tmp_path):
+    _write_manifest(tmp_path, [_build()])
+    _point_at(monkeypatch, tmp_path)
+
+    resp = await client.post(f"{CATALOG}/sentinel-agent-0.1.0-macos-arm64/ticket")
+    assert resp.status_code == 401
+
+
+async def test_a_ticket_cannot_be_minted_for_a_build_not_in_the_catalogue(
+    client, monkeypatch, tmp_path
+):
+    _point_at(monkeypatch, tmp_path)
+
+    resp = await client.post(
+        f"{CATALOG}/sentinel-agent-0.1.0-macos-arm64/ticket", headers=await _auth_headers(client)
+    )
+    assert resp.status_code == 404
+
+
+async def test_a_ticket_is_bound_to_its_own_filename(client, monkeypatch, tmp_path):
+    """A ticket minted for one build must not open the door to a different one."""
+    _write_manifest(
+        tmp_path,
+        [_build(), _build(os="linux", arch="x64", filename="sentinel-agent-0.1.0-linux-x64")],
+    )
+    _point_at(monkeypatch, tmp_path)
+
+    ticket = (
+        await client.post(
+            f"{CATALOG}/sentinel-agent-0.1.0-macos-arm64/ticket",
+            headers=await _auth_headers(client),
+        )
+    ).json()["ticket"]
+
+    resp = await client.get(
+        f"{CATALOG}/sentinel-agent-0.1.0-linux-x64", params={"ticket": ticket}
+    )
+    assert resp.status_code == 401
+
+
+async def test_a_garbage_ticket_does_not_authenticate(client, monkeypatch, tmp_path):
+    _write_manifest(tmp_path, [_build()])
+    _point_at(monkeypatch, tmp_path)
+
+    resp = await client.get(
+        f"{CATALOG}/sentinel-agent-0.1.0-macos-arm64", params={"ticket": "not-a-real-ticket"}
+    )
+    assert resp.status_code == 401
+
+
+async def test_a_ticket_survives_being_used_more_than_once(client, monkeypatch, tmp_path):
+    """Unlike the WebSocket ticket, this one must not be single-use — a stalled
+    mobile transfer resumes with a fresh Range request against the same URL."""
+    _write_manifest(tmp_path, [_build()])
+    _point_at(monkeypatch, tmp_path)
+    filename = "sentinel-agent-0.1.0-macos-arm64"
+
+    ticket = (
+        await client.post(f"{CATALOG}/{filename}/ticket", headers=await _auth_headers(client))
+    ).json()["ticket"]
+
+    first = await client.get(f"{CATALOG}/{filename}", params={"ticket": ticket})
+    second = await client.get(f"{CATALOG}/{filename}", params={"ticket": ticket})
+    assert first.status_code == 200
+    assert second.status_code == 200
 
 
 async def test_a_symlink_pointing_out_of_the_dist_directory_is_refused(

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { AppLayout } from "@/components/AppLayout"
 import { CopyButton, CopyableCommand } from "@/components/CopyButton"
@@ -17,8 +17,7 @@ import {
   unsignedWarning,
   verifyCommand,
 } from "@/lib/agentInstall"
-import { apiDownload, apiFetch } from "@/lib/api"
-import { triggerDownload } from "@/lib/download"
+import { ApiError, apiFetch } from "@/lib/api"
 import { detectCurrentPlatform, formatBytes, readArchitectureHint } from "@/lib/platform"
 import type { AgentBuild, AgentDownloads, BuildOs } from "@/types/downloads"
 
@@ -305,39 +304,81 @@ function Step({
 }
 
 function DownloadRow({ build }: { build: AgentBuild }) {
-  const [downloading, setDownloading] = useState(false)
+  const [ticket, setTicket] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // An absolute URL means a release host is serving the file, and fetching it
-  // for a blob would be a cross-origin request the API's auth header has no
-  // business on. A relative one is this API, behind the bearer token.
+  // An absolute URL means a release host is serving the file, no auth of ours
+  // involved. A relative one is this API and needs a credential the download
+  // manager can carry in place of an Authorization header — see below.
   const external = /^https?:\/\//i.test(build.download_url)
 
-  const handleDownload = async () => {
-    setDownloading(true)
-    setError(null)
-    try {
-      const { blob, filename } = await apiDownload(build.download_url)
-      triggerDownload(blob, filename || build.filename)
-    } catch {
-      setError("The download failed. The build may have been removed from this server.")
-    } finally {
-      setDownloading(false)
+  const mintTicket = useCallback(() => {
+    if (external) return
+    apiFetch<{ ticket: string; expires_in: number }>(
+      `/downloads/agent/${encodeURIComponent(build.filename)}/ticket`,
+      { method: "POST" },
+    )
+      .then((res) => {
+        setTicket(res.ticket)
+        setError(null)
+      })
+      .catch((err) => {
+        setTicket(null)
+        setError(
+          err instanceof ApiError && err.status === 404
+            ? "This build is no longer on the server — it may have been rebuilt since this page loaded. Refresh and try again."
+            : "Could not reach the server to prepare the download. Check your connection and try again.",
+        )
+      })
+      .finally(() => setLoading(false))
+  }, [external, build.filename])
+
+  // Minted ahead of the tap, not on it, so a real user click lands on a
+  // ready `<a href>` rather than one built and clicked by JS after an await.
+  useEffect(() => {
+    mintTicket()
+    // A ticket is only valid for a few minutes (download_tickets.py). If this
+    // tab sat in the background longer than that, refresh it the moment it's
+    // foregrounded again rather than let a tap fail on a stale one.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") mintTicket()
     }
-  }
+    document.addEventListener("visibilitychange", onVisible)
+    return () => document.removeEventListener("visibilitychange", onVisible)
+  }, [mintTicket])
+
+  // build.download_url is deliberately un-prefixed (it's also what apiFetch's
+  // callers pass in, which adds /api itself — see lib/api.ts). A real link
+  // click is a browser navigation, not a fetch(), so nothing adds that prefix
+  // here automatically: without it, the console's own routing middleware
+  // reads this as a client-side route it owns and serves index.html instead
+  // of ever reaching the download route — the SPA shell, not the APK, is
+  // exactly what was silently coming back as "app-release.apk.html".
+  const href = external
+    ? build.download_url
+    : ticket
+      ? `/api${build.download_url}?ticket=${encodeURIComponent(ticket)}`
+      : null
 
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-3">
-        {external ? (
+        {href ? (
           <Button asChild>
-            <a href={build.download_url} download={build.filename}>
+            <a href={href} download={build.filename}>
               Download {build.filename}
             </a>
           </Button>
         ) : (
-          <Button onClick={handleDownload} disabled={downloading}>
-            {downloading ? "Downloading…" : `Download ${build.filename}`}
+          <Button
+            onClick={() => {
+              setLoading(true)
+              mintTicket()
+            }}
+            disabled={loading}
+          >
+            {loading ? "Preparing…" : "Retry"}
           </Button>
         )}
         <span className="text-xs text-muted-foreground">

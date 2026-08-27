@@ -51,23 +51,53 @@ async def get_tenant_session(
     return session
 
 
-async def get_current_user(
-    claims: Annotated[AccessClaims, Depends(get_access_claims)],
-    session: Annotated[AsyncSession, Depends(get_tenant_session)],
-) -> User:
+async def _resolve_user(claims: AccessClaims, session: AsyncSession) -> User | None:
     user = await session.get(User, claims.sub)
 
     if user is None or not user.is_active:
-        raise CREDENTIALS_ERROR
+        return None
 
     # A password change invalidates every access token issued before it, without
     # needing a denylist. One second of slack absorbs timestamp rounding.
     if claims.issued_at.timestamp() < user.password_changed_at.timestamp() - 1:
-        raise CREDENTIALS_ERROR
+        return None
 
     return user
 
 
+async def get_current_user(
+    claims: Annotated[AccessClaims, Depends(get_access_claims)],
+    session: Annotated[AsyncSession, Depends(get_tenant_session)],
+) -> User:
+    user = await _resolve_user(claims, session)
+    if user is None:
+        raise CREDENTIALS_ERROR
+    return user
+
+
+async def get_current_user_or_none(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> User | None:
+    """Like `get_current_user`, but a missing or invalid bearer yields `None`
+    instead of a 401.
+
+    For the one route where a bearer token is not the only valid credential —
+    an agent-build download can instead present a ticket (see
+    `app/services/download_tickets.py`) — and the route itself decides what to
+    do when neither is present.
+    """
+    if credentials is None or not credentials.credentials:
+        return None
+    try:
+        claims = decode_access_token(credentials.credentials)
+    except InvalidAccessToken:
+        return None
+    scope_to_user(session, claims.sub)
+    return await _resolve_user(claims, session)
+
+
 CurrentUser = Annotated[User, Depends(get_current_user)]
+CurrentUserOrNone = Annotated[User | None, Depends(get_current_user_or_none)]
 TenantSession = Annotated[AsyncSession, Depends(get_tenant_session)]
 UnscopedSession = Annotated[AsyncSession, Depends(get_unscoped_session)]
