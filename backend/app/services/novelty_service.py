@@ -146,3 +146,51 @@ async def score_device(
         feature_names=model.feature_names,
         reading_ts=reading["ts"],
     )
+
+
+async def score_devices(
+    session: AsyncSession,
+    device_ids: list[uuid.UUID],
+    *,
+    now: datetime | None = None,
+) -> dict[uuid.UUID, float]:
+    """Novelty for many devices in one query, for the evaluator sweep.
+
+    score_device() is the right shape for a request about one device and the
+    wrong shape for a sweep: it reads the newest reading per call, so N
+    devices would be N queries. This reads them all once, matching the
+    "at most three queries regardless of how many rules or devices" budget
+    evaluator._read_latest_values() already keeps.
+
+    Devices with no model, no fresh reading, or a reading that cannot fill
+    the vector are simply absent from the result. The caller reads it with
+    .get(), so absent and unscorable are indistinguishable — the same
+    deliberate conflation _read_latest_values() makes, because both mean
+    "no answer", and the state machine treats a missing value as unknown
+    rather than as normal.
+    """
+    now = now or datetime.now(UTC)
+    models = {d: m for d in device_ids if (m := load_model(d)) is not None}
+    if not models:
+        return {}
+
+    # Union across models rather than assuming they share FEATURES: a device
+    # trained before the feature set last changed still has its own list, and
+    # asking for a column its model does not use is harmless.
+    columns = tuple({name for model in models.values() for name in model.feature_names})
+    rows = await latest_per_entity(
+        session,
+        table="metric_samples",
+        entity_keys=(),
+        columns=columns,
+        since=now - timedelta(seconds=FRESH_WINDOW_SECONDS),
+        device_ids=list(models),
+    )
+
+    scores: dict[uuid.UUID, float] = {}
+    for row in rows:
+        device_id = row["device_id"]
+        score = score_row(models[device_id], row)
+        if score is not None:
+            scores[device_id] = score
+    return scores

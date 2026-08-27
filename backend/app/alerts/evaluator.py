@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.alerts.anomaly_eval import evaluate_anomaly_pair
 from app.alerts.forecast_eval import evaluate_forecast_pair
+from app.alerts.multivariate_eval import evaluate_multivariate_pair
 from app.alerts.state_apply import apply_step_result
 from app.analysis.alerts import evaluate_condition, step
 from app.analysis.anomaly import Sensitivity
@@ -48,6 +49,7 @@ from app.services.metrics_read import (
     latest_per_entity,
     worst_entity_per_device,
 )
+from app.services.novelty_service import score_devices
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +199,17 @@ class AlertEvaluator:
                     sa.select(MetricForecast).where(MetricForecast.user_id == user_id)
                 )
             }
+            # One query for every device with a multivariate rule, and none
+            # at all when the user has written none — the same "only pay for
+            # what an enabled rule actually references" shape
+            # _read_latest_values() follows.
+            novelty: dict[uuid.UUID, float] = {}
+            multivariate_devices = [
+                device_id for rule, device_id in pairs if rule.rule_type == "multivariate"
+            ]
+            if multivariate_devices:
+                novelty = await score_devices(session, multivariate_devices, now=now)
+
             sensitivity: Sensitivity = "medium"
             if any(rule.rule_type == "anomaly" for rule, _ in pairs):
                 settings = await session.get(NotificationSettings, user_id)
@@ -222,6 +235,16 @@ class AlertEvaluator:
                         now,
                     )
                     baselines[(device_id, rule.metric)] = baseline_row
+                elif rule.rule_type == "multivariate":
+                    await evaluate_multivariate_pair(
+                        session,
+                        user_id,
+                        rule,
+                        device,
+                        state_row,
+                        novelty.get(device_id),
+                        now,
+                    )
                 else:
                     await evaluate_forecast_pair(
                         session,
