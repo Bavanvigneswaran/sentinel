@@ -37,6 +37,13 @@ logger = logging.getLogger(__name__)
 #: so keying on mtime means a retrain is picked up on the next request with no
 #: restart — the same "re-read rather than cache indefinitely" posture
 #: download_service takes with the build manifest.
+#:
+#: At most one entry per path: a retrain writes a new mtime, and the previous
+#: entry for that device is dropped when the new one lands (see load_model).
+#: Keying on mtime *without* that eviction is a leak rather than a cache — a
+#: fitted forest is ~26 MB unpickled here, so a nightly retrain would add that
+#: per device per night to a `make serve` process that never restarts, and the
+#: superseded models are unreachable by then anyway.
 _CACHE: dict[tuple[str, int], TrainedModel] = {}
 
 
@@ -96,6 +103,11 @@ def load_model(device_id: uuid.UUID) -> TrainedModel | None:
         logger.error("novelty model at %s is not a TrainedModel: %r", path, type(model))
         return None
 
+    # Drop any older mtime for this same path before inserting: the file has
+    # been rewritten, so every previous entry for it describes a model that
+    # can never be asked for again.
+    for stale in [k for k in _CACHE if k[0] == key[0]]:
+        del _CACHE[stale]
     _CACHE[key] = model
     return model
 

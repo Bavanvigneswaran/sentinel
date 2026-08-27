@@ -10,6 +10,7 @@ null is not.
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -207,3 +208,38 @@ async def test_another_users_device_404s(client, device_with_reading, model_dir)
 
     r = await client.get(f"/devices/{device.id}/novelty", headers=_headers(stranger.id))
     assert r.status_code == 404
+
+
+def test_a_retrain_replaces_the_cached_model_rather_than_adding_to_it(model_dir):
+    """The cache is keyed on (path, mtime), so a retrain writes a *new* key.
+
+    Without eviction that is a leak wearing a cache's clothes: an unpickled
+    forest is tens of megabytes, `make serve` runs for weeks, and every
+    superseded model would be pinned in memory forever despite being
+    unreachable — nothing can ask for an mtime the file no longer has.
+    """
+    device_id = uuid.uuid4()
+    novelty_service._CACHE.clear()
+
+    _write_model(model_dir, device_id)
+    first = novelty_service.load_model(device_id)
+    assert first is not None
+    assert len(novelty_service._CACHE) == 1
+
+    # Retrain: same path, new contents, new mtime. os.utime rather than a
+    # sleep, so the test does not depend on filesystem timestamp resolution.
+    path = model_dir / f"{device_id}.joblib"
+    _write_model(model_dir, device_id)
+    stat = path.stat()
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+
+    second = novelty_service.load_model(device_id)
+    assert second is not None
+    assert len(novelty_service._CACHE) == 1, "the superseded model is still pinned in memory"
+
+    # A second device is a different path and must still get its own entry —
+    # eviction is per-path, not a one-model-global cache.
+    other_id = uuid.uuid4()
+    _write_model(model_dir, other_id)
+    assert novelty_service.load_model(other_id) is not None
+    assert len(novelty_service._CACHE) == 2
