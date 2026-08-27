@@ -2321,3 +2321,27 @@ three stale module docstrings. The web one is confirmed rendering "the four
 sources"; the three mobile strings are typechecked and were not re-seen on the
 device — the dev launcher would not reconnect afterwards, and they are text in
 files whose neighbours were just watched rendering.
+
+### The APK, once more, for three strings
+
+Rebuilt again immediately after the copy fixes, because the previous rebuild
+landed **twelve minutes before them** — the registered artifact was stale by
+exactly one commit, which is the same trap Phase 13 and Phase 14 each record and
+which is easiest to fall into right at the end, when the work feels finished.
+Checking the manifest's `built_at` against the last commit's timestamp is what
+caught it, and is the cheap check worth doing before calling an APK current.
+
+The bytecode check was written as **six assertions rather than three**: the new
+strings present *and* the old ones absent. A "present" check alone cannot tell a
+rebuild from a no-op, since the new copy could be there while the old copy also
+still is, in a screen that was missed. `the three sources` and `with the AI
+summary` both come back zero.
+
+It also re-confirmed the UTF-16 finding rather than taking it on trust: `the four
+sources` and `All of them at once` are UTF-16LE (both share a sentence with an
+em-dash), while `plain-English summary` and `threshold, anomaly, forecast and
+combination` are plain ASCII. Same file, both encodings, exactly as the rule
+predicts.
+
+Signature matched the keystore's own fingerprint, `WAKE_LOCK` present, no
+cleartext config, and built/manifest/served SHA-256s all agree.
