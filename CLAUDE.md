@@ -213,7 +213,8 @@ invariant below exists because something in HISTORY.md went wrong first, so when
 arbitrary, the reasoning is there. When they disagree, this file wins.
 
 The other authorities, unchanged: `docs/ARCHITECTURE.md` for design decisions,
-`docs/ROADMAP.md` for what phase we're in, `docs/TESTING.md` for how the end-to-end
+`docs/ROADMAP.md` for what phase we're in, `docs/TEST_BRIEF.md` for the five test
+artefacts currently being produced and `docs/TESTING.md` for how the end-to-end
 suites are run, `docs/ANDROID_METRICS.md` for what a phone may report,
 `docs/PACKAGING.md` for how anything is built or installed as a service.
 
