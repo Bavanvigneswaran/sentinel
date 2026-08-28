@@ -6,6 +6,10 @@ authority for how the stack under test is brought up and why it is not
 
 ## Run it
 
+The suite itself is generated and is **not** in git — `tests/` ships empty on
+purpose. The scripts glob `tests/*.js` rather than naming a file, so whatever
+lands there is picked up.
+
 ```bash
 # 1. the stack, in one terminal — NOT `make serve`, see below
 make e2e-db SENTINEL_E2E_EMAIL=testuser@sentinel.dev SENTINEL_E2E_PASSWORD='SecureP@ssw0rd123'

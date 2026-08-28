@@ -1,0 +1,2 @@
+The generated suite goes here. Kept in git so `npm test` finds a directory
+rather than failing with a confusing glob error before anything is written.

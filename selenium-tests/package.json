@@ -4,8 +4,8 @@
   "private": true,
   "description": "Selenium E2E suite for the Sentinel web console.",
   "scripts": {
-    "test": "mocha tests/login-tests.js --timeout 60000 --reporter spec",
-    "test:report": "TEST_SUITE_NAME='Sentinel web console — Selenium E2E' mocha tests/login-tests.js --timeout 60000 --reporter json --reporter-option output=results.json || true",
+    "test": "mocha tests/*.js --timeout 60000 --reporter spec",
+    "test:report": "TEST_SUITE_NAME='Sentinel web console \u2014 Selenium E2E' mocha tests/*.js --timeout 60000 --reporter json --reporter-option output=results.json || true",
     "report": "node ../tools/test-report/mocha-xlsx.js results.json selenium-test-report.xlsx",
     "test:xlsx": "npm run test:report && npm run report",
     "smoke": "node smoke.js"
