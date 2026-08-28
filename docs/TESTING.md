@@ -148,9 +148,20 @@ about specifically:
 
 * `page-title` is on every content page's heading (all thirteen; login and
   signup use `login-title`/`signup-title` instead, rendering through
-  `AuthForm`). Wait on it after a navigation rather than on the URL — the
-  router changes the URL before the page's data request resolves, so a URL
-  assertion can pass while the bootstrap loader is still on screen.
+  `AuthForm`). **Neither it nor the URL is a sufficient wait on its own, and the
+  two fail in opposite directions.** A URL assertion can pass while the
+  bootstrap loader is still on screen, because the router changes the URL before
+  the page's data request resolves. But waiting for `page-title` to merely
+  *exist* is worse for a click-driven navigation: the previous page's heading is
+  still mounted at the moment of the click, so the wait returns instantly and
+  the assertion reads the page you just left — `'Devices'` where `'Alerts'` was
+  expected, which reads as the app routing wrongly. React Router commits inside
+  a transition, so `history.pushState` has already happened while the old page
+  is still rendered, and a `pathname` check alone can also pass a frame early.
+  What works: capture the `page-title` element *before* the click, then wait for
+  it to go stale — that waits for React to unmount the old route and says
+  nothing about what replaces it, so the assertion stays honest. See
+  `clickNav()` in `selenium-tests/tests/login-tests.js`.
 * `page-loading` is on `FullPageLoader`, which `ProtectedRoute` renders while
   the auth bootstrap is in flight. A driver that asserts immediately after
   `driver.get("/")` races it and sees the loader, not the page. Wait for
