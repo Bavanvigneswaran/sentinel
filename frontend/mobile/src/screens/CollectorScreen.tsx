@@ -134,7 +134,7 @@ export function CollectorScreen({ navigation }: RootStackScreenProps<"Collector"
 
   if (!supported) {
     return (
-      <Screen>
+      <Screen testID="screen-collector-unsupported">
         <Card>
           <CardTitle>Not available in this build</CardTitle>
           <Text style={text.small}>
@@ -147,7 +147,7 @@ export function CollectorScreen({ navigation }: RootStackScreenProps<"Collector"
   }
 
   return (
-    <Screen>
+    <Screen testID="screen-collector">
       {error && <ErrorNote message={error} />}
 
       <Card>

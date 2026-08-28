@@ -69,7 +69,7 @@ export function AnomaliesScreen({ route }: RootStackScreenProps<"Anomalies">) {
   const events = data ?? []
 
   return (
-    <Screen title="Anomalies" refreshing={refreshing} onRefresh={refresh}>
+    <Screen testID="screen-anomalies" title="Anomalies" refreshing={refreshing} onRefresh={refresh}>
       {deviceName && (
         <Text style={text.tiny}>Showing {deviceName} only. Open this from More for every device.</Text>
       )}

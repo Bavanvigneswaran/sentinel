@@ -1,0 +1,19 @@
+{
+  "name": "sentinel-selenium-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Selenium E2E suite for the Sentinel web console.",
+  "scripts": {
+    "test": "mocha tests/login-tests.js --timeout 60000 --reporter spec",
+    "test:report": "mocha tests/login-tests.js --timeout 60000 --reporter json --reporter-option output=results.json || true",
+    "report": "node report.js results.json selenium-test-report.xlsx",
+    "test:xlsx": "npm run test:report && npm run report"
+  },
+  "dependencies": {
+    "selenium-webdriver": "^4.27.0"
+  },
+  "devDependencies": {
+    "exceljs": "^4.4.0",
+    "mocha": "^11.0.1"
+  }
+}

@@ -168,9 +168,15 @@ export function PasswordField({
 
 /** An inline error strip. Never a modal: an error on a monitoring screen
  * should not hide the numbers behind it. */
-export function ErrorNote({ message }: { message: string }) {
+export function ErrorNote({
+  message,
+  testID = "error-note",
+}: {
+  message: string
+  testID?: string
+}) {
   return (
-    <View style={styles.errorNote}>
+    <View style={styles.errorNote} testID={testID}>
       <Text style={{ ...text.small, color: colors.destructive }}>{message}</Text>
     </View>
   )
@@ -180,10 +186,12 @@ export function Segmented<T extends string>({
   options,
   value,
   onChange,
+  testID = "segmented",
 }: {
   options: { value: T; label: string }[]
   value: T
   onChange: (next: T) => void
+  testID?: string
 }) {
   return (
     <View style={styles.segmented}>
@@ -192,7 +200,9 @@ export function Segmented<T extends string>({
         return (
           <Pressable
             key={option.value}
+            testID={`${testID}-${option.value}`}
             accessibilityRole="button"
+            accessibilityLabel={option.label}
             accessibilityState={{ selected: active }}
             onPress={() => onChange(option.value)}
             style={[styles.segment, active && styles.segmentActive]}

@@ -77,7 +77,7 @@ export function SettingsScreen({ navigation }: RootStackScreenProps<"Settings">)
   }
 
   return (
-    <Screen title="Settings">
+    <Screen testID="screen-settings" title="Settings">
       <Card>
         <CardTitle>Account</CardTitle>
         <Text style={text.body}>{user?.display_name ?? user?.email ?? "—"}</Text>

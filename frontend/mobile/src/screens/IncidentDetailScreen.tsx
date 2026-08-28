@@ -88,7 +88,7 @@ export function IncidentDetailScreen({ route }: RootStackScreenProps<"IncidentDe
   }
 
   return (
-    <Screen refreshing={refreshing} onRefresh={() => void load(true)}>
+    <Screen testID="screen-incident-detail" refreshing={refreshing} onRefresh={() => void load(true)}>
       {error && <ErrorNote message={error} />}
       {!incident && !error && <Text style={text.small}>Loading…</Text>}
 

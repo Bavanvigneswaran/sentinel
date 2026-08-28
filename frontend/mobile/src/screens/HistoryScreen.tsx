@@ -113,7 +113,7 @@ export function HistoryScreen({ route }: RootStackScreenProps<"History">) {
   const hasPoints = series !== null && series.system.length > 0
 
   return (
-    <Screen>
+    <Screen testID="screen-history">
       <Segmented
         options={TIME_RANGES.map((r) => ({ value: r.key, label: r.label }))}
         value={rangeKey}

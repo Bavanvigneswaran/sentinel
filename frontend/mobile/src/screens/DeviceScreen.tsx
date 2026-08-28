@@ -125,7 +125,7 @@ export function DeviceScreen({ route, navigation }: RootStackScreenProps<"Device
     )
 
   return (
-    <Screen refreshing={refreshing} onRefresh={refresh}>
+    <Screen testID="screen-device" refreshing={refreshing} onRefresh={refresh}>
       {error && <ErrorNote message={error} />}
       {loading && !data && <Text style={text.small}>Loading…</Text>}
 
@@ -186,6 +186,7 @@ export function DeviceScreen({ route, navigation }: RootStackScreenProps<"Device
               {DEVICE_SECTIONS.map(([route, label]) => (
                 <Button
                   key={route}
+                  testID={`device-section-${route.toLowerCase()}`}
                   size="sm"
                   variant="outline"
                   title={label}

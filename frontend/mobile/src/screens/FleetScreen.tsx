@@ -51,7 +51,7 @@ export function FleetScreen({ navigation }: RootTabScreenProps<"Devices">) {
   )
 
   return (
-    <Screen
+    <Screen testID="screen-fleet"
       title="Devices"
       subtitle="Health of every machine you've enrolled, from its own real telemetry."
       right={data ? <Text style={text.tiny}>{formatRelative(data.generated_at)}</Text> : undefined}

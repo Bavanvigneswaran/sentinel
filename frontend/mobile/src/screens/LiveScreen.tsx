@@ -81,7 +81,7 @@ function LiveView({ deviceId }: { deviceId: string }) {
   const desktopOnly = platform !== null && !isAndroid
 
   return (
-    <Screen
+    <Screen testID="screen-live"
       // No title: the stack header already carries the device name. The
       // subtitle is here because "why is this screen making the agent work
       // harder" is worth saying once, on the screen that causes it.

@@ -112,7 +112,7 @@ export function AlertRulesScreen({ route }: RootStackScreenProps<"AlertRules">) 
 
   const renderRule = (rule: AlertRule) =>
         editingId === rule.id ? (
-          <Card key={rule.id}>
+          <Card key={rule.id} testID={`rule-editing-${rule.id}`}>
             <Text style={text.heading}>Edit rule</Text>
             <RuleForm
               devices={devices}
@@ -125,7 +125,7 @@ export function AlertRulesScreen({ route }: RootStackScreenProps<"AlertRules">) 
             />
           </Card>
         ) : (
-          <Card key={rule.id}>
+          <Card key={rule.id} testID={`rule-${rule.id}`}>
             <View style={styles.head}>
               <Text style={text.heading} numberOfLines={1}>
                 {rule.name}
@@ -167,7 +167,7 @@ export function AlertRulesScreen({ route }: RootStackScreenProps<"AlertRules">) 
         )
 
   return (
-    <Screen refreshing={refreshing} onRefresh={() => void load(true)}>
+    <Screen testID="screen-alert-rules" refreshing={refreshing} onRefresh={() => void load(true)}>
       {deviceName && (
         <Text style={text.tiny}>
           Showing {deviceName}'s rules and the fleet-wide ones that also apply to it.

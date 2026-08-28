@@ -93,7 +93,7 @@ export function ReportsScreen({ route }: RootStackScreenProps<"Reports">) {
   }
 
   return (
-    <Screen title="Reports" refreshing={refreshing} onRefresh={refresh}>
+    <Screen testID="screen-reports" title="Reports" refreshing={refreshing} onRefresh={refresh}>
       {deviceName && (
         <Text style={text.tiny}>Showing {deviceName} only. Open this from More for every device.</Text>
       )}

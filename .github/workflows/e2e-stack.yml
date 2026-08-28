@@ -1,0 +1,137 @@
+# Prove the end-to-end stack can be built from nothing.
+#
+# Not a test suite. This is the self-test for
+# .github/actions/sentinel-stack — the composite action every E2E job depends
+# on — plus the handful of properties those jobs assume and would otherwise
+# discover by failing in confusing ways: that the console is actually served,
+# that the seeded account can sign in, and that the security headers are
+# present on a real response.
+#
+# It exists because the action encodes several things that are invisible until
+# they break in CI specifically: WeasyPrint's system libraries (missing, the
+# backend fails at *import* and the error names Pango), the database Alembic
+# cannot create for itself, and the console build without which every UI
+# assertion fails against a 404 that looks like routing.
+#
+# See docs/TESTING.md.
+
+name: e2e-stack
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/actions/sentinel-stack/**"
+      - ".github/workflows/e2e-stack.yml"
+      - "backend/**"
+      - "frontend/web/**"
+  pull_request:
+    paths:
+      - ".github/actions/sentinel-stack/**"
+      - "backend/**"
+      - "frontend/web/**"
+
+permissions:
+  contents: read
+
+jobs:
+  stack:
+    name: bring up the stack
+    runs-on: ubuntu-latest
+
+    # A composite action cannot declare services, so they live here. The
+    # credentials are docker-compose.yml's, which is what backend/.env.ci
+    # expects; the restricted role itself is created by migration 0001 from
+    # APP_DB_ROLE, so there is no role setup step.
+    services:
+      timescaledb:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_USER: sentinel
+          POSTGRES_PASSWORD: sentinel
+          POSTGRES_DB: sentinel
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sentinel"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bring up the stack
+        id: stack
+        uses: ./.github/actions/sentinel-stack
+
+      - name: The seeded account can actually sign in
+        env:
+          BASE: ${{ steps.stack.outputs.base-url }}
+          EMAIL: ${{ steps.stack.outputs.email }}
+          PASSWORD: ${{ steps.stack.outputs.password }}
+        run: |
+          # Through the API, not the database: an account can exist and still
+          # be unable to log in — EmailStr rejects the special-use TLDs, and
+          # that surfaces as a 422 before the password is ever checked.
+          code=$(curl -s -o /tmp/login.json -w '%{http_code}' \
+            -X POST "$BASE/auth/login" \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}")
+          if [ "$code" != "200" ]; then
+            echo "::error::login as $EMAIL returned $code"
+            cat /tmp/login.json
+            exit 1
+          fi
+          grep -q '"access_token"' /tmp/login.json
+          echo "signed in as $EMAIL"
+
+      - name: Rate limiting is off, or the suites are testing the wrong stack
+        env:
+          BASE: ${{ steps.stack.outputs.base-url }}
+        run: |
+          # Twelve bad logins. Under .env.ci every one must be a 401; a 429
+          # means the run picked up backend/.env and every browser assertion
+          # after the tenth would fail against "Too many attempts".
+          for i in $(seq 1 12); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' \
+              -X POST "$BASE/auth/login" -H 'Content-Type: application/json' \
+              -d '{"email":"nobody@example.com","password":"definitely-wrong"}')
+            if [ "$code" = "429" ]; then
+              echo "::error::got a 429 on attempt $i — the stack is not running .env.ci"
+              exit 1
+            fi
+          done
+          echo "12 failed logins, no 429"
+
+      - name: Security headers are on a real response
+        env:
+          BASE: ${{ steps.stack.outputs.base-url }}
+        run: |
+          headers=$(curl -sS -D- -o /dev/null "$BASE/health")
+          for h in content-security-policy x-content-type-options x-frame-options \
+                   referrer-policy permissions-policy; do
+            echo "$headers" | grep -qi "^$h:" || { echo "::error::missing $h"; exit 1; }
+          done
+          # Absent over plaintext on purpose: HSTS is gated on the request
+          # scheme, so it appears behind TLS and never here.
+          if echo "$headers" | grep -qi '^strict-transport-security:'; then
+            echo "::error::HSTS sent over http — it should be scheme-gated"
+            exit 1
+          fi
+          echo "headers present, HSTS correctly absent over http"
+
+      - name: Server log
+        if: always()
+        run: cat sentinel-server.log || true
+
+      - name: Upload the server log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-server-log
+          path: sentinel-server.log
+          if-no-files-found: ignore

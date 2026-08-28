@@ -16,6 +16,7 @@ export function Screen({
   children,
   refreshing,
   onRefresh,
+  testID,
 }: {
   title?: string
   subtitle?: string
@@ -23,6 +24,16 @@ export function Screen({
   children: ReactNode
   refreshing?: boolean
   onRefresh?: () => void
+  /**
+   * Required, not optional, and that is the point: every screen goes through
+   * this component, so a required prop is the one place a new screen can be
+   * made to arrive with a locator already on it. Optional would mean the
+   * hooks decay back to XPath-over-visible-text one screen at a time, which
+   * is the state this replaced. `screen-fleet`, `screen-alerts`, and so on.
+   *
+   * Surfaces as Android `resource-id`. The title gets `${testID}-title`.
+   */
+  testID: string
 }) {
   const insets = useSafeAreaInsets()
 
@@ -43,6 +54,7 @@ export function Screen({
 
   return (
     <ScrollView
+      testID={testID}
       style={styles.root}
       contentContainerStyle={[
         styles.content,
@@ -63,7 +75,11 @@ export function Screen({
       {(title || subtitle || right) && (
         <View style={styles.header}>
           <View style={styles.headerText}>
-            {title && <Text style={text.title}>{title}</Text>}
+            {title && (
+              <Text style={text.title} testID={`${testID}-title`}>
+                {title}
+              </Text>
+            )}
             {subtitle && <Text style={text.small}>{subtitle}</Text>}
           </View>
           {right}
@@ -76,9 +92,17 @@ export function Screen({
 
 /** The "nothing here yet" state. Distinct from a loading state on purpose —
  * an empty fleet and an unloaded fleet are different facts. */
-export function EmptyState({ title, body }: { title: string; body: string }) {
+export function EmptyState({
+  title,
+  body,
+  testID = "empty-state",
+}: {
+  title: string
+  body: string
+  testID?: string
+}) {
   return (
-    <View style={styles.empty}>
+    <View style={styles.empty} testID={testID}>
       <Text style={text.heading}>{title}</Text>
       <Text style={text.small}>{body}</Text>
     </View>

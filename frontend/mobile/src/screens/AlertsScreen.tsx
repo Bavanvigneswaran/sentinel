@@ -99,7 +99,7 @@ export function AlertsScreen({ navigation }: RootTabScreenProps<"Alerts">) {
   )
 
   return (
-    <Screen
+    <Screen testID="screen-alerts"
       title="Alerts"
       subtitle="Firing and recently resolved alerts across your fleet."
       refreshing={refreshing}
@@ -165,7 +165,7 @@ function AlertCard({
   onOpenIncident?: () => void
 }) {
   return (
-    <Card>
+    <Card testID={`alert-event-${event.id}`}>
       <View style={styles.head}>
         <View style={styles.headText}>
           <Text style={text.heading} numberOfLines={2}>
@@ -192,10 +192,17 @@ function AlertCard({
         </Text>
         <View style={styles.footerActions}>
           {onOpenIncident && (
-            <Button size="sm" variant="ghost" title="Incident" onPress={onOpenIncident} />
+            <Button
+              testID={`alert-open-incident-${event.id}`}
+              size="sm"
+              variant="ghost"
+              title="Incident"
+              onPress={onOpenIncident}
+            />
           )}
           {event.status === "firing" && (
             <Button
+              testID={`alert-silence-${event.id}`}
               size="sm"
               variant="outline"
               title={`Silence ${SILENCE_HOURS}h`}

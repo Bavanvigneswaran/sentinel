@@ -104,7 +104,7 @@ export function ForecastsScreen({ route }: RootStackScreenProps<"Forecasts">) {
       : null
 
   return (
-    <Screen
+    <Screen testID="screen-forecasts"
       title="Forecasts"
       refreshing={exhaustion.refreshing}
       onRefresh={() => {

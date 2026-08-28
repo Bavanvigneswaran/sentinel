@@ -58,11 +58,13 @@ const ENTRIES: Entry[] = [
 
 export function MoreScreen({ navigation }: RootTabScreenProps<"More">) {
   return (
-    <Screen title="More">
+    <Screen testID="screen-more" title="More">
       {ENTRIES.map((entry) => (
         <TouchableOpacity
           key={entry.route}
+          testID={`more-${entry.route.toLowerCase()}`}
           accessibilityRole="button"
+          accessibilityLabel={entry.title}
           onPress={() => navigation.navigate(entry.route)}
         >
           <Card>

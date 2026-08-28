@@ -1,0 +1,12 @@
+{
+  "name": "sentinel-load-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "k6 baseline load profile for the Sentinel API, and its xlsx report.",
+  "scripts": {
+    "report": "node report.js summary.json load-test-report.xlsx"
+  },
+  "devDependencies": {
+    "exceljs": "^4.4.0"
+  }
+}

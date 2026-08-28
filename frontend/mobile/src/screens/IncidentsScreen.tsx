@@ -69,7 +69,7 @@ export function IncidentsScreen({ route, navigation }: RootStackScreenProps<"Inc
   const incidents = data ?? []
 
   return (
-    <Screen title="Incidents" refreshing={refreshing} onRefresh={refresh}>
+    <Screen testID="screen-incidents" title="Incidents" refreshing={refreshing} onRefresh={refresh}>
       {deviceName && (
         <Text style={text.tiny}>Showing {deviceName} only. Open this from More for every device.</Text>
       )}
@@ -96,6 +96,7 @@ export function IncidentsScreen({ route, navigation }: RootStackScreenProps<"Inc
       {incidents.map((incident) => (
         <Card
           key={incident.id}
+          testID={`incident-${incident.id}`}
           onPress={() => navigation.navigate("IncidentDetail", { incidentId: incident.id })}
         >
           <View style={styles.header}>
