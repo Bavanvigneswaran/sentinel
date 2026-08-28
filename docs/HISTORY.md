@@ -2131,3 +2131,18 @@ seven at the 1s cadence a high-frequency phone runs all day, and quoting the hou
 has seven minutes would be worse than saying nothing at all.
 
 Kotlin tests 40 → 57, mobile JS 88 → 95, everything else untouched.
+
+Rebuilt and verified in the running app, not just against unit tests, closing the kind of gap this
+project has been burned by before. `make mobile-apk` produced a release build signed with the real
+`~/.sentinel-keys/sentinel-release.jks` key (`apksigner verify` confirmed the cert, not React
+Native's public debug key), installed on the Android emulator, enrolled against a real `make serve`
+instance behind the Tailscale Funnel. The Collector screen's Buffered row rendered `1 sample`
+through the new `describeBuffer()` path with correct singular/plural, and the battery-optimisation
+card's second paragraph showed "This phone buffers 400 samples — about 67 minutes at the 10s
+cadence" — genuinely computed (400 × 10s ÷ 60 = 66.67, rounded), not the old hardcoded "hour," which
+is the exact discrepancy the fix targeted. `adb logcat` showed clean 10s push cycles with the buffer
+draining to zero every time and no crash. Not exercised for real: the "nearly full"/"dropping
+oldest" buffer states and the thermal-overrun log line, both of which need sustained conditions
+(66+ minutes of backend downtime, or genuine thermal throttling) this session couldn't produce —
+those stay covered by the unit tests alone. The test device was enrolled and removed afterward
+through the app's own UI, leaving the account's real device list unchanged.
