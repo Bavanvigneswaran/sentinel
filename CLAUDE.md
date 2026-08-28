@@ -71,9 +71,12 @@ Three things live outside git and will not survive a fresh clone:
 * **`backend/var/models/*.joblib`** are the trained models themselves, gitignored on purpose
   (generated artifacts, rebuilt from TimescaleDB). `make train-novelty` recreates them; only
   devices with 200+ usable rows get one, which today means this Mac and nothing else.
-* **The VAPID keypair** in the same gitignored `backend/.env`, generated 2026-08-28. Regenerating it
-  is not free: a browser binds a subscription to the key it was created with, so new keys mean every
-  row in `web_push_subscriptions` is dead and every browser has to enable push again.
+* **The VAPID keypair and Gmail SMTP credential**, both in the same gitignored `backend/.env`,
+  configured 2026-08-28. Regenerating the VAPID keys is not free: a browser binds a subscription to
+  the key it was created with, so new keys mean every row in `web_push_subscriptions` is dead and
+  every browser has to enable push again. The Gmail credential is an App Password
+  (`myaccount.google.com/apppasswords`, requires 2-Step Verification on the account first), not the
+  account password — revoking it from the Google side breaks send silently until reissued.
 
 Also outside git, unchanged from earlier phases: the release keystore in `~/.sentinel-keys/`, and
 `agent/dist/` with its five published builds.
@@ -96,28 +99,37 @@ Tailscale or `make serve` is not running on this Mac, nothing is reachable.
 ### Notification channels: what is actually configured
 
 Code-complete since Phase 5 and Phase 10a, but a channel only delivers if it has a credential, and
-until 2026-08-28 none of them did. Current state:
+before 2026-08-28 none of them did — every "firing" notification since Phase 5 was logged and
+silently dropped by the unconfigured-guard branches in `notify.py`. Current state:
 
-* **Web push — working, verified end to end.** VAPID keypair in `backend/.env`, subject set to the
-  Funnel URL. Proven by a real threshold rule firing on a real reading and arriving in Safari.
-  **Windows and any other browser need nothing built** — VAPID identifies the application server,
-  not a machine, so the same keys cover Chrome/Edge anywhere; each browser adds its own
-  `web_push_subscriptions` row and an alert fans out to all of them. The one requirement is loading
-  the console over the Funnel `https://` origin: the Push API does not exist on an insecure origin,
-  and the app reports that as "this browser does not support push notifications", which reads like a
-  browser problem and is not one.
-* **Email — not configured, and blocked on two things, not one.** `SMTP_HOST` is blank *and* the
-  signed-in account's address is `phase10a@example.com`, a Phase 10a test row on IANA's reserved
-  documentation domain with no mailbox. Configuring SMTP alone would deliver nowhere. The plan is
-  Gmail + an app password, pending the user generating one.
-* **FCM — not configured, and it is the only way native Android push can work.** No
-  `frontend/mobile/google-services.json`, no `FCM_PROJECT_ID`/`FCM_SERVICE_ACCOUNT_FILE`. Two
-  objections to this are worth pre-empting because both are reasonable: the persistent notification
-  the APK already shows is `CollectorNotification.kt`, built on-device by the foreground service, and
-  involves no server; and web push avoids Firebase only because the W3C standardised VAPID over an
-  endpoint that *is* `fcm.googleapis.com` for Chrome. Native Android has no VAPID equivalent, so this
-  is a platform constraint rather than an implementation choice. Skipping it costs exactly one thing:
-  alerts reaching the phone with no browser open.
+* **Web push — configured and working, verified end to end.** VAPID keypair in `backend/.env`,
+  subject set to the Funnel URL. Proven by a real threshold rule firing on a real reading and
+  arriving in Safari. **Reaches every platform already, including Android, with nothing native
+  built.** VAPID identifies the application server, not a machine or an app, so the same keys cover
+  any browser that can reach the Funnel URL — Chrome/Edge on Windows, and **Chrome on Android**,
+  identically to Safari on this Mac. `webPush.ts` has no platform branch; it only checks for
+  `serviceWorker`/`PushManager` support. Each browser adds its own `web_push_subscriptions` row and
+  an alert fans out to all of them. The one requirement is loading the console over the Funnel
+  `https://` origin, not a LAN IP — the Push API does not exist on an insecure origin, and the app
+  reports that as "this browser does not support push notifications", which reads like a browser
+  problem and is not one.
+* **Email — configured and working, verified end to end.** Gmail SMTP (`smtp.gmail.com:587`, an App
+  Password, not the account password) plus changing the signed-in account's `users.email` off the
+  Phase 10a placeholder `phase10a@example.com` (IANA's reserved, unroutable documentation domain) to
+  a real inbox — SMTP alone would have delivered to nowhere. Proven by sending through the real
+  `notify._send_email` path and receiving it.
+* **FCM — deliberately not configured, and not planned.** Native Android push (alerts reaching the
+  closed APK specifically) is the *only* thing FCM adds that the other two channels do not already
+  cover — Android does not have a VAPID-equivalent open standard the way browsers do, so waking a
+  closed native app from outside requires either FCM or UnifiedPush (which needs a distributor app
+  the user installs), and `expo-notifications` only speaks the former on Android. It is a platform
+  constraint, not an implementation gap. Weighed against that: opening the Funnel URL in Chrome on
+  the phone already gets a real push notification through the *same* web push configured above — the
+  only difference is it's attributed to Chrome and opens a browser tab rather than the native app's
+  own Alerts screen. That gap was judged cosmetic, not functional, against the cost of a Firebase
+  project, a service-account credential, and a signed release rebuild (`make mobile-prebuild` +
+  `make mobile-apk`) to get it. Revisit only if the native-app attribution itself becomes something
+  that matters, not because a channel is technically missing.
 
 **Deleting an alert rule while it is FIRING orphans its event.** `alert_events.rule_id` is `ON
 DELETE SET NULL` (firing history outlives its rule — hence the snapshotted `rule_name`/`rule_type`)
@@ -130,15 +142,9 @@ indistinguishable from a real one afterwards — and go through `maybe_close_inc
 an UPDATE so the
 flush-before-counting ordering holds.
 
-**Picking this up again.** Email is the next piece and is blocked only on credentials the user has
-to generate. In order: create a Gmail app password (Google account → 2-Step Verification → App
-passwords → Mail); set `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_USE_TLS=true`, and
-`SMTP_USERNAME`/`SMTP_PASSWORD`/`SMTP_FROM` to that address and password in `backend/.env`; change
-the signed-in account's `users.email` off `phase10a@example.com` to a real address, or email will
-still go nowhere; restart the backend (`get_settings()` is `@lru_cache`d, so a running server keeps
-the old values); then verify by calling `notify._send_email` on the real path rather than trusting
-the config. Firebase/FCM was considered and deliberately deferred — the reasoning is in the bullet
-above, and nothing is broken by leaving it unset.
+**A restart is required after touching any of the above.** `get_settings()` is `@lru_cache`d, so a
+server already running keeps the old (unconfigured) values until it is restarted — a config edit
+with no restart looks exactly like a config edit that didn't take.
 
 ### How the history is filed
 

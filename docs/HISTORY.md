@@ -1991,3 +1991,78 @@ a firing alert fans out to all of them. The only requirement is loading the cons
 `https://` origin rather than a LAN IP, since the Push API is not exposed on an insecure origin at
 all and its absence is reported as "this browser does not support push notifications", which reads
 like a browser problem and is not one.
+
+### Email, and the case against Firebase
+
+Email was the piece deferred at the end of the previous session, blocked only on a credential the
+user had to generate. It surfaced one Google-account wrinkle before it worked at all: the first
+attempt at generating a Gmail App Password failed with "The setting you are looking for is not
+available for your account", tried against two different accounts. The cause was the same both
+times and is worth naming precisely, because the error message does not — Google hides the App
+Passwords page entirely until 2-Step Verification is turned on for the account, and reports it as an
+unavailable setting rather than "turn on 2FA first". A college/Workspace account can additionally
+have App Passwords disabled outright by an admin, which is a different failure with the identical
+error text and nothing the account holder can fix. Turning on 2FA on the personal account resolved
+it immediately.
+
+Verified before trusting Gmail with it: a ~40-line hand-rolled SMTP server stood in for a real
+mailbox, so `notify._send_email` could be exercised — message construction, the aiosmtplib call,
+the AUTH negotiation — with no credential and no network involved. It caught a real bug on the first
+run, in the test harness rather than in `notify.py`: setting `SMTP_USERNAME=""` still made
+aiosmtplib attempt AUTH, because empty-string is not `None` to it, and the fake server hadn't
+advertised AUTH at all. `backend/.env`'s shipped default is exactly `SMTP_USERNAME=` — blank — so
+this is a real latent bug in `notify.py` for anyone pointing `SMTP_HOST` at an unauthenticated relay
+(MailHog, a bare local postfix): the send fails and is swallowed into a `logger.warning`, which
+looks identical to the intentional "not configured" no-op it sits right next to. Doesn't affect
+Gmail, where the username is always set, so it was flagged as a follow-up rather than fixed inline.
+Fixing the dry-run server to advertise AUTH (as Gmail does) reproduced the real login path and
+delivered a clean message with correct headers — proof the code path worked before a single byte
+touched Google's servers.
+
+The account email was the other half. `phase10a@example.com` — a Phase 10a test row on IANA's
+reserved documentation domain — was still the signed-in account, so even perfect SMTP would have
+delivered nowhere; the console's "we'll email your account address" would have been true and
+useless simultaneously. Changed to the user's real Gmail address directly in `users.email` via a
+scoped session (there is no product "change email" route — this is a login field set at signup, not
+a self-service setting), normalized through the same `normalize_email()` signup uses rather than
+trusting the string typed in chat verbatim. Confirmed the address wasn't already claimed by another
+tenant's row first, since `email` carries a unique constraint. The change doesn't invalidate an
+existing session — the JWT is keyed to `user_id`, not email — only the next fresh sign-in uses the
+new address.
+
+Real delivery, not a stand-in this time: `notify._send_email` called directly against
+`smtp.gmail.com:587` with the App Password, asserted against `get_settings()` first so the script
+couldn't silently run against stale cached config, and the absence of the `"email dispatch failed"`
+warning line (which carries a full traceback on any failure) was the confirmation, the same
+completeness-by-absence check the web push verification used. The user confirmed the message in
+their inbox.
+
+**Then FCM came up a third time, from a sharper angle: not "should we," but "how long, and is it
+worth the risk today."** The user had rigorous testing to finish by early afternoon and asked for
+honest numbers rather than a vibe. Two things shaped the answer. First, a check the previous
+sessions' Firebase discussion hadn't run: does `webPush.ts` gate on platform at all? It doesn't — no
+`Device`/`Platform`/user-agent check anywhere in it, only feature detection for
+`serviceWorker`/`PushManager`. Chrome on Android implements both identically to desktop Chrome, so
+the VAPID keys already sitting in `backend/.env` already push to an Android phone today, through the
+browser, with literally nothing left to configure. That reframes what FCM actually buys: not "push
+notifications on Android" — already true — but specifically "push attributed to the native app
+instead of Chrome, opening the app's own Alerts screen instead of a browser tab." Second, this
+project's own history was read before estimating the build side, rather than assuming a `gradle
+build` is a formality: three separate prior sessions ("The APK, rebuilt so the phone stops crediting
+Claude", "once more, for three strings", "a fourth time") each record an APK that looked finished
+and wasn't — a stale artifact, a missed screen, a registered file twelve minutes older than the fix
+it was meant to carry — caught only by verification steps this codebase treats as mandatory, not by
+the build succeeding. That made "45 minutes to 1.5 hours, with real risk of costing more" the honest
+estimate, not "a few minutes," and set against a same-day deadline for unrelated testing work, the
+call was to skip it — not deferred vaguely this time, but a settled decision with the reasoning
+written down in CLAUDE.md so a future session doesn't re-litigate it from zero.
+
+Every stray file this session's own verification created was cleaned up rather than left for the
+next person to puzzle over: `backend/encrypted.data` (`pywebpush(curl=True)`'s output file) from the
+push verification, and none from the email one — the dry-run SMTP server lived entirely in-process.
+
+Notification channels stand at two of three, both proven by an actual message arriving rather than
+a config file that looked plausible: web push (Mac, Windows, and Android via browser, no native
+build needed) and email (Gmail, the account address itself replaced along the way). FCM is the one
+piece left undone, and for the first time in this project's notification story, "undone" is a
+decision rather than a gap.
