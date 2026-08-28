@@ -2146,3 +2146,59 @@ oldest" buffer states and the thermal-overrun log line, both of which need susta
 (66+ minutes of backend downtime, or genuine thermal throttling) this session couldn't produce —
 those stay covered by the unit tests alone. The test device was enrolled and removed afterward
 through the app's own UI, leaving the account's real device list unchanged.
+
+### Nothing was ever compressed, and only the phone paid for it
+
+Reported as "everything feels slow on the APK — History, Forecasts, even pull to refresh," which
+did not reproduce on the web console, because the web console was never the machine being asked to
+prove it. Both talk to the same `make serve` instance; the console runs on the Mac serving it and
+never leaves loopback, so a 2 MB response is a non-event there regardless of whether it's
+compressed. The phone crosses the Tailscale Funnel for every request — the same public hop
+`docs/HISTORY.md`'s "A stable address" entry gave it on 2026-08-27 — and pays for every byte the
+console's own measurements never had to.
+
+`curl -H 'Accept-Encoding: gzip'` against the running server came back with no `content-encoding`
+header at all: `app/main.py`'s middleware stack was CORS → ApiPrefix → WebConsole, and nothing in it
+had ever compressed a response. The endpoint the phone's History screen hits hardest,
+`/devices/{id}/series?range_seconds=86400&domains=...` across five domains, was measured at 1,952 KB
+for one device's 24 hours — 720 time buckets, each repeating the same ~35 field names. Gzipping real
+data in that exact shape (`gzip -9` against a JSON dump pulled straight from the rollup) came back
+11.3x smaller, which is the JSON-repeating-keys case gzip exists for.
+
+Fixed with Starlette's `GZipMiddleware`, added last in `create_app()` so it is the outermost layer
+and wraps the console's own JS/CSS bundle along with every API response — the same
+reverse-registration-order reasoning `WebConsoleMiddleware`'s own comment already documents.
+`exclude_content_types` adds the APK's `application/vnd.android.package-archive` and the agent
+binaries' `application/octet-stream` on top of Starlette's defaults, and the Starlette dependency
+was pinned to `>=1.6` in `pyproject.toml` because two things about this depend on it holding: it
+declines to touch a `206` (so a resumed download via `app/services/download_tickets.py`'s Range
+support isn't corrupted by getting gzipped mid-resume), and it accepts the exclusion list at all. A
+looser floor would let a future install silently drop both guarantees.
+
+Measured twice, both post-fix, against the real running server: in the browser, the Performance API
+on `/devices/{id}/series` showed 1,897 KB decoded shrinking to 196 KB on the wire — 9.7x, close to
+the offline estimate and the small gap being the mixed content of a real payload versus a
+single-metric test file. Then on the phone itself, which is the number that actually mattered: read
+Android's per-app byte counters (`dumpsys netstats detail`, filtered to the app's own uid) before and
+after driving the real screen with `adb shell input tap`. A cold History load at 24h landed at 208 KB
+where the same screen was pulling ~1.9 MB before; 30 days (coarser buckets) at 56 KB; a Forecasts
+load and its pull-to-refresh at 13 KB and 12 KB. Both screens were screenshotted mid-measurement and
+rendered completely — full 24h charts, the disk-fills-in-202-days projection — so these are whole
+loads, not truncated ones.
+
+The one thing this could plausibly have broken was the download path Phase 11 and the three
+"APK, once more" entries above already fought hard to get right, so it got checked explicitly rather
+than assumed: the full agent binary and a `Range: bytes=1000-1999` request against it, both with
+`Accept-Encoding: gzip` offered, both came back with no `content-encoding`, correct
+`content-length`/`content-range`, and a `206` on the ranged one. A full download's SHA-256 still
+matched the hash the download page itself publishes. 613 backend tests, lint and typecheck all
+stayed green — nothing about this touched application code, only the middleware stack two files
+compose it from.
+
+Not fixed, and deliberately left alone: the console itself got fractionally *slower* to load its own
+JS bundle over loopback (24ms → 37ms) because gzip has a CPU cost that a link never bandwidth-bound
+doesn't get back. `minimum_size=1024` keeps that cost off every small response; for anything crossing
+a real network the reduction dominates regardless. Also left alone: the `/series` payload still
+carries a full 720-point series per network interface, including four Tailscale `utun` tunnels
+nobody charts — a payload-shape reduction distinct from this transport one, not applied because the
+transport fix alone was judged enough.
