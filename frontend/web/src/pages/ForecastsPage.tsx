@@ -120,7 +120,7 @@ export function ForecastsPage() {
   return (
     <AppLayout active="forecasts">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Forecasts</h1>
+        <h1 data-testid="page-title" className="text-xl font-semibold tracking-tight">Forecasts</h1>
         <p className="text-sm text-muted-foreground">
           24h-ahead projections from each device's own recent history, and disk/memory time to
           capacity.

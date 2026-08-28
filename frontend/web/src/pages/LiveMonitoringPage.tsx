@@ -115,7 +115,7 @@ function LiveMonitoringView({ deviceId }: { deviceId: string }) {
 
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">{device?.name ?? "Device"}</h1>
+          <h1 data-testid="page-title" className="text-xl font-semibold tracking-tight">{device?.name ?? "Device"}</h1>
           <p className="text-sm text-muted-foreground">
             {device?.hostname ?? "—"}
             {device?.os ? ` · ${device.os}` : ""}

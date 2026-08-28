@@ -139,6 +139,11 @@ and it is the correct thing to assert when nothing has reported.
 `login-error`, `nav-alerts`, `sign-out`, `device-list`. Two are worth knowing
 about specifically:
 
+* `page-title` is on every content page's heading (all thirteen; login and
+  signup use `login-title`/`signup-title` instead, rendering through
+  `AuthForm`). Wait on it after a navigation rather than on the URL — the
+  router changes the URL before the page's data request resolves, so a URL
+  assertion can pass while the bootstrap loader is still on screen.
 * `page-loading` is on `FullPageLoader`, which `ProtectedRoute` renders while
   the auth bootstrap is in flight. A driver that asserts immediately after
   `driver.get("/")` races it and sees the loader, not the page. Wait for

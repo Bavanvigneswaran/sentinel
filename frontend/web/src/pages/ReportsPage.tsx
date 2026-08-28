@@ -132,7 +132,7 @@ export function ReportsPage() {
   return (
     <AppLayout active="reports">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Reports</h1>
+        <h1 data-testid="page-title" className="text-xl font-semibold tracking-tight">Reports</h1>
         <p className="text-sm text-muted-foreground">
           Historical trends, availability and reliability, plus PDF/CSV export and scheduled email
           delivery.

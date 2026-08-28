@@ -8,7 +8,7 @@ export function NotFoundPage() {
       className="flex min-h-svh flex-col items-center justify-center gap-4"
       data-testid="not-found"
     >
-      <h1 className="text-2xl font-medium">Page not found</h1>
+      <h1 data-testid="page-title" className="text-2xl font-medium">Page not found</h1>
       <Button asChild variant="outline">
         <Link to="/">Back to Devices</Link>
       </Button>

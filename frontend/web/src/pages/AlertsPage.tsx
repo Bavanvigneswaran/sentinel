@@ -79,7 +79,7 @@ export function AlertsPage() {
     <AppLayout active="alerts">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Alerts</h1>
+          <h1 data-testid="page-title" className="text-xl font-semibold tracking-tight">Alerts</h1>
           <p className="text-sm text-muted-foreground">
             Firing and recently resolved alerts across your fleet.
           </p>

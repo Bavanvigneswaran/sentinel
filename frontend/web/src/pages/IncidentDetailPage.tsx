@@ -104,6 +104,7 @@ export function IncidentDetailPage() {
             <Link
               to={`/devices/${incident.device_id}/history`}
               className="text-xl font-semibold tracking-tight hover:underline"
+              data-testid="page-title"
             >
               {deviceLabel(device ? { [device.id]: device } : {}, incident.device_id)}
             </Link>

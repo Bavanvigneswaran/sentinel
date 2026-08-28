@@ -101,7 +101,7 @@ export function SettingsPage() {
   return (
     <AppLayout active="settings">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
+        <h1 data-testid="page-title" className="text-xl font-semibold tracking-tight">Settings</h1>
         <p className="text-sm text-muted-foreground">Notification channels and alert defaults.</p>
       </div>
 

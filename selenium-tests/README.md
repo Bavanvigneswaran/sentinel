@@ -14,12 +14,22 @@ make e2e-serve
 # 2. the suite, in another
 cd selenium-tests
 npm install
+npm run smoke         # check the machine before blaming the app
 npm run test          # spec reporter, human output
 npm run test:xlsx     # + selenium-test-report.xlsx
 ```
 
-No chromedriver install step: selenium-webdriver 4.6+ ships Selenium Manager,
-which resolves a driver matching the installed Chrome on first run.
+**No browser install step, and no chromedriver step.** That is worth stating
+because it looks like it should need one: selenium-webdriver 4.6+ ships
+Selenium Manager, which resolves *and downloads* both the driver and a matching
+Chrome for Testing into a cache on first run. Verified on a machine with no
+Chrome, Chromium or Firefox installed at all — only Safari — where the suite
+still runs. The first run is just slow.
+
+`smoke.js` lives outside `tests/` so it never runs as part of the suite. It
+answers "is my machine set up", not "does the app behave": it loads the login
+page, signs in, checks the header shows the right account, navigates, and signs
+out. `HEADLESS=0` to watch it.
 
 `SENTINEL_URL` overrides the base URL (default `http://localhost:8000`).
 
@@ -59,7 +69,15 @@ make agent-enroll code=XXXX-XXXX-XXXX && make agent
 
 `data-testid` is the hook, `<surface>-<element>`: `login-email`,
 `login-password`, `login-submit`, `login-error`, `nav-alerts`, `sign-out`,
-`device-list`. Two worth knowing:
+`device-list`. Three worth knowing:
+
+* **`page-title`** is on every content page's heading — all thirteen of them,
+  so it is a landmark you can wait on after any navigation. (Login and signup
+  are the exceptions and use `login-title`/`signup-title`, because they render
+  through `AuthForm` rather than the app shell.) It is worth waiting on this
+  rather than on a URL change: the router navigates before the page's data
+  request resolves, so a URL assertion can pass while the bootstrap loader is
+  still on screen.
 
 * **`page-loading`** is on the bootstrap loader that `ProtectedRoute` renders
   while the refresh token is being exchanged. A driver that asserts straight

@@ -103,7 +103,7 @@ export function AddDevicePage() {
   return (
     <AppLayout active="add-device">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Add a device</h1>
+        <h1 data-testid="page-title" className="text-xl font-semibold tracking-tight">Add a device</h1>
         <p className="text-sm text-muted-foreground">
           Put a machine under monitoring: download the agent for it, mint a one-time code, and
           run three commands. You need none of this to use the console itself — this page is

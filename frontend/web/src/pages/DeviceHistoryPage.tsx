@@ -145,7 +145,7 @@ function DeviceHistoryView({ deviceId }: { deviceId: string }) {
 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">
+          <h1 data-testid="page-title" className="text-xl font-semibold tracking-tight">
             {summary?.device.name ?? "Device"}
           </h1>
           <p className="text-sm text-muted-foreground">
