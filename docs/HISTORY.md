@@ -2202,3 +2202,84 @@ a real network the reduction dominates regardless. Also left alone: the `/series
 carries a full 720-point series per network interface, including four Tailscale `utun` tunnels
 nobody charts — a payload-shape reduction distinct from this transport one, not applied because the
 transport fix alone was judged enough.
+
+### The Selenium suite, and a signed-out session the Back button brought back
+
+Deliverable 1 of `docs/TEST_BRIEF.md`: `selenium-tests/tests/login-tests.js`, 421 functional cases
+in fifteen `Module N — ...` describes, run against `make e2e-db` + `make e2e-serve` and rendered by
+the existing `tools/test-report/mocha-xlsx.js`. It is one 2,400-line file rather than the ~400 the
+conventions ask for, deliberately: the brief names that exact path, and the package scripts glob
+`tests/*.js`, so helpers extracted to a sibling would be collected and run as a suite of their own.
+
+Three structural choices carry the runtime. One browser for the whole run, because a fresh driver
+per case multiplies a ~1.5s Chrome start across 421 of them for no isolation that matters — the
+state that does is the session cookie, and a reset helper clears exactly that. Expensive setup sits
+in each module's `before` with the `it`s asserting facets of the resulting state, so checking forty
+properties of the signed-in header costs one sign-in rather than forty. And every describe is named
+`Module N — ...` because the workbook's Module column is derived from that prefix by regex;
+renaming them collapses the per-module breakdown into a single row. Whole run: 51.8s.
+
+**The defect.** TC-193 signs out, presses Back, and expects the login form. What came back was the
+dashboard — `app-header` present, the previous account's email in the header, `refreshCookie:
+false`. Still there five seconds later, so not a race. Reproduced three runs out of three and then
+again outside mocha, which is what moved it from "flaky test" to "finding".
+
+A bfcache restore replays a document instead of re-executing it. `main.tsx` does not run,
+`bootstrapAuth()` is never called again, and `stores/auth.ts`'s module memory — status, user and the
+access token — comes back exactly as it was when the page was frozen. The sign-out that invalidated
+it happened in a *different* document, so nothing in the restored page knows about it. The refresh
+cookie really was gone; what was on screen was a cached render of the account that had just left,
+with a live access token behind it, good until its fifteen minutes ran out. The existing
+`visibilitychange` handler does not cover this: that fires for a tab coming forward, which a restore
+is not.
+
+Fixed with a `pageshow` listener guarded on `event.persisted`, which resets the memoised bootstrap
+promise and re-runs `bootstrapAuth()` — treating the restore as the load it should have been.
+`bootstrapAuth` sets `bootstrapping` synchronously before its first await, so `ProtectedRoute`
+swaps the stale content for the loader before anything is painted and there is no window where the
+previous account's screen is visible. It also needed a narrow `discardRefreshSingleFlight()` in
+`lib/api.ts`: the restored page's shared `refreshInFlight` slot can hold a promise belonging to a
+fetch that was cancelled while the page was frozen, and awaiting it would park the app on the loader
+forever. That export is documented as *not* general-purpose — clearing it while a refresh really is
+in flight recreates the concurrent-refresh case the single-flight exists to prevent, which the
+backend correctly reads as token theft and answers by revoking the family.
+
+The risk in that fix is over-correcting, so the other half was checked before it was believed:
+two `driver.get()`s make two documents, and Back into the first one while *still* signed in restores
+`/alerts` with the header, the right account and no login form; Forward returns to `/settings`; the
+session is still usable afterwards, so the extra refresh does not trip revocation. That is now
+TC-193a. TC-295 covers only the in-document back button and would not have noticed a regression here.
+
+**Four suite bugs, each of which first presented as an application defect.** Worth writing down
+because they are the general shape of a Selenium suite lying to you.
+
+`element.clear()` does not notify React. It blanks the DOM value without an input event, so the
+store keeps its own string and restores it on the next render — the text typed afterwards is
+*appended*. Refilling a dirty login form with the correct password actually submitted
+`wrong-password-entirelye2e-Sentinel-Test-2026`, and the failure read as the API rejecting valid
+credentials. Fields are now emptied with keyboard backspaces, which raise real input events.
+
+`deleteAllCookies()` raced the bootstrap refresh. Every load exchanges the refresh cookie and the
+backend rotates it, so deleting mid-exchange removed the old cookie and the reply then planted a
+fresh one; the next navigation was signed in again and the login form never appeared. The reset now
+waits for the bootstrap to settle before deleting, and verifies the cookie is actually gone.
+
+A path check cannot detect a React Router navigation on its own. The URL is pushed inside a
+transition before the route commits, so a wait on `pathname` can return a frame early and the
+assertion reads the heading of the page it just left — `'Devices'` where `'Alerts'` was expected.
+Waiting for the *previous* heading node to go stale waits for React to unmount it and says nothing
+about what replaces it, so the assertion stays honest.
+
+`driver.get()` to the URL you are already on is a reload, and a reload preserves history state. The
+`from` that `ProtectedRoute` records when it bounces an anonymous visitor therefore outlived the
+reset, and a later sign-in landed on an earlier test's page instead of the dashboard. It cost Module
+12 its entire before-hook, waiting twenty seconds for fleet totals on `/settings`.
+
+Left alone deliberately: the rate limiter has no scenario here. `backend/.env.ci` sets
+`RATE_LIMIT_ENABLED=false` for the reasons `docs/TESTING.md` sets out at length, so the "eleventh
+login is refused" case cannot pass against the stack these suites run on. Writing a test that only
+passes under a configuration the suite never uses would be worse than the gap, so it is recorded as
+a gap. Also unchanged: `make lint`, `make typecheck` and the 80 web vitest tests stayed green, and
+no vitest unit test was added for the `pageshow` listener — `frontend/web` has no DOM test
+environment installed, and adding jsdom to test one event listener is a dependency decision that
+belongs to whoever needs it next. TC-193 and TC-193a cover the behaviour end to end.

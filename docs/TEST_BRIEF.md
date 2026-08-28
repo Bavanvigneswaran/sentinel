@@ -11,7 +11,7 @@ structure below are the deliverable. Do not "improve" the shape of them.
 
 ---
 
-## 1. Selenium — web frontend E2E
+## 1. Selenium — web frontend E2E  ·  **DELIVERED 2026-08-28**
 
 * Folder `selenium-tests/`, subfolder `tests/`, file `tests/login-tests.js`.
 * Selenium functional E2E tests for the web console.
@@ -21,6 +21,29 @@ structure below are the deliverable. Do not "improve" the shape of them.
 Already in place: `package.json` (mocha + selenium-webdriver + exceljs, scripts
 glob `tests/*.js`), `README.md` with the full `data-testid` list, `smoke.js`, and
 `npm run test:xlsx` which renders the workbook through `tools/test-report/`.
+
+**421 cases across fifteen `Module N — ...` describes, 421 passing in 51.8s**, run
+against `make e2e-db` + `make e2e-serve`. `npm run test:xlsx` writes
+`selenium-test-report.xlsx` (Summary + Test Details); both it and `results.json`
+are gitignored as generated artefacts, the suite itself is not.
+
+One deliberate departure from the conventions: it is a single ~2,400-line file
+rather than the ~400 CLAUDE.md asks for. The brief names that exact path and the
+scripts glob `tests/*.js`, so helpers split into a sibling would be collected and
+run as a suite of their own.
+
+Two things a cold pickup should know:
+
+* **It found and fixed a real defect** — a signed-out session restored from the
+  browser's back/forward cache. See `docs/HISTORY.md`'s "The Selenium suite, and
+  a signed-out session the Back button brought back", and the Phase 1 invariant
+  it produced in CLAUDE.md. Four *suite* bugs are written up in the same entry,
+  each of which first presented as an application defect.
+* **The rate limiter has no scenario, and that is a recorded gap, not an
+  oversight.** `docs/TESTING.md` asks for the eleventh login to be asserted as
+  refused, but `backend/.env.ci` sets `RATE_LIMIT_ENABLED=false` for the reasons
+  that file sets out — so the case cannot pass against the stack these suites
+  run on. Covering it needs a second configuration, not another test.
 
 ## 2. Appium — Android app E2E
 

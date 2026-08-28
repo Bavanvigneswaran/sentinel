@@ -37,6 +37,13 @@ off because it is inconvenient — it should still be *tested*, as its own
 scenario asserting that the 11th login is refused, rather than as background
 noise under every other assertion.
 
+**That scenario does not exist yet, and it cannot live in these suites.** They
+run against `.env.ci`, which has the limiter off, so a case asserting a 429 can
+only ever fail here — and one written to pass here would be asserting nothing.
+Covering it needs a second configuration with `RATE_LIMIT_ENABLED=true` and a
+job of its own, not another case in `selenium-tests/`. Recorded as an open gap
+in `docs/TEST_BRIEF.md` rather than quietly dropped.
+
 ---
 
 ## Running the stack locally

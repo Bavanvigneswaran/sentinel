@@ -10,7 +10,12 @@
 
 import { create } from "zustand"
 
-import { apiFetch, connectAuthBridge, refreshSession } from "@/lib/api"
+import {
+  apiFetch,
+  connectAuthBridge,
+  discardRefreshSingleFlight,
+  refreshSession,
+} from "@/lib/api"
 import type { LoginRequest, SessionResponse, SignupRequest, User } from "@/types/api"
 
 /** A string-literal union, not a TS enum — erasableSyntaxOnly forbids enums. */
@@ -144,6 +149,40 @@ connectAuthBridge({
   onRefreshed: applySession,
   onUnauthenticated: clearSession,
 })
+
+/**
+ * Revalidate a page restored from the back/forward cache.
+ *
+ * A bfcache restore replays the document instead of re-executing it: main.tsx
+ * does not run, bootstrapAuth() is never called again, and this module's memory
+ * — status, user and the access token — comes back exactly as it was when the
+ * page was frozen. So a page cached while signed in still renders as signed in,
+ * however the session ended in the meantime.
+ *
+ * Signing out is the case that matters, because the sign-out happens in a
+ * *different* document. Navigate to a second page, sign out there, press Back,
+ * and the first page is restored whole: the refresh cookie is gone, but the
+ * previous account's screen is on display with a still-valid access token
+ * behind it, and nothing in the restored page knows any of that has happened.
+ * `visibilitychange` below does not cover it — that fires for a tab coming
+ * forward, which a restore is not.
+ *
+ * The answer is to treat the restore as what it should have been, a load:
+ * bootstrapAuth() sets `bootstrapping` synchronously, so the route guards
+ * replace the stale content with the loader before anything is painted, and the
+ * refresh exchange decides what happens next — signed in again, or bounced to
+ * /login. Its own single-flight promise is reset first because the memoised one
+ * belongs to the page's earlier life and would resolve instantly with an answer
+ * that is exactly what is in doubt.
+ */
+if (typeof window !== "undefined") {
+  window.addEventListener("pageshow", (event) => {
+    if (!event.persisted) return
+    discardRefreshSingleFlight()
+    bootstrapPromise = null
+    void bootstrapAuth()
+  })
+}
 
 // Timers are throttled or suspended in background tabs, so a tab restored after
 // a long sleep can hold an already-expired token. Re-check on the way back.

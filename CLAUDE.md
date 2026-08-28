@@ -105,6 +105,14 @@ Also outside git, unchanged from earlier phases: the release keystore in `~/.sen
 **Everything is green as of 2026-08-28.** 624 backend tests, 175 agent, 80 web, 95 mobile JS, 57
 Kotlin — 1031 in total — plus `make lint` and `make typecheck`. Migrations are at head (`0015`).
 
+On top of those, the first of `docs/TEST_BRIEF.md`'s five artefacts is delivered:
+**`selenium-tests/tests/login-tests.js`, 421 browser cases, 421 passing in 51.8s.** It needs the
+`make e2e-db` + `make e2e-serve` stack, not `make serve` — see `docs/TESTING.md` for why all three
+of prod's settings break it. Unlike the unit suites it is not part of `make test` and does not run
+without a browser. It found one real defect (the back/forward-cache session restore fixed in
+`stores/auth.ts`, see the Phase 1 invariants above) and carries one recorded gap: the rate limiter
+has no scenario, because `.env.ci` disables it.
+
 **Deployment is this Mac and nothing else.** `make serve` builds the console and serves it, the REST
 API and the viewer socket on one origin; Tailscale Funnel gives that port a stable public
 `https://` front door so the APK and remote agents keep working when the LAN address moves. It runs
@@ -255,6 +263,19 @@ suites are run, `docs/ANDROID_METRICS.md` for what a phone may report,
 - **The access token never leaves memory.** Not localStorage, not sessionStorage, not a cookie. The
   refresh cookie is HttpOnly with `Path=/` (the Vite proxy strips `/api`, so a narrower path is never
   sent back) and `secure` is off in dev because Safari drops Secure cookies over http://localhost.
+- **A page restored from the back/forward cache must revalidate its session.** A bfcache restore
+  replays the document rather than re-executing it: `main.tsx` never runs, `bootstrapAuth()` is
+  never called again, and `stores/auth.ts`'s module memory — status, user and the access token —
+  comes back as it was when the page froze. Sign out on a later page, press Back, and without the
+  `pageshow`/`event.persisted` listener the first page renders the previous account's screen with a
+  live access token behind it. `bootstrapAuth()` sets `bootstrapping` synchronously, which is what
+  makes the route guards hide the stale content before it is painted, so re-running it is the fix
+  and not merely a refresh. `discardRefreshSingleFlight()` exists for this one caller — the restored
+  page's shared `refreshInFlight` slot can hold a promise for a fetch cancelled while it was frozen;
+  calling it anywhere else recreates the concurrent-refresh case the single-flight prevents.
+  `visibilitychange` does not cover this: that fires for a tab coming forward, which a restore
+  is not. Selenium TC-193 (it must not restore) and TC-193a (a valid session must survive) are the
+  guards; see docs/HISTORY.md.
 - **Routes carry no `/api` prefix in FastAPI** — the dev proxy rewrites `/api/*` to `/*`, and
   production's reverse proxy must do the same.
 - **Env config is absolute-path resolved.** `backend/.env` (see `backend/.env.example`). Complex

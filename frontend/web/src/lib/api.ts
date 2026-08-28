@@ -82,6 +82,23 @@ export function refreshSession(): Promise<SessionResponse | null> {
   return refreshInFlight
 }
 
+/**
+ * Drop a shared refresh that can never settle.
+ *
+ * Only for a page restored from the back/forward cache. That document was
+ * frozen, not re-executed, so this module's memory comes back as it was — and
+ * a promise parked here belongs to a fetch that was cancelled while the page
+ * was away. Every caller shares this slot, so leaving it would make the
+ * restored page await a request nobody is going to answer.
+ *
+ * Not a general-purpose reset: clearing it while a refresh really is in flight
+ * re-creates the concurrent-refresh case the single-flight exists to prevent,
+ * which the backend reads as token theft and answers by revoking the family.
+ */
+export function discardRefreshSingleFlight(): void {
+  refreshInFlight = null
+}
+
 // --- request -----------------------------------------------------------------
 
 // Set by the auth store at module init. A plain function reference rather than

@@ -6,9 +6,11 @@ authority for how the stack under test is brought up and why it is not
 
 ## Run it
 
-The suite itself is generated and is **not** in git — `tests/` ships empty on
-purpose. The scripts glob `tests/*.js` rather than naming a file, so whatever
-lands there is picked up.
+`tests/login-tests.js` is the suite: 421 cases in fifteen `Module N — ...`
+describes, all passing as of 2026-08-28 (51.8s). The scripts glob `tests/*.js`
+rather than naming a file, so a differently-named generated suite dropped in
+beside it is picked up too — and would run *as well as* this one, not instead of
+it.
 
 ```bash
 # 1. the stack, in one terminal — NOT `make serve`, see below
@@ -93,15 +95,31 @@ make agent-enroll code=XXXX-XXXX-XXXX && make agent
 
 `docs/TESTING.md` has the full list, including the Android equivalents.
 
+Two hard-won notes on driving this console specifically, both written up in
+`docs/HISTORY.md`:
+
+* **Never `element.clear()` a field.** It blanks the DOM without an input event,
+  so React restores its own value and what you type next is *appended* — a
+  refilled login form submitted the old password concatenated with the new one.
+  Empty fields with backspaces.
+* **A pathname check does not mean the route rendered.** React Router commits a
+  navigation inside a transition, so `history.pushState` has already happened
+  while the previous page is still on screen. Wait for the old `page-title` node
+  to go stale.
+
 ## The report
 
-`report.js` converts mocha's JSON output into a two-sheet workbook — Summary
-(totals, pass rate, per-module breakdown) and Test Details (every case, its
-status, duration and first line of failure).
+`npm run report` runs `../tools/test-report/mocha-xlsx.js`, which converts
+mocha's JSON output into a two-sheet workbook — Summary (totals, pass rate,
+per-module breakdown) and Test Details (every case, its status, duration and
+first line of failure). It lives outside this folder on purpose: it reads
+*mocha's* format and knows nothing about Selenium, so the Appium suite points at
+the same script with its own `results.json` rather than growing a second copy
+that drifts.
 
-It is deliberately generic: it reads mocha's format and knows nothing about
-Selenium, so the Appium suite should point it at its own `results.json` rather
-than growing a second copy that drifts.
+The Summary's per-module breakdown is derived from the describe titles by
+regex, which is why every one of them starts `Module N — `. Rename them and the
+breakdown collapses into a single ungrouped row.
 
 Note that `npm run test:report` ends in `|| true`. Mocha exits non-zero when
 tests fail, and without that a CI step stops there and uploads no artifact at
