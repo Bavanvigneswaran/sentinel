@@ -99,11 +99,24 @@ Python client, `AppiumBy.id("auth-email")`.
 | `device-section-<route>` | the same destinations scoped to one device |
 | `device-card-<uuid>`, `incident-<uuid>`, `alert-event-<uuid>`, `rule-<uuid>` | list rows, keyed by entity id |
 | `alert-silence-<uuid>`, `alert-open-incident-<uuid>` | per-alert actions |
+| `rule-edit-<uuid>`, `rule-delete-<uuid>` | per-rule actions |
 | `empty-state`, `error-note`, `segmented-<value>` | shared states and controls |
 
 The `Screen` component takes `testID` as a **required** prop, so a new screen
 cannot ship without one — that is the mechanism keeping this table complete
 rather than a convention someone has to remember.
+
+**A row's own hook does not reach the controls inside it.** React Native
+flattens a `Card`'s accessibility subtree, so `rule-<uuid>` arrives as a
+*childless* node and the rule's Edit and Delete buttons arrive as siblings of
+it, not descendants. `UiSelector.childSelector()` therefore matches nothing,
+and the only id-free way to reach "this rule's Edit" is to count Edits down the
+screen — the positional locator this project forbids. That is why the per-row
+actions in the table above each carry an id of their own; `AlertsScreen` had
+already established the pattern with `alert-silence-<uuid>`, and the rules
+screen was simply missing it until the suite went looking. Assume the same is
+true of any new row: give its buttons their own hooks rather than expecting the
+card's to scope them.
 
 **`accessibilityLabel` → `content-desc`.** `Field`/`PasswordField` set it from
 their visible label ("Email", "Password") and `Button` from its title ("Sign

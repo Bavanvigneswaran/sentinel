@@ -45,7 +45,7 @@ Two things a cold pickup should know:
   that file sets out — so the case cannot pass against the stack these suites
   run on. Covering it needs a second configuration, not another test.
 
-## 2. Appium — Android app E2E
+## 2. Appium — Android app E2E  ·  **DELIVERED 2026-08-28**
 
 * Folder `appium-tests/`.
 * Appium functional E2E tests for the mobile app.
@@ -54,6 +54,48 @@ Two things a cold pickup should know:
 
 Already in place: `package.json` (webdriverio + mocha + exceljs), `README.md`
 with capabilities and the full locator table, `smoke.js`.
+
+**`appium-tests/tests/app-tests.js`, 560 cases across twenty-eight
+`Module N — ...` describes, 560 passing in 594.3s**, run against
+`make e2e-db` + `make e2e-serve` with the APK from
+`EXPO_PUBLIC_API_URL=http://10.0.2.2:8000 make mobile-apk-test`.
+`npm run test:xlsx` writes `appium-test-report.xlsx` (Summary + Test Details);
+both it and `results.json` are gitignored, the suite is not.
+
+Four things a cold pickup should know:
+
+* **It runs in one Appium session, and that fixes the starting state.** The
+  uiautomator2 driver clears app data when a session begins, so the run always
+  starts signed out with no collector token — which is why module 6 tests the
+  cookie-jar session restore with `terminateApp`/`activateApp` rather than by
+  reconnecting.
+* **The device modules assert against a real agent.** Module 19 enrols the
+  emulator itself through the app's own More → Settings → Monitor this phone
+  flow, and modules 20–24 assert readings the Android collector actually took —
+  including the ones it honestly cannot take, which is where the suite is
+  sharpest: CPU renders as "unavailable" on the fleet card, temperature is
+  labelled "Battery temp", the network entity is `device-total` rather than a
+  NIC, and there is no top-processes card. Module 25 removes the device again,
+  so the account ends as it started. `before` also clears any device or
+  authored rule a crashed run left behind — it removes rows, it never writes a
+  metric.
+* **It found a real gap: a row's hook does not reach the controls inside it.**
+  React Native flattens a `Card`'s accessibility subtree, so `rule-<uuid>`
+  arrives childless and its Edit/Delete buttons arrive as *siblings* —
+  `UiSelector.childSelector()` matches nothing, and the only alternative was
+  counting Edits down the screen. `AlertsScreen` had already solved this with
+  `alert-silence-<uuid>`; `AlertRulesScreen` had not, and now carries
+  `rule-edit-<uuid>` and `rule-delete-<uuid>`. Written up in `docs/TESTING.md`
+  and this folder's README.
+* **`getPageSource()` returns only what is rendered.** A ScrollView taller than
+  the screen omits everything below the fold, so an assertion about a device's
+  Disks card or the last rule's buttons reports a missing element that is
+  merely not scrolled to. `fullSnapshot()` exists for those two screens.
+
+Recorded gaps, same class as deliverable 1's: the rate limiter has no scenario
+(`.env.ci` disables it), and push notifications cannot be exercised because the
+emulator image has no Google Play services — the suite asserts that the app
+*says so* rather than pretending the channel works.
 
 ## 3. Security assessment
 

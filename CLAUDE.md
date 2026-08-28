@@ -105,13 +105,35 @@ Also outside git, unchanged from earlier phases: the release keystore in `~/.sen
 **Everything is green as of 2026-08-28.** 624 backend tests, 175 agent, 80 web, 95 mobile JS, 57
 Kotlin — 1031 in total — plus `make lint` and `make typecheck`. Migrations are at head (`0015`).
 
-On top of those, the first of `docs/TEST_BRIEF.md`'s five artefacts is delivered:
+On top of those, the first two of `docs/TEST_BRIEF.md`'s five artefacts are delivered:
 **`selenium-tests/tests/login-tests.js`, 421 browser cases, 421 passing in 51.8s.** It needs the
 `make e2e-db` + `make e2e-serve` stack, not `make serve` — see `docs/TESTING.md` for why all three
 of prod's settings break it. Unlike the unit suites it is not part of `make test` and does not run
 without a browser. It found one real defect (the back/forward-cache session restore fixed in
 `stores/auth.ts`, see the Phase 1 invariants above) and carries one recorded gap: the rate limiter
 has no scenario, because `.env.ci` disables it.
+
+Deliverable 2 as well: **`appium-tests/tests/app-tests.js`, 560 Android cases across
+twenty-eight modules, 560 passing in 594.3s.** Same stack, plus a booted emulator, an
+`appium` server on :4723 started with `ANDROID_HOME` exported *into it* (the server shells
+out to adb itself, so exporting it only for the test process fails at session creation),
+and the APK from `EXPO_PUBLIC_API_URL=http://10.0.2.2:8000 make mobile-apk-test`. It runs
+in one session, because the uiautomator2 driver clears app data at session start and that
+is what fixes the run's starting state. Modules 19-25 assert against a **real** device: the
+suite enrols the emulator through the app's own "Monitor this phone" flow, asserts what the
+Android collector genuinely measured — and what it honestly cannot — then removes it again.
+Nothing is seeded; its `before` only clears rows an earlier crashed run left behind.
+
+It found one real gap, and the general form matters more than the instance: **a row's
+`testID` does not scope the controls inside it on Android.** React Native flattens a
+`Card`'s accessibility subtree, so `rule-{uuid}` arrives as a *childless* node and its
+Edit/Delete buttons arrive as siblings of it. `UiSelector.childSelector()` matches nothing
+against it, and the only thing left was counting Edits down the screen — the positional
+locator the conventions forbid. `AlertsScreen` had already got this right with
+`alert-silence-{uuid}`; `AlertRulesScreen` had not, and now carries `rule-edit-{uuid}` /
+`rule-delete-{uuid}`. Any new row's buttons need their own hooks for the same reason. Its
+own recorded gap is push: the emulator image has no Google Play services, so the suite
+asserts that Settings *says* push is unavailable rather than pretending the channel works.
 
 **Deployment is this Mac and nothing else.** `make serve` builds the console and serves it, the REST
 API and the viewer socket on one origin; Tailscale Funnel gives that port a stable public

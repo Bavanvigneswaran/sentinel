@@ -183,6 +183,15 @@ Prefer `resource-id`; the accessibility ids are a real accessibility feature
 that happens to also be locatable, and they follow the visible copy, so they
 change when the wording does.
 
+**A row's hook does not scope the controls inside it.** React Native flattens a
+`Card`'s accessibility subtree on Android, so a node like `rule-<uuid>` arrives
+*childless* and the row's own buttons arrive as its siblings.
+`UiSelector.childSelector()` matches nothing against it, and counting Edits
+down the screen is the positional locator this project forbids — so every
+control a suite drives inside a row needs an id of its own, the way
+`alert-silence-<uuid>` already did. The Appium suite found `AlertRulesScreen`
+missing that pair; it now has `rule-edit-<uuid>` and `rule-delete-<uuid>`.
+
 ## The APK Appium installs
 
 `make mobile-apk` refuses to build without a real keystore, and that refusal

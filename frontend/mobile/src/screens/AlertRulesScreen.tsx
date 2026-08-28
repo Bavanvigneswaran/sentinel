@@ -146,8 +146,15 @@ export function AlertRulesScreen({ route }: RootStackScreenProps<"AlertRules">) 
                     (rule.rule_type === "forecast" ? "predicted " : "") +
                     `${rule.comparison} ${rule.threshold} for ${rule.for_duration_seconds}s`}
             </Text>
+            {/* Keyed by the rule's id, like AlertsScreen's per-event actions.
+                Not decoration: Android flattens this Card's accessibility
+                subtree, so `rule-{id}` arrives as a childless node and its
+                buttons as siblings of it. Without ids of their own there is no
+                way to address *this* rule's Edit that is not "the nth Edit on
+                screen" — the positional locator the conventions forbid. */}
             <View style={styles.actions}>
               <Button
+                testID={`rule-edit-${rule.id}`}
                 size="sm"
                 variant="outline"
                 title="Edit"
@@ -157,6 +164,7 @@ export function AlertRulesScreen({ route }: RootStackScreenProps<"AlertRules">) 
                 }}
               />
               <Button
+                testID={`rule-delete-${rule.id}`}
                 size="sm"
                 variant="ghost"
                 title="Delete"

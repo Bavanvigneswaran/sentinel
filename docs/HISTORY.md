@@ -2283,3 +2283,87 @@ a gap. Also unchanged: `make lint`, `make typecheck` and the 80 web vitest tests
 no vitest unit test was added for the `pageshow` listener — `frontend/web` has no DOM test
 environment installed, and adding jsdom to test one event listener is a dependency decision that
 belongs to whoever needs it next. TC-193 and TC-193a cover the behaviour end to end.
+
+### The Appium suite, and a card whose buttons are not its children
+
+`appium-tests/tests/app-tests.js` — deliverable 2 of `docs/TEST_BRIEF.md`. 560 cases across
+twenty-eight `Module N — ...` describes, 560 passing in 594.3s, against `make e2e-db` +
+`make e2e-serve`, a booted emulator, an `appium` server on :4723 and the APK from
+`EXPO_PUBLIC_API_URL=http://10.0.2.2:8000 make mobile-apk-test`.
+
+**One session for the whole run, and that is what fixes the starting state.** The uiautomator2
+driver clears app data when a session begins, so the run always starts signed out, with no
+collector token and no cached fleet — which is also why `smoke.js` has always had a defensive
+`pm clear` in it. The consequence worth knowing: the Phase 10a property that a cold relaunch stays
+signed in cannot be tested by reconnecting, because reconnecting is what wipes the cookie jar.
+Module 6 uses `terminateApp`/`activateApp` inside the one session instead, which is the same
+force-stop-and-relaunch that verified it originally.
+
+**The device modules assert against a real agent, because there is no other honest option.** There
+is no metric seeder and there will not be one. So module 19 enrols the emulator itself through the
+app's own More → Settings → Monitor this phone flow, waits for the server to agree it is reporting,
+and modules 20–24 assert readings the Android collector genuinely took. That makes the suite
+sharpest exactly where this product is most opinionated: CPU renders as "unavailable" on the fleet
+card rather than as a number, `temperature_celsius` is labelled "Battery temp" and not
+"Temperature", the network entity is `device-total` and not a NIC name, and there is no
+top-processes card at all. Each of those is an assertion that the app told the truth about what a
+phone cannot measure. Module 25 removes the device again, so the account ends as it started, and
+the suite's `before` clears any device or authored rule an earlier crashed run left behind — it
+removes rows, it never writes a reading.
+
+**The real finding: a row's `testID` does not scope the controls inside it.** React Native flattens
+a `Card`'s accessibility subtree on Android, so `rule-{uuid}` arrives as a *childless* node and the
+rule's own Edit and Delete buttons arrive as *siblings* of it.
+`UiSelector.childSelector()` therefore matches nothing, and the only locator left was "the nth Edit
+down the screen" — precisely the positional addressing CLAUDE.md's conventions forbid, and for the
+usual reason: it starts driving a different rule the moment the list reorders. `AlertsScreen` had
+already got this right, giving its per-event actions `alert-silence-{uuid}` and
+`alert-open-incident-{uuid}`; `AlertRulesScreen` had simply never had the same treatment applied,
+and nothing noticed until something tried to drive it. It now carries `rule-edit-{uuid}` and
+`rule-delete-{uuid}`, which needed an APK rebuild and reinstall to take effect. The general rule,
+now written into `docs/TESTING.md` and `appium-tests/README.md`: assume a new row's buttons need
+hooks of their own, rather than assuming the card's will scope them.
+
+**Six suite bugs, all found by the first run (534/560), all in the suite rather than the app.**
+Worth recording because they are the general shape of an Appium suite lying to you.
+
+`getPageSource()` returns only what is *rendered*. A ScrollView taller than the screen simply does
+not include what is below the fold, so an assertion about the device screen's Disks card, or about
+the last built-in rule's buttons, reports a missing element that is merely not scrolled to — which
+reads as the app failing to render it. Those two screens now go through a `fullSnapshot()` that
+scrolls to the end collecting a source at each step and reads the union; every assertion over one
+is an existence check, because nodes repeat across the steps.
+
+A `screens()` helper that matched `^screen-[a-z-]+$` counted `screen-fleet-title` as a second
+mounted screen root, because `Screen` derives the heading's hook from the root's. Four cases
+asserting "exactly one screen is mounted" failed against a perfectly healthy app.
+
+An `afterEach` that reset the auth form cleared the state a *pair* of cases shared, so the second of
+them asserted against a field the hook had just emptied. Both are now self-contained, and the
+afterEach also normalises the form's mode — two of the cases toggle it.
+
+The device row is created when the enrollment code is redeemed, but `os`, `kernel_version`, `arch`,
+`cpu_cores` and `agent_version` are filled in by the agent's `hello` frame. Reading the row at the
+first moment `/devices` was non-empty got all of those as null, and nine assertions failed naming
+the collector rather than the read that was too early. The fixture now waits for the facts, not
+just for the row.
+
+`AlertDialog` upper-cases its button labels, so a substring check for the "Cancel" that
+`Alert.alert` was given found "CANCEL" and failed. Tapping it had always worked, because that
+locator was already case-insensitive and scoped to `android:id/button[0-9]` — which it has to be,
+since the card that raises the delete dialog has a "Delete" control of its own that a bare text
+lookup taps instead.
+
+A 500-character password is refused by the API's own 128-character cap before the credential check
+ever runs, so the app shows a validation message rather than "Invalid email or password". The
+original assertion was asserting the wrong defence; it now asserts the refusal and that no session
+was created, which is the property that actually matters.
+
+Also fixed, in both suites rather than one: `TEST_SUITE_NAME` was set on the `test:report` script
+but read by `report`, which is what actually writes the workbook — so both spreadsheets had been
+labelling themselves with the reporter's fallback name.
+
+Recorded gaps. The rate limiter still has no scenario, for the same `.env.ci` reason as the
+Selenium suite. And push cannot be exercised at all: the emulator image has no Google Play
+services, so the suite asserts that Settings *says* push is unavailable rather than pretending the
+channel works — the same posture the app itself takes towards an unconfigured credential.
