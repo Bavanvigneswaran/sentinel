@@ -67,10 +67,22 @@ react-native-svg for charts) in `mobile/`, plus a Kotlin collector module in Pha
 
 ## Where things stand right now
 
-**The ML work is on `feature/ml-anomaly` and is deliberately NOT merged.** 13 commits ahead of
-`review/codebase-fixes`, pushed, reviewed, left on its own branch by choice. `master` and
-`review/codebase-fixes` do not have the novelty model, the fourth rule type, or migration `0015`.
-If a checkout suddenly has no `app/analysis/multivariate.py`, that is why — check the branch first.
+**Everything is on `master`.** `feature/ml-anomaly` was merged on 2026-08-28 (PR #1, a merge
+commit — the individual messages are the record of why each change is the way it is, and
+`docs/HISTORY.md` refers to them). It carried 62 commits: layer 4 novelty detection, Phase 17's
+locally generated insights, the Windows and Android agent fixes, gzip and the Funnel front door,
+the configured notification channels, and the end-to-end test infrastructure.
+
+The branch had sat unmerged by choice for a while, and long enough that the choice stopped being
+free: five independent strands of work accumulated on it, and by the end the last eight commits
+could not be lifted onto `master` at all — the first one conflicted, because the security-headers
+middleware is positioned relative to a `GZipMiddleware` that only existed on the branch, and
+because the pinned lockfile's reasoning ("`anthropic` is stale") was simply false on a `master`
+that still declared it. Splitting them apart cost more than reviewing them together.
+
+**`review/codebase-fixes` is stale** — it was 38 commits behind at the merge and does not have the
+novelty model, the fourth rule type, or migration `0015`. Rebase or retire it; do not branch from
+it. `master` has migration `0015`, so `make migrate` after pulling.
 
 Three things live outside git and will not survive a fresh clone:
 
