@@ -2066,3 +2066,68 @@ a config file that looked plausible: web push (Mac, Windows, and Android via bro
 build needed) and email (Gmail, the account address itself replaced along the way). FCM is the one
 piece left undone, and for the first time in this project's notification story, "undone" is a
 decision rather than a gap.
+
+### Two things the phone was doing correctly and saying nothing about
+
+Both of these came from using the phone rather than reading the code, and neither is a correctness
+bug: the collector already does the right thing in both cases. It just doesn't say so, and in both
+cases the silence is indistinguishable from health.
+
+**A sample that costs more than its own cadence.** The Python agent has had
+`runner.py::_warn_if_overrunning` since the Windows session — a sample that takes longer than
+`sample_interval_seconds` logs a warning, throttled to one line a minute, so a slow machine is
+diagnosable from its own log. `CollectorEngine.sampleLoop()` measured exactly the same elapsed time
+and used it for exactly one thing: subtracting it from the next sleep so the cadence doesn't drift.
+That drift correction is what hides the problem it corrects for. The loop stops waiting and carries
+on, the samples go out stamped further apart than the resolution they claim, and the only visible
+symptom is a live chart that advances in jumps — which reads as a slow network, or a server problem,
+or a chart bug.
+
+The phone has a cause the desktop agent doesn't. Live monitoring is a 1s cadence with the screen on
+and a wake lock held, which is sustained thermal load on a device with no fan; under
+`THERMAL_STATUS_LIGHT`/`MODERATE` the sampling loop itself slows down. So the warning names the
+thermal status when the platform reports one — "slow" and "slow because it is hot" are different
+diagnoses and the second is not derivable from the timing. `thermalStatusLabel()` is a
+system-service call, so it is passed as a lambda and only read on a sample that is actually going to
+log: the check runs at up to 1Hz, the line at most once a minute.
+
+The throttling logic lives in `SampleOverrun`, pure and clock-injected, for the same reason
+`Batching` and `Backoff` do — this module's unit tests run on the JVM with no Robolectric, so
+`android.util.Log` cannot appear in anything a test touches. Seven tests, ported from
+`agent/tests/test_sample_overrun.py` including the one that matters most: recovering re-arms the
+warning, so a phone that goes slow, recovers, and goes slow again is two events and not one line
+followed by a minute of silence.
+
+**"400 buffered" read as healthy.** `SampleBuffer.add()` has always been `while (samples.size >=
+maxLen) samples.removeFirst()` — the right behaviour under a bounded buffer, keeping the most recent
+hour rather than the first hour. But the persistent notification rendered `"$n buffered"`, and a
+count that has stopped rising because it is pinned at its cap looks exactly like a count that is
+merely large. The real incident: the phone was idle (screen-off, not powered down) for far longer
+than the buffer's ~66 minutes of headroom at 10s, Doze eventually cut network access — a limit
+`CollectorService`'s wake-lock comment already documents the wake lock does *not* cover — the buffer
+sat at exactly 400, the oldest samples were being discarded on every new one, and the notification
+said "400 buffered". Nothing about that is wrong. Nothing about it says data is being lost, either.
+
+So the drop is now counted rather than only performed. `SampleBuffer` carries a `droppedSamples`
+count and its own `capacity`, both reported through `CollectorStatus` to the notification and the
+app, and `BufferPressure.describe()` phrases the three states distinctly: an ordinary backlog, a
+buffer nearly full with the cap named, and a buffer at the cap "dropping oldest". The count is
+cumulative rather than a flag specifically so it survives the backlog draining — a buffer that
+empties looks like a full recovery, and the samples that fell off the front are still gone, leaving
+a hole in the charts nothing else on the screen explains. An acked `discard()` is not counted; those
+samples left because the server has them, which is the opposite of losing them.
+
+The wording exists twice, in Kotlin for the notification and in `src/lib/bufferPressure.ts` for the
+collector screen, because neither can import the other. The rule that keeps them honest is that both
+render the same three facts the service reports — buffered, capacity, dropped — and neither invents
+a number the other doesn't have.
+
+**And the copy that was true for exactly one hour.** The battery-optimisation card told the user
+that without the exemption "pushes bunch up ... gaps followed by a burst," which describes delay.
+That is true right up to the buffer's cap and false after it, where the readings are not late but
+gone. Corrected, and the headroom is now derived from `bufferCapacity × sampleIntervalSeconds`
+rather than written as "about an hour": 400 samples is 66 minutes at the 10s cadence and under
+seven at the 1s cadence a high-frequency phone runs all day, and quoting the hour to a phone that
+has seven minutes would be worse than saying nothing at all.
+
+Kotlin tests 40 → 57, mobile JS 88 → 95, everything else untouched.

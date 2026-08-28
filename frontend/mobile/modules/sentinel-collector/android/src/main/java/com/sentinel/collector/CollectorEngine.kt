@@ -41,6 +41,10 @@ class CollectorEngine(
     private val latency = LatencyCollector(DEFAULT_TARGETS.map { LatencyCollector.Target.parse(it) })
     private val buffer = SampleBuffer(CollectorConfig.BUFFER_SIZE)
 
+    /** Throttled reporting of samples that cost more than their own cadence.
+     *  See [SampleOverrun] for why this is the one symptom nothing else shows. */
+    private val overrun = SampleOverrun()
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var jobs = mutableListOf<Job>()
 
@@ -87,6 +91,8 @@ class CollectorEngine(
             it.copy(
                 running = true,
                 sampleIntervalSeconds = sampleIntervalSeconds,
+                bufferCapacity = buffer.capacity,
+                droppedSamples = 0,
                 enrolled = tokens.read() != null,
                 deviceId = config.deviceId,
                 deviceName = config.deviceName,
@@ -160,6 +166,7 @@ class CollectorEngine(
                 CollectorState.update {
                     it.copy(
                         bufferedSamples = buffer.size,
+                        droppedSamples = buffer.droppedSamples,
                         lastSampleAt = Instant.now().toString(),
                     )
                 }
@@ -170,6 +177,15 @@ class CollectorEngine(
             }
             // Subtract the work already done so the cadence does not drift.
             val elapsedMs = (System.nanoTime() - startedNanos) / 1_000_000
+            // Drift correction hides the overrun it corrects for: the loop
+            // simply stops waiting and keeps going, so nothing downstream can
+            // tell a phone that is falling behind from one that is not.
+            overrun.warningFor(
+                elapsedMs,
+                sampleIntervalSeconds,
+                System.nanoTime() / 1_000_000,
+                collector::thermalStatusLabel,
+            )?.let { Log.w(TAG, it) }
             val waitMs = (sampleIntervalSeconds * 1000L - elapsedMs).coerceAtLeast(0L)
             // Interruptible: a live upshift must take effect now, not at the
             // end of the ten-second sleep this loop is already inside.
@@ -201,6 +217,7 @@ class CollectorEngine(
             CollectorState.update {
                 it.copy(
                     bufferedSamples = buffer.size,
+                    droppedSamples = buffer.droppedSamples,
                     lastPushAt = Instant.now().toString(),
                     lastError = null,
                 )

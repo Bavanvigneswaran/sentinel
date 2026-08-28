@@ -28,6 +28,13 @@ data class CollectorStatus(
     val sampleIntervalSeconds: Int = CollectorConfig.NORMAL_SAMPLE_SECONDS,
     val pushIntervalSeconds: Int = CollectorConfig.DEFAULT_PUSH_SECONDS,
     val bufferedSamples: Int = 0,
+    /** The ring buffer's cap. Reported rather than assumed by the surfaces that
+     *  render the backlog, so "how close to losing data" is one subtraction and
+     *  not a constant duplicated in Kotlin and TypeScript. */
+    val bufferCapacity: Int = CollectorConfig.BUFFER_SIZE,
+    /** Samples permanently discarded because the buffer was full, this run.
+     *  A backlog is a delay; this is loss, and the two must not read alike. */
+    val droppedSamples: Int = 0,
     val lastPushAt: String? = null,
     val lastSampleAt: String? = null,
     val lastError: String? = null,
@@ -54,6 +61,7 @@ object CollectorState {
             connected = false,
             mode = "normal",
             bufferedSamples = 0,
+            droppedSamples = 0,
         )
     }
 }

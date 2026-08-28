@@ -23,6 +23,7 @@ import { Button, Card, CardTitle, ErrorNote } from "@/components/ui"
 import { API_BASE_URL } from "@/config"
 import { useCollectorStatus } from "@/hooks/useCollectorStatus"
 import { apiFetch } from "@/lib/api"
+import { describeBuffer } from "@/lib/bufferPressure"
 import { formatRelative } from "@/lib/timeRanges"
 import type { RootStackScreenProps } from "@/navigation/types"
 import { colors, spacing, text } from "@/theme"
@@ -55,6 +56,7 @@ export function CollectorScreen({ navigation }: RootStackScreenProps<"Collector"
   const { status, refresh, supported } = useCollectorStatus()
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const buffer = describeBuffer(status)
 
   const run = useCallback(
     async (label: string, action: () => Promise<unknown>) => {
@@ -174,14 +176,14 @@ export function CollectorScreen({ navigation }: RootStackScreenProps<"Collector"
               <Row label="Last push" value={formatRelative(status.lastPushAt)} />
               <Row label="Last sample" value={formatRelative(status.lastSampleAt)} />
               {/* A backlog is the honest signal that pushes are failing, and it
-                  is visible here before it is visible as a gap on a chart. */}
+                  is visible here before it is visible as a gap on a chart.
+                  Past the cap it stops being a backlog and starts being loss —
+                  see lib/bufferPressure.ts for why a bare count cannot say
+                  which of the two is happening. */}
               <Row
                 label="Buffered"
-                value={
-                  status.bufferedSamples === 0
-                    ? "nothing waiting"
-                    : `${status.bufferedSamples} sample${status.bufferedSamples === 1 ? "" : "s"}`
-                }
+                value={buffer.text}
+                emphasis={buffer.losing ? colors.degraded : undefined}
               />
             </View>
 
@@ -248,11 +250,23 @@ export function CollectorScreen({ navigation }: RootStackScreenProps<"Collector"
       {status.enrolled && !status.batteryOptimizationExempt && (
         <Card>
           <CardTitle>Battery optimisation</CardTitle>
+          {/* This used to say only that pushes "bunch up", which is true up to
+              the buffer's cap and stops being true past it: the oldest samples
+              are then discarded to make room. Delayed data arrives late;
+              dropped data does not arrive at all. The Buffered row above says
+              which of the two is happening right now. */}
           <Text style={text.small}>
             Android is allowed to defer this app's background work. The collector still runs,
             but pushes bunch up after the phone has been idle for a while, which shows on the
             charts as gaps followed by a burst. Exempting Sentinel keeps the 10s cadence
             steady.
+          </Text>
+          <Text style={text.small}>
+            The catch-up only reaches back so far. This phone buffers {status.bufferCapacity}{" "}
+            samples — about {bufferMinutes(status)} minutes at the {status.sampleIntervalSeconds}s
+            cadence — and once that is full the oldest are dropped to make room for new ones.
+            Past that, the readings are not late, they are gone, and the charts keep a
+            permanent gap.
           </Text>
           <Button
             title="Ask Android to exempt Sentinel"
@@ -284,15 +298,44 @@ export function CollectorScreen({ navigation }: RootStackScreenProps<"Collector"
   )
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({
+  label,
+  value,
+  emphasis,
+}: {
+  label: string
+  value: string
+  /** Colour for a value that is not merely informational — today, a buffer
+   *  that is losing samples. Absent means the ordinary muted row. */
+  emphasis?: string
+}) {
   return (
     <View style={styles.row}>
       <Text style={text.tiny}>{label}</Text>
-      <Text style={[text.small, styles.rowValue]} numberOfLines={1} ellipsizeMode="middle">
+      {/* One line, middle-ellipsized, is right for a server URL — and wrong
+          for "full, dropping oldest", where the ellipsis would eat the only
+          part that matters. An emphasised value gets a second line instead. */}
+      <Text
+        style={[text.small, styles.rowValue, emphasis ? { color: emphasis } : null]}
+        numberOfLines={emphasis ? 2 : 1}
+        ellipsizeMode="middle"
+      >
         {value}
       </Text>
     </View>
   )
+}
+
+/**
+ * How long the buffer's headroom actually is, at the cadence this phone is
+ * sampling at right now.
+ *
+ * Not a constant: 400 samples is about 66 minutes at 10s and under 7 at the 1s
+ * cadence a high-frequency phone runs all day. Quoting the hour on a phone that
+ * has seven minutes would be worse than saying nothing.
+ */
+function bufferMinutes(status: { bufferCapacity: number; sampleIntervalSeconds: number }): number {
+  return Math.round((status.bufferCapacity * status.sampleIntervalSeconds) / 60)
 }
 
 function describe(status: {

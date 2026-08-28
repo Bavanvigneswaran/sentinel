@@ -20,6 +20,8 @@ import android.os.Build
  * cadence, and how much is buffered — rather than a permanent "Running". A
  * collector that has been unable to reach the server for an hour should say so
  * on the device itself, not only in a console the user may not be looking at.
+ * Past that hour the backlog is not merely large but *losing* its oldest
+ * samples, and the line has to say which of the two is happening.
  */
 object CollectorNotification {
 
@@ -60,10 +62,16 @@ object CollectorNotification {
             } else {
                 append(status.lastError ?: "Not connected")
             }
-            if (status.bufferedSamples > 0) {
+            // Not a bare count: at the cap the buffer is discarding history on
+            // every new sample, and "400 buffered" reads as healthy. See
+            // BufferPressure.
+            BufferPressure.describe(
+                status.bufferedSamples,
+                status.bufferCapacity,
+                status.droppedSamples,
+            )?.let {
                 append(" · ")
-                append(status.bufferedSamples)
-                append(" buffered")
+                append(it)
             }
             // Thermal throttling has no protocol field and deliberately is not
             // getting one (docs/ANDROID_METRICS.md). It is genuinely useful to

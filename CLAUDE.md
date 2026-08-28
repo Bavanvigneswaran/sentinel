@@ -81,8 +81,8 @@ Three things live outside git and will not survive a fresh clone:
 Also outside git, unchanged from earlier phases: the release keystore in `~/.sentinel-keys/`, and
 `agent/dist/` with its five published builds.
 
-**Everything is green as of 2026-08-27.** 613 backend tests, 175 agent, 80 web, 88 mobile JS, 40
-Kotlin — 996 in total — plus `make lint` and `make typecheck`. Migrations are at head (`0015`).
+**Everything is green as of 2026-08-28.** 613 backend tests, 175 agent, 80 web, 95 mobile JS, 57
+Kotlin — 1020 in total — plus `make lint` and `make typecheck`. Migrations are at head (`0015`).
 
 **Deployment is this Mac and nothing else.** `make serve` builds the console and serves it, the REST
 API and the viewer socket on one origin; Tailscale Funnel gives that port a stable public
@@ -598,6 +598,25 @@ The other authorities, unchanged: `docs/ARCHITECTURE.md` for design decisions,
   equal stamped resolution first; relabelling a 10s sample as a 1s point because live mode happens
   to be on would claim a resolution the reading never had, which is the same class of lie as
   synthesising a value.
+- **The sample loop's drift correction hides the overrun it corrects for, so the overrun is logged
+  separately.** `CollectorEngine` measures each sample's elapsed time to subtract it from the next
+  sleep; on its own that means a phone falling behind simply stops waiting and carries on, stamping
+  samples further apart than the resolution they claim, visible only as a live chart advancing in
+  jumps. `SampleOverrun` is the same throttled once-a-minute warning as the Python agent's
+  `runner.py::_warn_if_overrunning`, plus the thermal status when the platform reports one — live
+  monitoring is a 1s cadence with a wake lock held and the screen on, and a throttled phone is the
+  usual cause here. Pure and clock-injected because this module's tests run on the JVM with no
+  Robolectric: `android.util.Log` must not appear in anything a test touches.
+- **A full buffer is loss, not delay, and must not render as a bare count.** `SampleBuffer` drops
+  the oldest sample at its cap — correct, and indistinguishable from a large backlog in `"$n
+  buffered"`. It counts what it discards (`droppedSamples`, cumulative so it outlives the backlog
+  draining; an acked `discard()` is not counted) and reports its own `capacity`, and
+  `BufferPressure` phrases "nearly full" and "full, dropping oldest" distinctly. The same three
+  facts are re-phrased in `src/lib/bufferPressure.ts` for the app, which cannot import Kotlin —
+  both surfaces render what the service reports and neither invents a number the other lacks. Any
+  copy about buffering derives its window from `bufferCapacity × sampleIntervalSeconds`, never the
+  constant "about an hour": that is 66 minutes at 10s and under 7 at the 1s cadence a
+  high-frequency phone runs all day.
 - **A cadence change must interrupt the sample loop, not wait it out.** `CollectorEngine`'s sampler
   waits on `withTimeoutOrNull(…) { cadenceChanged.receive() }`, never a bare `delay()`. Changing the
   interval does not shorten a sleep that has already started, and the symptom is Live Monitoring
