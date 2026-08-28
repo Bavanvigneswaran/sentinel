@@ -39,6 +39,23 @@ MAX_SAMPLES_PER_BATCH = 240
 #: cadence rather than blocking every 1s sample.
 LATENCY_INTERVAL_SECONDS = 30
 
+#: The top-processes list is the single most expensive thing in a sample: it
+#: walks every process on the machine, opening each one for its name, user and
+#: memory. On Windows that means a handle per process through the Tool Help
+#: API and it is not cheap — running it at the 1s sample cadence is what made
+#: a Windows agent unable to keep time, and a Live Monitoring trace crawl.
+#:
+#: It is also the slowest-moving thing in a sample, and nothing plots it: the
+#: live charts draw CPU, memory, network, disk and latency. Ten seconds of
+#: resolution on "what is running" loses nothing real. As with latency, the
+#: value carried between probes is a genuine measurement, just an older one.
+PROCESS_INTERVAL_SECONDS = 10
+
+#: How often to repeat the "sampling is falling behind" warning. The first one
+#: is logged immediately; a machine that cannot keep its budget cannot keep it
+#: once, so the point is to be visible in the log without filling it.
+OVERRUN_WARNING_INTERVAL_SECONDS = 60
+
 
 class Agent:
     def __init__(self, config: AgentConfig) -> None:
@@ -52,6 +69,15 @@ class Agent:
 
         self._latest_latency: list[dict] = []
         self._last_latency_at = 0.0
+        self._latest_processes: list[dict] = []
+        self._last_processes_at = 0.0
+        #: The in-flight background refresh, if one is running. Never awaited
+        #: from sample_once — see the comment there for why.
+        self._process_task: asyncio.Task[None] | None = None
+        #: None while sampling keeps time; the monotonic stamp of the first of
+        #: the current run of overruns otherwise. See _warn_if_overrunning.
+        self._overrun_since: float | None = None
+        self._last_overrun_warning = 0.0
         self._stopping = asyncio.Event()
 
     # --- sampling ----------------------------------------------------------
@@ -63,6 +89,25 @@ class Agent:
             self._last_latency_at = now
             self._latest_latency = await latency_mod.measure_all(self._targets)
 
+        if (
+            self.config.collect_processes
+            and now - self._last_processes_at >= PROCESS_INTERVAL_SECONDS
+            and (self._process_task is None or self._process_task.done())
+        ):
+            self._last_processes_at = now
+            # Fired, not awaited: process_iter() runs off the event loop via
+            # to_thread already, but awaiting it *here* would still hold up
+            # this sample's own CPU/memory/disk/net collection and timestamp
+            # behind it, on top of whatever it does to the event loop — on a
+            # slow Windows box that is a real, ~2s stall stamped onto an
+            # otherwise-fast sample, not just a stale process list. The
+            # process field is already documented to carry a slightly-old
+            # value between probes; letting the refresh run concurrently
+            # rather than inline is what actually keeps that staleness
+            # confined to processes instead of leaking into every other
+            # metric in the same sample.
+            self._process_task = asyncio.create_task(self._refresh_processes())
+
         return {
             "ts": datetime.now(UTC).isoformat(),
             "system": self._system.collect(),
@@ -72,8 +117,20 @@ class Agent:
             # Carried between probes so every sample has the latest known value
             # rather than gaps; the value itself is always a real measurement.
             "latency": self._latest_latency,
-            "processes": collect_processes() if self.config.collect_processes else [],
+            "processes": self._latest_processes if self.config.collect_processes else [],
         }
+
+    async def _refresh_processes(self) -> None:
+        # Off the event loop: process_iter() is blocking, and on a machine
+        # with a few hundred processes it is long enough to stall every other
+        # task in the agent — including the socket read that carries the
+        # live-mode frame. Exceptions are handled here, not in _sample_loop's
+        # try/except, because this task is fired rather than awaited from
+        # sample_once.
+        try:
+            self._latest_processes = await asyncio.to_thread(collect_processes)
+        except Exception:
+            logger.exception("process refresh failed; keeping the last known list")
 
     async def _sample_loop(self) -> None:
         while not self._stopping.is_set():
@@ -82,12 +139,56 @@ class Agent:
                 self.buffer.add(await self.sample_once())
             except Exception:
                 logger.exception("sampling failed; continuing")
+            elapsed = time.monotonic() - started
+            self._warn_if_overrunning(elapsed)
             # Subtract the work already done so the cadence does not drift.
-            delay = max(0.0, self.config.sample_interval_seconds - (time.monotonic() - started))
+            delay = max(0.0, self.config.sample_interval_seconds - elapsed)
             try:
                 await asyncio.wait_for(self._stopping.wait(), timeout=delay)
             except TimeoutError:
                 pass
+
+    def _warn_if_overrunning(self, elapsed: float) -> None:
+        """Say so when a sample costs more than the interval it is taken on.
+
+        This is the one symptom that cannot be seen from the outside. An agent
+        whose sample takes longer than `sample_interval_seconds` still connects,
+        still handshakes and still pushes; it simply stamps its samples further
+        apart than it claims, and the only place that shows up is a live chart
+        that advances in jumps — which reads as a network problem, or a server
+        problem, or a chart bug, and is none of them.
+
+        It is also platform-specific by nature: `psutil.net_connections()` costs
+        0.1ms on macOS because the OS *denies* it and it fails fast, and real
+        milliseconds on Windows where it succeeds and walks the whole TCP table.
+        A cost the development machine cannot observe is still a cost, so the
+        machine that has it is the one that has to report it.
+
+        Throttled to one line a minute after the first: an agent that is slow is
+        slow on every sample, and a warning per second would bury the log it is
+        trying to make readable.
+        """
+        budget = self.config.sample_interval_seconds
+        if elapsed <= budget:
+            self._overrun_since = None
+            return
+        now = time.monotonic()
+        if self._overrun_since is None:
+            self._overrun_since = now
+            self._last_overrun_warning = now
+        elif now - self._last_overrun_warning < OVERRUN_WARNING_INTERVAL_SECONDS:
+            return
+        else:
+            self._last_overrun_warning = now
+        logger.warning(
+            "a sample took %.0fms, longer than the %.0fms budget — this device's "
+            "samples are further apart than %ss and its live charts will advance "
+            "in jumps. Run `sentinel-agent sample --timing` to see which collector "
+            "is responsible.",
+            elapsed * 1000,
+            budget * 1000,
+            budget,
+        )
 
     # --- pushing -----------------------------------------------------------
 
@@ -133,18 +234,41 @@ class Agent:
                 consumed += len(chunk)
         return frames, consumed
 
+    async def _wait_or_stop(self, waiter) -> bool:  # noqa: ANN001
+        """Run `waiter` until it finishes or the agent is asked to stop.
+
+        Returns True when stopping won. The idle wait below reads from the
+        socket, so it cannot simply be given a timeout of "until stopped" —
+        both have to be raced, and the loser cancelled, or a service stop
+        would sit through the rest of a push interval before exiting.
+        """
+        stop = asyncio.ensure_future(self._stopping.wait())
+        work = asyncio.ensure_future(waiter)
+        try:
+            done, _ = await asyncio.wait({stop, work}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in (stop, work):
+                if not task.done():
+                    task.cancel()
+        # Surface a transport error raised inside idle() rather than treating
+        # it as a completed wait; run()'s reconnect logic is what handles it.
+        if work in done:
+            work.result()
+        return stop in done
+
     async def _push_loop(self, connection) -> None:  # noqa: ANN001
         while not self._stopping.is_set():
-            interval = connection.push_interval_seconds
-            try:
-                await asyncio.wait_for(self._stopping.wait(), timeout=interval)
+            # Raced rather than slept: connection.idle() reads the socket while
+            # it waits, so a `mode` frame arriving mid-interval cuts the wait
+            # short and the next push goes out at the new cadence, in the new
+            # mode. Sleeping blindly here cost Live Monitoring up to a full
+            # push interval of stillness before the trace started moving —
+            # see AgentConnection.idle().
+            if await self._wait_or_stop(connection.idle(connection.push_interval_seconds)):
                 return
-            except TimeoutError:
-                pass
 
             raw = self.buffer.peek()
             if not raw:
-                await connection.listen_for_mode()
                 continue
 
             batch, consumed = self._build_batch(raw, connection.mode)
@@ -199,6 +323,12 @@ class Agent:
                 await sampler
             except asyncio.CancelledError:
                 pass
+            if self._process_task is not None and not self._process_task.done():
+                self._process_task.cancel()
+                try:
+                    await self._process_task
+                except asyncio.CancelledError:
+                    pass
 
     def stop(self) -> None:
         self._stopping.set()

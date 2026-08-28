@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import random
+import time
 import uuid
 
 import websockets
@@ -107,16 +108,55 @@ class AgentConnection:
                     raise FatalTransportError(message)
                 raise ConnectionError(message)
 
-    async def listen_for_mode(self) -> None:
-        """Handle unsolicited server frames while idle between pushes."""
-        try:
-            frame = await asyncio.wait_for(self._receive(), timeout=0.05)
-        except TimeoutError:
-            return
-        if frame.get("type") == "mode":
-            self._apply_mode(frame)
-        elif frame.get("type") == "ping":
-            await self._send({"type": "pong"})
+    async def idle(self, seconds: float) -> None:
+        """Wait out the push interval, staying responsive to server frames.
+
+        A blind `sleep(push_interval)` here is what made Live Monitoring take
+        up to a full push interval to start moving. The supervisor sends the
+        `mode` frame within a round trip of a viewer opening the page, but
+        nothing was reading the socket to see it: the agent was already inside
+        a 10s sleep, and **changing an interval does not shorten a sleep that
+        has already started.** The next push therefore went out at the old
+        cadence *and* was built in the old mode — one 10s-collapsed row —
+        before live mode took effect on the iteration after that.
+
+        Exactly the bug Phase 10b found in the Kotlin collector, reached from
+        the other side: there the sampler slept, here the pusher does.
+
+        Returns as soon as the cadence actually changes, so the caller pushes
+        the buffered 1s samples immediately instead of waiting out an interval
+        that no longer applies.
+        """
+        deadline = time.monotonic() + seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            try:
+                frame = await asyncio.wait_for(self._receive(), timeout=remaining)
+            except TimeoutError:
+                return
+
+            kind = frame.get("type")
+            if kind == "mode":
+                before = self.push_interval_seconds
+                self._apply_mode(frame)
+                # Only a cadence change is worth cutting the wait short for.
+                # Re-entering the push loop for a mode frame that changed
+                # nothing would just rebuild the same batch a moment early.
+                if self.push_interval_seconds != before:
+                    return
+            elif kind == "ping":
+                await self._send({"type": "pong"})
+            elif kind == "error":
+                # Same handling as the ack path: a non-retryable error is
+                # fatal wherever it arrives, and swallowing one here would
+                # leave the agent idling against a socket the server has
+                # already given up on.
+                message = f"{frame.get('code')}: {frame.get('message')}"
+                if not frame.get("retryable", True):
+                    raise FatalTransportError(message)
+                raise ConnectionError(message)
 
     def _apply_mode(self, frame: dict) -> None:
         self.mode = frame.get("mode", "normal")

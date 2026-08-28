@@ -144,3 +144,46 @@ async def test_seconds_is_capped(client, device):
         f"/devices/{device['device'].id}/samples/recent?seconds=99999", headers=headers
     )
     assert resp.status_code == 422
+
+
+async def test_a_multi_entity_domain_keeps_the_newest_rows_not_the_oldest(client, device):
+    """The primer feeds a chart that is about to continue in real time, so a
+    truncated window must lose its *oldest* end, never its newest.
+
+    Regression guard on a real defect: `_series` ordered ascending and
+    LIMITed, and the row budget was one entity's worth. A live 1s session on
+    an ordinary Mac (six NICs) produces 6 rows per second, so the default
+    300s window is 1800 rows against a 900 cap — the endpoint returned the
+    first half of the window and dropped everything the live socket was about
+    to join onto, so the network chart opened ending minutes in the past.
+    """
+    from app.schemas.protocol import NetEntry
+
+    now = datetime.now(UTC)
+    nics = [f"en{i}" for i in range(6)]
+    # 200 seconds x 6 NICs = 1200 net rows, comfortably over the old 900 cap
+    # while staying well inside the 300s default window.
+    samples = [
+        Sample(
+            ts=now - timedelta(seconds=offset),
+            resolution_seconds=1,
+            system=SystemSample(cpu_percent=1.0),
+            net=[NetEntry(nic=nic, rx_bytes_per_s=float(offset)) for nic in nics],
+        )
+        for offset in range(200, 0, -1)
+    ]
+    await _write(device["device"].id, device["user"].id, samples)
+
+    headers = await _headers_for(device["user"].id)
+    resp = await client.get(
+        f"/devices/{device['device'].id}/samples/recent?seconds=300", headers=headers
+    )
+    assert resp.status_code == 200
+
+    net = resp.json()["net"]
+    assert len(net) == 200 * len(nics)
+    # Ascending by ts, and reaching all the way to the newest sample written.
+    timestamps = [row["ts"] for row in net]
+    assert timestamps == sorted(timestamps)
+    newest = max(s.ts for s in samples)
+    assert datetime.fromisoformat(timestamps[-1]) == newest

@@ -6,7 +6,13 @@ import { AppLayout } from "@/components/AppLayout"
 import { SilenceForm } from "@/components/SilenceForm"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { describeEventCondition, describeEventEvidence } from "@/lib/alertCopy"
 import { apiFetch } from "@/lib/api"
+import {
+  DEVICE_LIST_WITH_REMOVED,
+  deviceLabel,
+  indexDevices,
+} from "@/lib/deviceNames"
 import { formatDaysUntil } from "@/lib/formatters"
 import type { AlertEvent, EventStatus } from "@/types/alerts"
 import type { Device } from "@/types/api"
@@ -35,10 +41,13 @@ export function AlertsPage() {
   const [silencing, setSilencing] = useState<string | null>(null)
 
   useEffect(() => {
-    apiFetch<Device[]>("/devices")
-      .then((devices) => setDevicesById(Object.fromEntries(devices.map((d) => [d.id, d]))))
+    // Removed devices included: this list is history, and a firing on a
+    // machine the user has since removed still has to be able to name it.
+    // See lib/deviceNames.ts.
+    apiFetch<Device[]>(DEVICE_LIST_WITH_REMOVED)
+      .then((devices) => setDevicesById(indexDevices(devices)))
       .catch(() => {
-        // Non-fatal: the triage list still works with a raw device_id shown.
+        // Non-fatal: the triage list still works with a short device id shown.
       })
   }, [])
 
@@ -70,7 +79,7 @@ export function AlertsPage() {
     <AppLayout active="alerts">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Alerts</h1>
+          <h1 data-testid="page-title" className="text-xl font-semibold tracking-tight">Alerts</h1>
           <p className="text-sm text-muted-foreground">
             Firing and recently resolved alerts across your fleet.
           </p>
@@ -126,15 +135,8 @@ export function AlertsPage() {
                   <div className="flex flex-col gap-1">
                     <span className="font-medium">{event.rule_name}</span>
                     <span className="text-sm text-muted-foreground">
-                      {devicesById[event.device_id]?.name ?? event.device_id} · {event.metric}{" "}
-                      {event.rule_type === "anomaly" ? (
-                        <>anomaly ({event.severity})</>
-                      ) : (
-                        <>
-                          {event.rule_type === "forecast" ? "predicted " : ""}
-                          {event.comparison} {event.threshold}
-                        </>
-                      )}
+                      {deviceLabel(devicesById, event.device_id)} ·{" "}
+                      {describeEventCondition(event)}
                     </span>
                   </div>
                   <div className="flex flex-col items-end gap-1">
@@ -158,7 +160,7 @@ export function AlertsPage() {
                         {event.value_at_fire}
                       </>
                     ) : (
-                      <>value at fire: {event.value_at_fire}</>
+                      <>{describeEventEvidence(event)}</>
                     )}
                     {event.status === "firing" && event.last_value !== null && (
                       <> · latest: {event.last_value}</>

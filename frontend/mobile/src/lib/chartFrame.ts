@@ -9,10 +9,26 @@
 
 import type { RingBuffer } from "@/lib/ringBuffer"
 
-/** Points actually plotted. A phone chart is ~330pt wide, so more than this is
- * sub-pixel detail bought with per-frame work; the buffer keeps its full
- * history regardless and the newest MAX_POINTS are shown. */
-export const MAX_POINTS = 180
+/**
+ * Points actually plotted — the phone's equivalent of the web chart's
+ * `windowSeconds`, and the same decision for the same reason.
+ *
+ * This renderer has no time axis: x is the point's index, so the count *is*
+ * the window. At the live 1s cadence 60 points is one minute, which matches
+ * web's `DEFAULT_LIVE_WINDOW_SECONDS` — and, as there, the narrowest window is
+ * chosen deliberately. Every window draws the same samples at the same rate;
+ * all the count changes is how far one new sample moves the trace. At 180 that
+ * step is a third of what it is at 60, and a chart advancing 1/180th of its
+ * width per second reads as frozen even though it is drawing every point.
+ *
+ * There is no picker for this on the phone (there is one on the web page), so
+ * this value is not a default somebody can move — which is the other half of
+ * the argument for it being the lively end of the range rather than the middle.
+ *
+ * The buffer keeps its full history regardless; only the newest MAX_POINTS are
+ * drawn.
+ */
+export const MAX_POINTS = 60
 
 export interface LiveSeries {
   key: string

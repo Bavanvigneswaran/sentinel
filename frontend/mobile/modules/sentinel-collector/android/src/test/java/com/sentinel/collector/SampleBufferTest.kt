@@ -26,6 +26,45 @@ class SampleBufferTest {
     }
 
     @Test
+    fun `overflowing is counted, because it is loss and not delay`() {
+        val buffer = SampleBuffer(maxLen = 3)
+        assertEquals(0, buffer.droppedSamples)
+
+        listOf("a", "b", "c").forEach { buffer.add(sample(it)) }
+        assertEquals(0, buffer.droppedSamples) // full, but nothing lost yet
+
+        listOf("d", "e").forEach { buffer.add(sample(it)) }
+        // Without this count, a buffer pinned at its cap is indistinguishable
+        // from one that is merely large — which is how a real phone reported
+        // "400 buffered" for hours while discarding history.
+        assertEquals(2, buffer.droppedSamples)
+        assertEquals(3, buffer.capacity)
+    }
+
+    @Test
+    fun `an acked discard is not counted as loss`() {
+        val buffer = SampleBuffer(maxLen = 3)
+        listOf("a", "b").forEach { buffer.add(sample(it)) }
+        buffer.discard(2)
+
+        // The server has these; they left the buffer because it was told to
+        // let them go, which is the opposite of dropping them.
+        assertEquals(0, buffer.droppedSamples)
+    }
+
+    @Test
+    fun `stopping the collector clears the loss count with the samples`() {
+        val buffer = SampleBuffer(maxLen = 1)
+        listOf("a", "b").forEach { buffer.add(sample(it)) }
+        assertEquals(1, buffer.droppedSamples)
+
+        buffer.clear()
+        // A runtime fact about one run, like everything else CollectorState
+        // resets when the service stops.
+        assertEquals(0, buffer.droppedSamples)
+    }
+
+    @Test
     fun `discard drops only the acked count, keeping samples taken during the push`() {
         val buffer = SampleBuffer(maxLen = 10)
         listOf("a", "b").forEach { buffer.add(sample(it)) }

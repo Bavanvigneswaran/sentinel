@@ -182,6 +182,8 @@ class SentinelCollectorModule : Module() {
             "mode" to status.mode,
             "pushIntervalSeconds" to status.pushIntervalSeconds,
             "bufferedSamples" to status.bufferedSamples,
+            "bufferCapacity" to status.bufferCapacity,
+            "droppedSamples" to status.droppedSamples,
             "lastPushAt" to status.lastPushAt,
             "lastSampleAt" to status.lastSampleAt,
             "lastError" to status.lastError,

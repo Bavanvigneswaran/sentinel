@@ -6,9 +6,11 @@
  * sufficient in Phase 7, which is exactly why the backend snapshots
  * `rule_type` onto the event (see CLAUDE.md's Phase 7 invariants).
  *
- * Rule CRUD stays in the web app. This is a triage surface: what is firing,
- * on which machine, since when, and can I silence it — the things you want
- * from a phone when something pages you.
+ * This is primarily a triage surface: what is firing, on which machine, since
+ * when, and can I silence it. But triage and authoring are the same loop — the
+ * useful answer to a 3am page is often "that threshold is wrong" — so the rule
+ * that fired is now two taps away rather than back at a desk, and an event's
+ * card opens the incident it was correlated into.
  */
 
 import { useCallback, useEffect, useState } from "react"
@@ -18,12 +20,19 @@ import { AlertStatusBadge, SeverityBadge } from "@/components/Badges"
 import { EmptyState, Screen } from "@/components/Screen"
 import { Button, Card, ErrorNote, Segmented } from "@/components/ui"
 import { usePolledResource } from "@/hooks/usePolledResource"
+import { describeEventCondition, describeEventEvidence } from "@/lib/alertCopy"
 import { apiFetch } from "@/lib/api"
+import {
+  DEVICE_LIST_WITH_REMOVED,
+  deviceLabel,
+  indexDevices,
+} from "@/lib/deviceNames"
 import { formatDaysUntil } from "@/lib/formatters"
 import { formatRelative } from "@/lib/timeRanges"
 import { colors, spacing, text } from "@/theme"
 import type { AlertEvent, EventStatus } from "@/types/alerts"
 import type { Device } from "@/types/api"
+import type { RootTabScreenProps } from "@/navigation/types"
 
 const POLL_INTERVAL_MS = 10_000
 
@@ -40,7 +49,7 @@ const FILTERS: { value: Filter; label: string }[] = [
   { value: "all", label: "All" },
 ]
 
-export function AlertsScreen() {
+export function AlertsScreen({ navigation }: RootTabScreenProps<"Alerts">) {
   const [filter, setFilter] = useState<Filter>("firing")
   const [devices, setDevices] = useState<Record<string, Device>>({})
   const [silencing, setSilencing] = useState<string | null>(null)
@@ -53,8 +62,11 @@ export function AlertsScreen() {
   )
 
   useEffect(() => {
-    apiFetch<Device[]>("/devices")
-      .then((list) => setDevices(Object.fromEntries(list.map((d) => [d.id, d]))))
+    // Removed devices included: this list is history, and a firing on a
+    // machine the user has since removed still has to be able to name it.
+    // See lib/deviceNames.ts.
+    apiFetch<Device[]>(DEVICE_LIST_WITH_REMOVED)
+      .then((list) => setDevices(indexDevices(list)))
       .catch(() => {
         // Non-fatal: the triage list still works with a raw device_id shown.
       })
@@ -87,13 +99,20 @@ export function AlertsScreen() {
   )
 
   return (
-    <Screen
+    <Screen testID="screen-alerts"
       title="Alerts"
       subtitle="Firing and recently resolved alerts across your fleet."
       refreshing={refreshing}
       onRefresh={refresh}
     >
       <Segmented options={FILTERS} value={filter} onChange={setFilter} />
+
+      <Button
+        size="sm"
+        variant="outline"
+        title="Alert rules"
+        onPress={() => navigation.navigate("AlertRules")}
+      />
 
       {error && <ErrorNote message={error} />}
       {silenceError && <ErrorNote message={silenceError} />}
@@ -114,9 +133,15 @@ export function AlertsScreen() {
         <AlertCard
           key={event.id}
           event={event}
-          deviceName={devices[event.device_id]?.name ?? event.device_id}
+          deviceName={deviceLabel(devices, event.device_id)}
           busy={silencing === event.id}
           onSilence={() => void silence(event)}
+          onOpenIncident={
+            event.incident_id
+              ? () =>
+                  navigation.navigate("IncidentDetail", { incidentId: event.incident_id as string })
+              : undefined
+          }
         />
       ))}
     </Screen>
@@ -128,21 +153,26 @@ function AlertCard({
   deviceName,
   busy,
   onSilence,
+  onOpenIncident,
 }: {
   event: AlertEvent
   deviceName: string
   busy: boolean
   onSilence: () => void
+  /** Absent for an event with no incident — which is only ever an event whose
+   * correlation predates Phase 8, since every firing has opened or joined one
+   * since. Rendering a dead button for those would be worse than omitting it. */
+  onOpenIncident?: () => void
 }) {
   return (
-    <Card>
+    <Card testID={`alert-event-${event.id}`}>
       <View style={styles.head}>
         <View style={styles.headText}>
           <Text style={text.heading} numberOfLines={2}>
             {event.rule_name}
           </Text>
           <Text style={text.small} numberOfLines={2}>
-            {deviceName} · {event.metric} · {describeCondition(event)}
+            {deviceName} · {describeEventCondition(event)}
           </Text>
         </View>
         <View style={styles.headRight}>
@@ -160,26 +190,30 @@ function AlertCard({
             : `resolved ${formatRelative(event.resolved_at ?? event.fired_at)}`}
           {event.status === "firing" && event.notified_at === null ? " · silenced" : ""}
         </Text>
-        {event.status === "firing" && (
-          <Button
-            size="sm"
-            variant="outline"
-            title={`Silence ${SILENCE_HOURS}h`}
-            busy={busy}
-            onPress={onSilence}
-          />
-        )}
+        <View style={styles.footerActions}>
+          {onOpenIncident && (
+            <Button
+              testID={`alert-open-incident-${event.id}`}
+              size="sm"
+              variant="ghost"
+              title="Incident"
+              onPress={onOpenIncident}
+            />
+          )}
+          {event.status === "firing" && (
+            <Button
+              testID={`alert-silence-${event.id}`}
+              size="sm"
+              variant="outline"
+              title={`Silence ${SILENCE_HOURS}h`}
+              busy={busy}
+              onPress={onSilence}
+            />
+          )}
+        </View>
       </View>
     </Card>
   )
-}
-
-/** `rule_type` is the discriminator, not `comparison` — a forecast event sets
- * comparison/threshold exactly like a threshold event does. */
-function describeCondition(event: AlertEvent): string {
-  if (event.rule_type === "anomaly") return `anomaly (${event.severity ?? "—"})`
-  const clause = `${event.comparison ?? ""} ${event.threshold ?? ""}`.trim()
-  return event.rule_type === "forecast" ? `predicted ${clause}` : clause
 }
 
 function describeEvidence(event: AlertEvent): string {
@@ -189,7 +223,7 @@ function describeEvidence(event: AlertEvent): string {
     if (event.predicted_breach_at) parts.push(formatDaysUntil(event.predicted_breach_at))
     parts.push(`live: ${event.value_at_fire}`)
   } else {
-    parts.push(`value at fire: ${event.value_at_fire}`)
+    parts.push(describeEventEvidence(event))
   }
   if (event.rule_type === "anomaly" && event.baseline_mean !== null) {
     parts.push(`baseline was ${event.baseline_mean.toFixed(1)}`)
@@ -214,4 +248,5 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     paddingTop: spacing.sm,
   },
+  footerActions: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
 })

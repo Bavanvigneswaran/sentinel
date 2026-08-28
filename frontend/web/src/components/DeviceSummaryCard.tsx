@@ -55,13 +55,17 @@ export function DeviceSummaryCard({
   }
 
   return (
-    <Card className="transition-colors hover:bg-accent/30">
+    // The device id, not the index: a suite that addresses the third card by
+    // position starts asserting about a different machine the moment the fleet
+    // is reordered or one goes offline.
+    <Card className="transition-colors hover:bg-accent/30" data-testid={`device-card-${device.id}`}>
       <CardContent className="flex flex-col gap-4 pt-6">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <Link
               to={`/devices/${device.id}/history`}
               className="font-medium hover:underline"
+              data-testid="device-name"
             >
               {device.name}
             </Link>

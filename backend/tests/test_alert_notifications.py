@@ -185,3 +185,100 @@ async def test_resolving_a_silenced_alert_is_also_not_notified(rule_and_device, 
     # notified_at is left exactly as the (unsilenced) firing set it — the
     # silenced resolve never touches it again.
     assert event.notified_at == notified_at_on_fire
+
+
+# --- what a notification actually says ---------------------------------------
+#
+# `_body` is pure, so these go straight at it rather than through a full
+# evaluator sweep. `rule_type` is the discriminator for which evidence columns
+# an event carries (app/models/alerts.py) — reading comparison/threshold
+# unconditionally is what made every anomaly notification read
+# "mem_percent = 87.3 (None None)", while both frontends had already been
+# taught to branch.
+
+
+class _Event:
+    """Only the columns `_body` reads. A real AlertEvent needs a device, a
+    rule and a tenant to exist at all, none of which say anything about the
+    text this produces."""
+
+    def __init__(self, **fields) -> None:
+        self.__dict__.update(fields)
+
+
+def _anomaly_event() -> _Event:
+    return _Event(
+        rule_type="anomaly",
+        rule_name="Memory anomaly",
+        metric="mem_percent",
+        value_at_fire=87.3,
+        resolved_value=41.0,
+        comparison=None,
+        threshold=None,
+        baseline_mean=42.1,
+        z_score=5.4,
+    )
+
+
+def test_an_anomaly_notification_never_renders_a_null_comparison():
+    body = state_apply_module.notify._body(_anomaly_event(), "my-mac", resolved=False)
+
+    assert "None" not in body
+    assert "42.1" in body and "5.4" in body
+
+
+def test_a_resolved_anomaly_notification_never_renders_a_null_comparison():
+    body = state_apply_module.notify._body(_anomaly_event(), "my-mac", resolved=True)
+
+    assert "None" not in body
+    assert "41.0" in body
+
+
+def test_a_threshold_notification_still_states_its_comparison():
+    event = _Event(
+        rule_type="threshold",
+        rule_name="CPU high",
+        metric="cpu_percent",
+        value_at_fire=95.0,
+        resolved_value=12.0,
+        comparison=">",
+        threshold=90.0,
+    )
+
+    assert "> 90.0" in state_apply_module.notify._body(event, "my-mac", resolved=False)
+
+
+def test_a_forecast_notification_says_it_is_a_prediction():
+    event = _Event(
+        rule_type="forecast",
+        rule_name="Disk filling",
+        metric="disk_percent",
+        value_at_fire=71.0,
+        resolved_value=68.0,
+        comparison=">",
+        threshold=90.0,
+        predicted_breach_at=datetime(2026, 8, 30, 4, 15, tzinfo=UTC),
+        predicted_value=91.4,
+    )
+
+    body = state_apply_module.notify._body(event, "my-mac", resolved=False)
+
+    assert "None" not in body
+    # The live value is 71%, and nothing in the text may suggest it is already
+    # past the threshold it is only *forecast* to cross.
+    assert "forecast to reach > 90.0" in body
+    assert "2026-08-30 04:15 UTC" in body
+
+
+def test_an_anomaly_event_with_no_baseline_evidence_still_reads_as_a_sentence():
+    """A fired anomaly always snapshots its baseline, but the columns are
+    nullable and history predating them exists — degrade to plain language
+    rather than formatting a None."""
+    event = _anomaly_event()
+    event.baseline_mean = None
+    event.z_score = None
+
+    body = state_apply_module.notify._body(event, "my-mac", resolved=False)
+
+    assert "None" not in body
+    assert "unusual for this device" in body

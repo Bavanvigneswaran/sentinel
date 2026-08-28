@@ -28,10 +28,13 @@ import os
 import platform
 import signal
 import sys
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from sentinel_agent import __version__
+from sentinel_agent.collectors import latency as latency_mod
+from sentinel_agent.collectors.resources import collect_processes
 from sentinel_agent.config import (
     DEFAULT_CONFIG_PATH,
     AgentConfig,
@@ -40,7 +43,7 @@ from sentinel_agent.config import (
 )
 from sentinel_agent.enroll import EnrollmentError, enroll
 from sentinel_agent.paths import SCOPES, Scope, config_path, is_private
-from sentinel_agent.runner import Agent
+from sentinel_agent.runner import LATENCY_INTERVAL_SECONDS, PROCESS_INTERVAL_SECONDS, Agent
 from sentinel_agent.service import (
     ServiceError,
     check_executable_location,
@@ -136,6 +139,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     config = _load(args)
     try:
         config.require_token()
+        # Before connecting, not on the first push. A cadence the server will
+        # not accept otherwise surfaces as a fatal "invalid_frame" one push
+        # interval into an otherwise healthy-looking session.
+        config.validate_intervals()
     except ConfigError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -189,6 +196,63 @@ def cmd_sample(args: argparse.Namespace) -> int:
         await agent.sample_once()
         await asyncio.sleep(config.sample_interval_seconds)
         return await agent.sample_once()
+
+    if args.timing:
+        # What one sample actually costs on *this* machine, which is the only
+        # place the question can be answered. The agent samples once a second;
+        # a sample that takes longer than that cannot be taken once a second,
+        # and the visible symptom is a Live Monitoring trace that crawls
+        # rather than streams.
+        #
+        # Worth running on Windows specifically. On macOS two of the three
+        # expensive probes are cheap only because the OS *denies* them —
+        # net_connections() needs root here and fails in a tenth of a
+        # millisecond, while on Windows it succeeds and walks the whole TCP
+        # table. A cost this Mac cannot see is still a cost.
+        async def timed() -> None:
+            await agent.sample_once()  # prime the counters
+            for i in range(1, 6):
+                started = time.perf_counter()
+                await agent.sample_once()
+                elapsed = (time.perf_counter() - started) * 1000
+                print(f"sample {i}: {elapsed:8.1f} ms", file=sys.stderr)
+            budget = config.sample_interval_seconds * 1000
+            print(
+                f"\nbudget:   {budget:8.1f} ms (sample_interval_seconds"
+                f" = {config.sample_interval_seconds})",
+                file=sys.stderr,
+            )
+
+            # The five samples above all land within milliseconds of each
+            # other, so PROCESS_INTERVAL_SECONDS/LATENCY_INTERVAL_SECONDS —
+            # the very throttles that keep a running agent's per-sample cost
+            # low — also keep them from ever re-firing inside this loop. A
+            # machine where the process walk or a latency probe is what is
+            # actually blowing the budget would print a clean report here
+            # and nothing else. Timing them directly is what the runtime
+            # warning's "run sample --timing" actually has to make good on.
+            if config.collect_processes:
+                started = time.perf_counter()
+                await asyncio.to_thread(collect_processes)
+                elapsed = (time.perf_counter() - started) * 1000
+                print(
+                    f"\nprocess list (every {PROCESS_INTERVAL_SECONDS}s):"
+                    f" {elapsed:8.1f} ms",
+                    file=sys.stderr,
+                )
+            targets = [latency_mod.LatencyTarget.parse(t) for t in config.latency_targets]
+            if targets:
+                started = time.perf_counter()
+                await latency_mod.measure_all(targets)
+                elapsed = (time.perf_counter() - started) * 1000
+                print(
+                    f"latency probe (every {LATENCY_INTERVAL_SECONDS}s):"
+                    f" {elapsed:8.1f} ms",
+                    file=sys.stderr,
+                )
+
+        asyncio.run(timed())
+        return 0
 
     print(json.dumps(asyncio.run(once()), indent=2, default=str))
     return 0
@@ -295,6 +359,12 @@ def cmd_status(args: argparse.Namespace) -> int:
         # The token is in this file. Say so loudly rather than let a bad umask
         # or a hand-copied config quietly leave a credential readable.
         print("              WARNING: readable by other users on this machine")
+    try:
+        config.validate_intervals()
+    except ConfigError as exc:
+        # `status` describes a config rather than refusing one, so this is the
+        # one place a bad cadence is reported without stopping anything.
+        print(f"              WARNING: {exc}")
     print(f"Server:       {config.server_url}")
     print(f"Device ID:    {config.device_id or '(not enrolled)'}")
     print(f"Token:        {'present' if config.agent_token else 'absent'}")
@@ -356,7 +426,14 @@ def build_parser() -> argparse.ArgumentParser:
     enroll_parser.set_defaults(func=cmd_enroll)
 
     sub.add_parser("run", help="run the agent in the foreground").set_defaults(func=cmd_run)
-    sub.add_parser("sample", help="print one real sample and exit").set_defaults(func=cmd_sample)
+    sample_parser = sub.add_parser("sample", help="print one real sample and exit")
+    sample_parser.add_argument(
+        "--timing",
+        action="store_true",
+        help="time five samples instead of printing one, to see whether this "
+        "machine can actually sample as often as it is configured to",
+    )
+    sample_parser.set_defaults(func=cmd_sample)
     sub.add_parser("status", help="show configuration and service state").set_defaults(
         func=cmd_status
     )

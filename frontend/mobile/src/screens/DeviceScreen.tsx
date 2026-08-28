@@ -6,9 +6,9 @@
  * fleet card can never disagree about what "healthy" means (Phase 4's
  * invariant).
  *
- * Deliberately not a port of DeviceHistoryPage: the time-range history view is
- * outside the Phase 10a viewer's scope, and this screen exists to answer "how
- * is this machine right now" before you tap through to Live.
+ * "How is this machine right now", with everything else about it one tap
+ * away: Live for the next few minutes, History for the last hours or weeks,
+ * and its own anomalies, forecasts, incidents, reports and alert rules.
  *
  * Phase 10b: the readings grid is chosen by `device.platform`, because an
  * Android device honestly reports a different set of metrics than a Linux box
@@ -48,10 +48,12 @@ const POLL_INTERVAL_MS = 15_000
  * cannot drift apart. Each of these takes an optional deviceId — see
  * RootStackParamList. */
 const DEVICE_SECTIONS = [
+  ["History", "History"],
   ["Incidents", "Incidents"],
   ["Anomalies", "Anomalies"],
   ["Forecasts", "Forecasts"],
   ["Reports", "Reports"],
+  ["AlertRules", "Alert rules"],
 ] as const
 
 export function DeviceScreen({ route, navigation }: RootStackScreenProps<"Device">) {
@@ -123,7 +125,7 @@ export function DeviceScreen({ route, navigation }: RootStackScreenProps<"Device
     )
 
   return (
-    <Screen refreshing={refreshing} onRefresh={refresh}>
+    <Screen testID="screen-device" refreshing={refreshing} onRefresh={refresh}>
       {error && <ErrorNote message={error} />}
       {loading && !data && <Text style={text.small}>Loading…</Text>}
 
@@ -151,15 +153,27 @@ export function DeviceScreen({ route, navigation }: RootStackScreenProps<"Device
                 <DeviceStatusBadge status={data.device.status} />
               </View>
             </View>
-            <Button
-              title="Watch live"
-              onPress={() =>
-                navigation.navigate("Live", {
-                  deviceId,
-                  deviceName: data.device.name,
-                })
-              }
-            />
+            <View style={styles.headActions}>
+              <Button
+                title="Watch live"
+                onPress={() =>
+                  navigation.navigate("Live", {
+                    deviceId,
+                    deviceName: data.device.name,
+                  })
+                }
+              />
+              <Button
+                variant="outline"
+                title="History"
+                onPress={() =>
+                  navigation.navigate("History", {
+                    deviceId,
+                    deviceName: data.device.name,
+                  })
+                }
+              />
+            </View>
           </Card>
 
           <Card>
@@ -172,6 +186,7 @@ export function DeviceScreen({ route, navigation }: RootStackScreenProps<"Device
               {DEVICE_SECTIONS.map(([route, label]) => (
                 <Button
                   key={route}
+                  testID={`device-section-${route.toLowerCase()}`}
                   size="sm"
                   variant="outline"
                   title={label}
@@ -356,6 +371,7 @@ const styles = StyleSheet.create({
   headRow: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md },
   headText: { flex: 1, gap: 2 },
   headRight: { alignItems: "flex-end", gap: spacing.xs },
+  headActions: { gap: spacing.sm },
   links: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   stats: { flexDirection: "row", flexWrap: "wrap", rowGap: spacing.md },
   stat: { width: "50%", gap: 2, paddingRight: spacing.sm },

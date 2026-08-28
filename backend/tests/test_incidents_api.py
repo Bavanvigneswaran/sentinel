@@ -1,6 +1,6 @@
 """GET /incidents, GET /incidents/{id}, and POST /incidents/{id}/regenerate —
 tenancy (another user's incident 404s, same as every other resource), the
-list/detail shapes, and the regenerate route's dependency-injected AI client.
+list/detail shapes, and the regenerate route.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 import pytest
 
 from app.db import AdminSessionLocal
+from app.insights.generator import GENERATOR_ID
 from app.models import AlertEvent, User
 from app.models.incidents import Incident
 from app.security.tokens import issue_access_token
@@ -105,41 +106,24 @@ async def test_a_nonexistent_incident_404s(client, incident_with_event):
     assert response.status_code == 404
 
 
-async def test_regenerate_without_an_api_key_configured_returns_503(client, incident_with_event):
-    """No ANTHROPIC_API_KEY in the test environment — the route must say so
-    explicitly rather than silently returning stale or fabricated text."""
-    user, incident = incident_with_event["user"], incident_with_event["incident"]
-    response = await client.post(
-        f"/incidents/{incident.id}/regenerate", headers=_headers(user.id)
-    )
-    assert response.status_code == 503
-
-
-async def test_regenerate_with_a_fake_client_writes_the_summary(client, incident_with_event):
-    from app.api.routes.incidents import _ai_client_dependency
-    from app.main import create_app
-
-    class FakeAIClient:
-        async def summarize(self, *, system: str, prompt: str) -> str:
-            return "the device is running hot"
-
-        async def analyze_root_cause(self, *, system: str, prompt: str) -> str:
-            return "likely a runaway process"
-
+async def test_regenerate_writes_real_generated_text_through_the_ordinary_client(
+    client, incident_with_event
+):
+    """No dependency override, no second app, no fake: generation is a local
+    template pass, so the plain test client exercises the real path end to
+    end. Phase 8 needed a substituted AIClient here because the alternative
+    was a billed network call — and needed a sibling test asserting a 503,
+    because an unset ANTHROPIC_API_KEY was a reachable state. Neither is.
+    """
     user, incident = incident_with_event["user"], incident_with_event["incident"]
 
-    app = create_app()
-    app.dependency_overrides[_ai_client_dependency] = lambda: FakeAIClient()
-    from httpx import ASGITransport, AsyncClient
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="https://test") as ac:
-        response = await ac.post(
-            f"/incidents/{incident.id}/regenerate", headers=_headers(user.id)
-        )
+    response = await client.post(f"/incidents/{incident.id}/regenerate", headers=_headers(user.id))
 
     assert response.status_code == 200
     body = response.json()
-    assert body["summary_text"] == "the device is running hot"
-    assert body["root_cause_text"] == "likely a runaway process"
-    assert body["summary_model"] is not None
+    # The fixture's event: cpu_percent, threshold rule, > 80.0, fired at 91.0.
+    assert body["summary_text"] == "CPU on api-box is > 80.0% (now 91.0%)."
+    assert "api-box opened an incident when CPU went > 80.0%" in body["root_cause_text"]
+    assert body["summary_model"] == GENERATOR_ID
+    assert body["root_cause_model"] == GENERATOR_ID
+    assert body["summary_generated_at"] is not None

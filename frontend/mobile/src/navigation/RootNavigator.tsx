@@ -13,11 +13,14 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs"
 import { createNativeStackNavigator } from "@react-navigation/native-stack"
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native"
 
+import { AlertRulesScreen } from "@/screens/AlertRulesScreen"
 import { AlertsScreen } from "@/screens/AlertsScreen"
 import { AuthScreen } from "@/screens/AuthScreen"
 import { CollectorScreen } from "@/screens/CollectorScreen"
 import { DeviceScreen } from "@/screens/DeviceScreen"
 import { FleetScreen } from "@/screens/FleetScreen"
+import { HistoryScreen } from "@/screens/HistoryScreen"
+import { IncidentDetailScreen } from "@/screens/IncidentDetailScreen"
 import { LiveScreen } from "@/screens/LiveScreen"
 import { AnomaliesScreen } from "@/screens/AnomaliesScreen"
 import { ForecastsScreen } from "@/screens/ForecastsScreen"
@@ -60,9 +63,21 @@ function TabsNavigator() {
     >
       {/* FleetScreen under the name "Devices": the merged tab is the fleet
           view, and "Devices" is the noun for what it lists. */}
-      <Tabs.Screen name="Devices" component={FleetScreen} />
-      <Tabs.Screen name="Alerts" component={AlertsScreen} />
-      <Tabs.Screen name="More" component={MoreScreen} />
+      <Tabs.Screen
+        name="Devices"
+        component={FleetScreen}
+        options={{ tabBarButtonTestID: "tab-devices" }}
+      />
+      <Tabs.Screen
+        name="Alerts"
+        component={AlertsScreen}
+        options={{ tabBarButtonTestID: "tab-alerts" }}
+      />
+      <Tabs.Screen
+        name="More"
+        component={MoreScreen}
+        options={{ tabBarButtonTestID: "tab-more" }}
+      />
     </Tabs.Navigator>
   )
 }
@@ -102,6 +117,11 @@ export function RootNavigator() {
         component={DeviceScreen}
         options={({ route }) => ({ title: route.params.deviceName ?? "Device" })}
       />
+      <Stack.Screen
+        name="History"
+        component={HistoryScreen}
+        options={({ route }) => ({ title: scopedTitle("History", route.params) })}
+      />
       {/* The header carries the scope. Opened from More these read
           "Anomalies"; opened from a device they read "Anomalies · web-01", so
           a short list is visibly a filtered one rather than a quiet fleet. */}
@@ -124,6 +144,16 @@ export function RootNavigator() {
         name="Reports"
         component={ReportsScreen}
         options={({ route }) => ({ title: scopedTitle("Reports", route.params) })}
+      />
+      <Stack.Screen
+        name="AlertRules"
+        component={AlertRulesScreen}
+        options={({ route }) => ({ title: scopedTitle("Alert rules", route.params) })}
+      />
+      <Stack.Screen
+        name="IncidentDetail"
+        component={IncidentDetailScreen}
+        options={{ title: "Incident" }}
       />
       <Stack.Screen name="Settings" component={SettingsScreen} />
       <Stack.Screen

@@ -46,7 +46,58 @@ cp frontend/mobile/.env.example frontend/mobile/.env
 |---|---|
 | Android emulator | `http://10.0.2.2:8000` (the default) |
 | Physical phone on your LAN | `http://192.168.x.x:8000` |
+| Phone hotspot (see below) | `http://10.x.x.x:8000` |
 | Deployed | `https://sentinel.example.com` |
+
+### The address is baked in, so pin it
+
+This value is **compiled into the APK**, twice: Expo inlines it into the JS
+bundle, and `withDevBackendCleartext.js` (below) writes its host into a
+Network Security Config. Neither can be changed on the phone — there is no
+server-URL field in Settings, deliberately, because one would fix only the
+first of those two and the OS would still block the request.
+
+The practical consequence is that a release APK is only valid for as long as
+the backend keeps the address it was built against, and **a laptop's LAN IP
+changes every time it joins a different network**. An APK built at the office
+simply cannot reach the same laptop at home, and the symptom is the app's own
+"Could not reach the backend at ..." — accurate, and easy to misread as the
+build being out of date when it is the *address* that went stale.
+
+The cheapest fix for local development is to stop letting the address move:
+run the laptop on the **phone's own hotspot** and build against whatever
+address it hands out. That address comes from the hotspot's DHCP server, which
+runs on the phone, so it does not depend on how the phone reaches the internet
+— cellular data or a bridged WiFi network both give the laptop the same
+address. Check it with `ipconfig getifaddr en0` (macOS) while connected, then
+put it in `.env` and rebuild once.
+
+It also sidesteps a second problem: a phone and a laptop on the same hotspot
+are alone on a small private network, whereas home and campus WiFi frequently
+block device-to-device traffic outright, which no amount of correct
+configuration will get around.
+
+The real answer, when there is one, is to stop using a bare IP: an `https://`
+backend on a real domain never moves and needs no cleartext exception at all.
+
+**[Tailscale Funnel](https://tailscale.com/kb/1223/funnel) is a cheap way to get that domain
+without a real deployment.** Install Tailscale on the machine running `make serve` (nowhere else —
+Funnel serves a normal public `https://` URL that any device reaches directly, so the Windows/Linux
+agent and this app need nothing beyond themselves) and run `tailscale funnel --bg 8000`; it prints a
+stable `https://<machine>.<tailnet>.ts.net` address that survives DHCP changes, hotspot switches,
+and Wi-Fi MAC rotation, because it isn't derived from the local network at all. Point
+`EXPO_PUBLIC_API_URL` at that instead of a bare IP and this whole section stops applying — no
+cleartext exception is generated, and the address doesn't go stale when the laptop changes
+networks.
+
+That said, a Funnel link is genuinely public, not merely LAN-local, so before pointing a real
+backend at one, satisfy `app/config.py`'s `ENVIRONMENT=prod` checks for real: rate limiting on, a
+real `JWT_SECRET`, `COOKIE_SECURE=true` (now possible — Funnel terminates real TLS), and the
+`sentinel_app` database role's password rotated with `ALTER ROLE` (editing `.env` alone does not
+change what Postgres already has, since the role is created once by migration `0001` and never
+after). Also add `--proxy-headers --forwarded-allow-ips=127.0.0.1` to the `uvicorn` invocation —
+Funnel proxies locally to `127.0.0.1`, and without that flag the rate limiter's `_client_ip()` would
+see every visitor as the same address and share one bucket among all of them.
 
 Over plain `http`, the backend must be running with `COOKIE_SECURE=false` — the
 refresh cookie is otherwise never stored and every app restart logs you out.

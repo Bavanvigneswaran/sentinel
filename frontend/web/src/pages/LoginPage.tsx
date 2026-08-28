@@ -7,6 +7,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { PasswordInput } from "@/components/ui/password-input"
 import { ApiError } from "@/lib/api"
 import { useAuth } from "@/stores/auth"
 
@@ -42,20 +43,25 @@ export function LoginPage() {
 
   return (
     <AuthForm
+      testId="login"
       title="Sign in"
       description="Access your monitored devices."
       footer={
         <>
           No account?{" "}
-          <Link to="/signup" className="text-foreground underline-offset-4 hover:underline">
+          <Link
+            to="/signup"
+            data-testid="login-to-signup"
+            className="text-foreground underline-offset-4 hover:underline"
+          >
             Create one
           </Link>
         </>
       }
     >
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4" data-testid="login-form">
         {error && (
-          <Alert variant="destructive">
+          <Alert variant="destructive" data-testid="login-error">
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
@@ -64,6 +70,7 @@ export function LoginPage() {
           <Label htmlFor="email">Email</Label>
           <Input
             id="email"
+            data-testid="login-email"
             type="email"
             autoComplete="email"
             required
@@ -74,9 +81,9 @@ export function LoginPage() {
 
         <div className="flex flex-col gap-2">
           <Label htmlFor="password">Password</Label>
-          <Input
+          <PasswordInput
             id="password"
-            type="password"
+            data-testid="login-password"
             autoComplete="current-password"
             required
             value={password}
@@ -84,7 +91,7 @@ export function LoginPage() {
           />
         </div>
 
-        <Button type="submit" disabled={submitting}>
+        <Button type="submit" disabled={submitting} data-testid="login-submit">
           {submitting ? "Signing in…" : "Sign in"}
         </Button>
       </form>

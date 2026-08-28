@@ -4,6 +4,7 @@
  * deliberately small, and deliberately not a design system.
  */
 
+import { useState } from "react"
 import type { ReactNode } from "react"
 import {
   ActivityIndicator,
@@ -23,22 +24,29 @@ export function Card({
   children,
   style,
   onPress,
+  testID,
 }: {
   children: ReactNode
   style?: StyleProp<ViewStyle>
   onPress?: () => void
+  testID?: string
 }) {
   if (onPress) {
     return (
       <Pressable
         onPress={onPress}
+        testID={testID}
         style={({ pressed }) => [styles.card, pressed && styles.cardPressed, style]}
       >
         {children}
       </Pressable>
     )
   }
-  return <View style={[styles.card, style]}>{children}</View>
+  return (
+    <View style={[styles.card, style]} testID={testID}>
+      {children}
+    </View>
+  )
 }
 
 export function CardTitle({ children }: { children: ReactNode }) {
@@ -56,6 +64,7 @@ export function Button({
   size = "md",
   disabled = false,
   busy = false,
+  testID,
 }: {
   title: string
   onPress: () => void
@@ -63,14 +72,22 @@ export function Button({
   size?: "sm" | "md"
   disabled?: boolean
   busy?: boolean
+  /** Surfaces as Android `resource-id`, which is what Appium locates by. */
+  testID?: string
 }) {
   const isDisabled = disabled || busy
   return (
     <Pressable
       accessibilityRole="button"
+      // Without this the Pressable has a role and no name: the title is a child
+      // Text, so the a11y tree carries it as a separate node and Android sets
+      // no content-desc on the button itself. TalkBack coped by reading the
+      // child; a content-desc lookup found nothing. Same string either way.
+      accessibilityLabel={title}
       accessibilityState={{ disabled: isDisabled, busy }}
       disabled={isDisabled}
       onPress={onPress}
+      testID={testID}
       style={({ pressed }) => [
         styles.button,
         size === "sm" && styles.buttonSm,
@@ -117,11 +134,49 @@ export function Field({
   )
 }
 
+/** A password Field with a trailing eye toggle between masked and plain text. */
+export function PasswordField({
+  label,
+  ...props
+}: Omit<TextInputProps, "secureTextEntry"> & { label: string }) {
+  const [visible, setVisible] = useState(false)
+  return (
+    <View style={{ gap: spacing.xs }}>
+      <Text style={text.small}>{label}</Text>
+      <View style={styles.passwordRow}>
+        <TextInput
+          placeholderTextColor={colors.mutedDeep}
+          style={[styles.input, styles.passwordInput]}
+          accessibilityLabel={label}
+          secureTextEntry={!visible}
+          {...props}
+        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={visible ? "Hide password" : "Show password"}
+          accessibilityState={{ selected: visible }}
+          onPress={() => setVisible((v) => !v)}
+          style={styles.passwordToggle}
+          hitSlop={8}
+        >
+          <Text style={styles.passwordToggleText}>{visible ? "🙈" : "👁"}</Text>
+        </Pressable>
+      </View>
+    </View>
+  )
+}
+
 /** An inline error strip. Never a modal: an error on a monitoring screen
  * should not hide the numbers behind it. */
-export function ErrorNote({ message }: { message: string }) {
+export function ErrorNote({
+  message,
+  testID = "error-note",
+}: {
+  message: string
+  testID?: string
+}) {
   return (
-    <View style={styles.errorNote}>
+    <View style={styles.errorNote} testID={testID}>
       <Text style={{ ...text.small, color: colors.destructive }}>{message}</Text>
     </View>
   )
@@ -131,10 +186,12 @@ export function Segmented<T extends string>({
   options,
   value,
   onChange,
+  testID = "segmented",
 }: {
   options: { value: T; label: string }[]
   value: T
   onChange: (next: T) => void
+  testID?: string
 }) {
   return (
     <View style={styles.segmented}>
@@ -143,7 +200,9 @@ export function Segmented<T extends string>({
         return (
           <Pressable
             key={option.value}
+            testID={`${testID}-${option.value}`}
             accessibilityRole="button"
+            accessibilityLabel={option.label}
             accessibilityState={{ selected: active }}
             onPress={() => onChange(option.value)}
             style={[styles.segment, active && styles.segmentActive]}
@@ -200,6 +259,17 @@ const styles = StyleSheet.create({
     color: colors.foreground,
     fontSize: 15,
   },
+  passwordRow: { justifyContent: "center" },
+  passwordInput: { paddingRight: spacing.xl + spacing.md },
+  passwordToggle: {
+    position: "absolute",
+    right: spacing.sm,
+    height: 44,
+    width: 32,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  passwordToggleText: { fontSize: 16 },
   errorNote: {
     backgroundColor: "rgba(239, 68, 68, 0.08)",
     borderColor: "rgba(239, 68, 68, 0.35)",
@@ -207,7 +277,10 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     padding: spacing.md,
   },
-  segmented: { flexDirection: "row", gap: spacing.sm },
+  // Wraps: a metric picker has six options and a phone is ~330pt wide. A
+  // non-wrapping row would push the last two off-screen with no scroll
+  // affordance to find them by.
+  segmented: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   segment: {
     paddingVertical: 6,
     paddingHorizontal: spacing.md,

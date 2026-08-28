@@ -1,14 +1,16 @@
 /**
- * Incidents — correlated alerts on one device, with the AI summary when there
- * is one. Ported from web/src/pages/IncidentsPage.tsx.
+ * Incidents — correlated alerts on one device, with the generated summary when
+ * there is one. Ported from web/src/pages/IncidentsPage.tsx.
  *
  * The summary is rendered as inert display text and nothing here parses it
  * back into structure, which is CLAUDE.md's "the LLM explains; it does not
  * detect" applied at the render layer: a phone shows the sentence, the state
  * machine that opened the incident is unaffected by it.
  *
- * Root-cause regeneration stays in the web console — it costs an API call, and
- * a button that spends money is not one to put under a thumb at 3am.
+ * Tapping a card opens IncidentDetailScreen, which is where the correlated
+ * timeline and the root-cause text live — the list endpoint returns
+ * `Incident`, not `IncidentDetail`, and fetching the timeline per row would
+ * be one extra request for every card on screen.
  */
 
 import { useEffect, useState } from "react"
@@ -19,6 +21,11 @@ import { EmptyState, Screen } from "@/components/Screen"
 import { Card, ErrorNote, Segmented } from "@/components/ui"
 import { usePolledResource } from "@/hooks/usePolledResource"
 import { apiFetch } from "@/lib/api"
+import {
+  DEVICE_LIST_WITH_REMOVED,
+  deviceLabel,
+  indexDevices,
+} from "@/lib/deviceNames"
 import { withDeviceScope } from "@/lib/deviceScope"
 import { formatRelative } from "@/lib/timeRanges"
 import { spacing, text } from "@/theme"
@@ -36,7 +43,7 @@ const FILTERS: { value: Filter; label: string }[] = [
   { value: "all", label: "All" },
 ]
 
-export function IncidentsScreen({ route }: RootStackScreenProps<"Incidents">) {
+export function IncidentsScreen({ route, navigation }: RootStackScreenProps<"Incidents">) {
   const deviceId = route.params?.deviceId
   const deviceName = route.params?.deviceName
   const [filter, setFilter] = useState<Filter>("open")
@@ -49,8 +56,11 @@ export function IncidentsScreen({ route }: RootStackScreenProps<"Incidents">) {
   )
 
   useEffect(() => {
-    apiFetch<Device[]>("/devices")
-      .then((list) => setDevices(Object.fromEntries(list.map((d) => [d.id, d]))))
+    // Removed devices included: this list is history, and a firing on a
+    // machine the user has since removed still has to be able to name it.
+    // See lib/deviceNames.ts.
+    apiFetch<Device[]>(DEVICE_LIST_WITH_REMOVED)
+      .then((list) => setDevices(indexDevices(list)))
       .catch(() => {
         // Non-fatal.
       })
@@ -59,7 +69,7 @@ export function IncidentsScreen({ route }: RootStackScreenProps<"Incidents">) {
   const incidents = data ?? []
 
   return (
-    <Screen title="Incidents" refreshing={refreshing} onRefresh={refresh}>
+    <Screen testID="screen-incidents" title="Incidents" refreshing={refreshing} onRefresh={refresh}>
       {deviceName && (
         <Text style={text.tiny}>Showing {deviceName} only. Open this from More for every device.</Text>
       )}
@@ -84,10 +94,14 @@ export function IncidentsScreen({ route }: RootStackScreenProps<"Incidents">) {
       )}
 
       {incidents.map((incident) => (
-        <Card key={incident.id}>
+        <Card
+          key={incident.id}
+          testID={`incident-${incident.id}`}
+          onPress={() => navigation.navigate("IncidentDetail", { incidentId: incident.id })}
+        >
           <View style={styles.header}>
             <Text style={text.heading}>
-              {devices[incident.device_id]?.name ?? incident.device_id}
+              {deviceLabel(devices, incident.device_id)}
             </Text>
             <AlertStatusBadge status={incident.status === "open" ? "firing" : "resolved"} />
           </View>
@@ -100,8 +114,8 @@ export function IncidentsScreen({ route }: RootStackScreenProps<"Incidents">) {
 
           {/* No per-event breakdown here: the list endpoint returns
               Incident, not IncidentDetail, and fetching detail per row to show
-              a count would be a request per incident for one number. The web
-              console's detail page has the timeline. */}
+              a count would be a request per incident for one number. Tapping
+              the card is what makes that second request, once. */}
           {incident.summary_text ? (
             <Text style={styles.summary}>{incident.summary_text}</Text>
           ) : (

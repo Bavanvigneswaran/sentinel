@@ -13,6 +13,7 @@ socket falls out of the count.
 
 from __future__ import annotations
 
+import math
 import time
 import uuid
 
@@ -26,9 +27,24 @@ def _live_key(user_id: uuid.UUID, device_id: uuid.UUID) -> str:
 
 
 async def claim(user_id: uuid.UUID, device_id: uuid.UUID, viewer_id: str) -> None:
-    """Register (or renew) one viewer's lease on one device."""
+    """Register (or renew) one viewer's lease on one device.
+
+    The key itself is given a TTL alongside the member's own expiry score.
+    Pruning in `live_count()` deletes the ZSET once its last member expires,
+    but only an agent's supervisor ever calls that — so a viewer that watched
+    a device whose agent never reconnected left the key behind with nothing
+    to ever clean it up. The TTL is refreshed on every renewal, so it can only
+    fire once no viewer has claimed for a full lease period.
+    """
     key = _live_key(user_id, device_id)
-    await get_redis().zadd(key, {viewer_id: time.time() + LEASE_TTL_SECONDS})
+    redis = get_redis()
+    async with redis.pipeline(transaction=True) as pipe:
+        pipe.zadd(key, {viewer_id: time.time() + LEASE_TTL_SECONDS})
+        # EXPIRE takes whole seconds, and tests shorten the lease to a
+        # fraction of one; round up so the key always outlives the member
+        # score it holds rather than truncating to a 0 Redis rejects.
+        pipe.expire(key, max(1, math.ceil(LEASE_TTL_SECONDS)))
+        await pipe.execute()
 
 
 async def release(user_id: uuid.UUID, device_id: uuid.UUID, viewer_id: str) -> None:

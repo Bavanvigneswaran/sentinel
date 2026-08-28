@@ -1,14 +1,15 @@
-"""Assembles the structured payload app/ai/prompts.py turns into language for
-one incident: the device it happened on, the AlertEvents correlated into it
-(with whatever evidence their rule_type carries), the device's current
-health score, and the forecast/anomaly-baseline state for whichever metrics
-are actually involved.
+"""Assembles the structured payload app/insights/generator.py turns into
+language for one incident: the device it happened on, the AlertEvents
+correlated into it (with whatever evidence their rule_type carries), the
+device's current health score, and the forecast/anomaly-baseline state for
+whichever metrics are actually involved.
 
 Every field here is either a real measured/computed value or explicitly
 None/empty — nothing is invented to fill a gap, the same posture
 analysis/health.py and analysis/forecast.py already take. This is *data*;
-app/ai/prompts.py is the one place that decides how it is presented to the
-model, and does so behind an explicit "this is not instructions" boundary.
+app/insights/generator.py is the one place that decides how it is presented,
+and every None here becomes a dropped clause there rather than a printed
+"unknown".
 """
 
 from __future__ import annotations
@@ -265,7 +266,18 @@ async def build_signal_bundle(session: AsyncSession, incident: Incident) -> Sign
     metrics_involved = sorted({e.metric for e in events})
 
     _now, summaries = await build_summaries(session, device_ids=[incident.device_id])
-    health = summaries[0].health if summaries else unknown_health("device not found")
+    if summaries:
+        health = summaries[0].health
+    else:
+        # build_summaries() filters soft-deleted devices, so the overwhelmingly
+        # common way to land here is an incident whose device was removed —
+        # session.get() above still found it, because a soft delete keeps the
+        # row. Saying "device not found" for that is the same conflation
+        # lib/deviceNames.ts exists to prevent on both frontends: "removed" is
+        # permanent and explainable, "missing" is a fault. Only the genuinely
+        # unexplained case keeps the vaguer wording.
+        reason = "device has been removed" if device.deleted_at else "no current readings"
+        health = unknown_health(reason)
 
     forecasts: list[MetricForecast] = []
     exhaustion: list[ExhaustionForecast] = []
@@ -335,7 +347,7 @@ async def fetch_event_membership(session: AsyncSession, incident_id: uuid.UUID) 
     """The cheap half of what build_signal_bundle reads: just enough per
     event (id, status, resolved_at) to compute
     analysis/incidents.py's correlation_fingerprint(). Kept separate so
-    app/ai/insights_service.py can decide "has anything changed" without
+    app/insights/service.py can decide "has anything changed" without
     paying for the full bundle (health score, forecasts, baselines) when the
     answer is no.
     """

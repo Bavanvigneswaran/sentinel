@@ -17,6 +17,11 @@ import { EmptyState, Screen } from "@/components/Screen"
 import { Card, ErrorNote, Segmented } from "@/components/ui"
 import { usePolledResource } from "@/hooks/usePolledResource"
 import { apiFetch } from "@/lib/api"
+import {
+  DEVICE_LIST_WITH_REMOVED,
+  deviceLabel,
+  indexDevices,
+} from "@/lib/deviceNames"
 import { withDeviceScope } from "@/lib/deviceScope"
 import { formatRelative } from "@/lib/timeRanges"
 import { colors, spacing, text } from "@/theme"
@@ -51,8 +56,11 @@ export function AnomaliesScreen({ route }: RootStackScreenProps<"Anomalies">) {
   )
 
   useEffect(() => {
-    apiFetch<Device[]>("/devices")
-      .then((list) => setDevices(Object.fromEntries(list.map((d) => [d.id, d]))))
+    // Removed devices included: this list is history, and a firing on a
+    // machine the user has since removed still has to be able to name it.
+    // See lib/deviceNames.ts.
+    apiFetch<Device[]>(DEVICE_LIST_WITH_REMOVED)
+      .then((list) => setDevices(indexDevices(list)))
       .catch(() => {
         // Non-fatal: the list still reads with a raw device id.
       })
@@ -61,7 +69,7 @@ export function AnomaliesScreen({ route }: RootStackScreenProps<"Anomalies">) {
   const events = data ?? []
 
   return (
-    <Screen title="Anomalies" refreshing={refreshing} onRefresh={refresh}>
+    <Screen testID="screen-anomalies" title="Anomalies" refreshing={refreshing} onRefresh={refresh}>
       {deviceName && (
         <Text style={text.tiny}>Showing {deviceName} only. Open this from More for every device.</Text>
       )}
@@ -98,7 +106,7 @@ export function AnomaliesScreen({ route }: RootStackScreenProps<"Anomalies">) {
           </View>
 
           <Text style={text.small}>
-            {devices[event.device_id]?.name ?? event.device_id} · {event.metric}
+            {deviceLabel(devices, event.device_id)} · {event.metric}
           </Text>
 
           {/* The event's own snapshot, not the live baseline: this is what

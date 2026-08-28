@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react"
+import { Link } from "react-router"
 
 import { AppLayout } from "@/components/AppLayout"
 import { DeviceSummaryCard } from "@/components/DeviceSummaryCard"
-import { NewDevicePanel } from "@/components/NewDevicePanel"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { apiFetch } from "@/lib/api"
@@ -36,7 +36,6 @@ const WINDOW_SECONDS = 3600
 export function DashboardPage() {
   const [overview, setOverview] = useState<FleetOverview | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [adding, setAdding] = useState(false)
 
   const load = useCallback(() => {
     return apiFetch<FleetOverview>(`/fleet/overview?window_seconds=${WINDOW_SECONDS}`)
@@ -78,7 +77,9 @@ export function DashboardPage() {
     <AppLayout active="devices">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Devices</h1>
+          <h1 className="text-xl font-semibold tracking-tight" data-testid="page-title">
+            Devices
+          </h1>
           <p className="text-sm text-muted-foreground">
             Health of every machine you've enrolled, from its own real telemetry.
           </p>
@@ -89,18 +90,19 @@ export function DashboardPage() {
               updated {formatRelative(overview.generated_at)}
             </span>
           )}
-          {!adding && (
-            <Button size="sm" onClick={() => setAdding(true)}>
-              New device
-            </Button>
-          )}
+          {/* A link, not a panel. Minting a code here left the user needing a
+              binary from another page and vice versa; both halves now live on
+              /devices/new in the order they are used. */}
+          <Button asChild size="sm">
+            <Link to="/devices/new" data-testid="add-device">
+              Add a device
+            </Link>
+          </Button>
         </div>
       </div>
 
-      {adding && <NewDevicePanel onClose={() => setAdding(false)} />}
-
       {error && (
-        <Card>
+        <Card data-testid="fleet-error">
           <CardContent className="pt-6 text-sm text-destructive">
             {error} Showing the last successful reading.
           </CardContent>
@@ -109,24 +111,28 @@ export function DashboardPage() {
 
       {overview && <Totals totals={overview.totals} />}
 
-      {overview !== null && overview.devices.length === 0 && !adding && (
-        <Card>
+      {overview !== null && overview.devices.length === 0 && (
+        <Card data-testid="devices-empty">
           <CardHeader>
             <CardTitle>No devices yet</CardTitle>
             <CardDescription>
-              Press <strong className="font-medium text-foreground">New device</strong> to mint
-              an enrollment code, then redeem it from the agent on the machine you want to
-              monitor.
+              <Link to="/devices/new" className="underline underline-offset-2">
+                Add a device
+              </Link>{" "}
+              walks through it end to end: download the agent for that machine, mint a one-time
+              code, and copy three commands into its terminal.
             </CardDescription>
           </CardHeader>
         </Card>
       )}
 
       {overview === null && !error && (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <p className="text-sm text-muted-foreground" data-testid="devices-loading">
+          Loading…
+        </p>
       )}
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2" data-testid="device-list">
         {overview?.devices.map((summary) => (
           <DeviceSummaryCard key={summary.device.id} summary={summary} onRemoved={load} />
         ))}
@@ -137,7 +143,7 @@ export function DashboardPage() {
 
 function Totals({ totals }: { totals: FleetTotals }) {
   return (
-    <Card>
+    <Card data-testid="fleet-totals">
       <CardContent className="grid grid-cols-2 gap-4 pt-6 sm:grid-cols-4 lg:grid-cols-7">
         <Tile label="Devices" value={totals.devices} />
         <Tile label="Online" value={totals.online} tone="text-emerald-500" />
@@ -153,7 +159,7 @@ function Totals({ totals }: { totals: FleetTotals }) {
 
 function Tile({ label, value, tone }: { label: string; value: number; tone?: string }) {
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col" data-testid={`total-${label.toLowerCase().replace(/ /g, "-")}`}>
       {/* Zero is a real count here, not a missing metric, so it renders as 0 —
           MetricValue's "unavailable" rule is about measurements, not tallies. */}
       <span className={cn("text-2xl font-semibold tabular-nums", value > 0 && tone)}>{value}</span>

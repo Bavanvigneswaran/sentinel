@@ -77,14 +77,35 @@ class _Rate:
         return (value - prev) / elapsed
 
 
+#: How often the two genuinely expensive probes in a sample are re-measured.
+#:
+#: `net_connections()` goes through GetExtendedTcpTable on Windows and
+#: `users()` through the WTS API; on a busy machine either can cost tens to
+#: hundreds of milliseconds, and they were both being called on *every* sample.
+#: At the agent's 1s cadence that is enough to stop the sample loop keeping
+#: time — which shows up as a Live Monitoring trace that crawls rather than
+#: streams, because the points genuinely are not being taken every second.
+#: Neither number moves fast enough to be worth that: a logged-in user count
+#: and an open-socket count are not 1Hz signals.
+#:
+#: The value carried between probes is always a real measurement, never a
+#: filled-in one — the same thing `runner.py` already does for latency, and
+#: the same reason it is allowed to.
+SLOW_PROBE_INTERVAL_SECONDS = 15
+
+
 @dataclass
 class SystemCollector:
     """Holds the counter state needed to compute rates between samples."""
 
     _ctx_switches: _Rate = field(default_factory=_Rate)
+    #: Last real reading of the slow probes, and when it was taken.
+    _slow: dict = field(default_factory=dict)
+    _slow_at: float = 0.0
 
     def collect(self) -> dict:
         now = time.monotonic()
+        slow = self._slow_probes(now)
 
         cpu_times = _safe(lambda: psutil.cpu_times_percent(interval=None))
         vmem = _safe(psutil.virtual_memory)
@@ -123,14 +144,30 @@ class SystemCollector:
             "swap_used_bytes": getattr(swap, "used", None),
             "swap_percent": getattr(swap, "percent", None),
             "uptime_seconds": int(time.time() - boot) if boot else None,
-            "logged_in_users": _safe(lambda: len(psutil.users())),
+            "logged_in_users": slow["logged_in_users"],
             "process_count": _safe(lambda: len(psutil.pids())),
-            "active_connections": _safe(lambda: len(psutil.net_connections(kind="inet"))),
+            "active_connections": slow["active_connections"],
             "temperature_celsius": self._temperature(),
             "fan_rpm": self._fan_rpm(),
         }
         sample.update(self._battery())
         return sample
+
+    def _slow_probes(self, now: float) -> dict:
+        """Re-measure the expensive fields at most every SLOW_PROBE_INTERVAL.
+
+        A None here means the probe genuinely failed and is carried forward as
+        None — "unavailable", exactly as it would be if measured this instant.
+        Nothing is invented to fill the gap between probes.
+        """
+        if self._slow and now - self._slow_at < SLOW_PROBE_INTERVAL_SECONDS:
+            return self._slow
+        self._slow_at = now
+        self._slow = {
+            "logged_in_users": _safe(lambda: len(psutil.users())),
+            "active_connections": _safe(lambda: len(psutil.net_connections(kind="inet"))),
+        }
+        return self._slow
 
     @staticmethod
     def _cpu_freq_mhz(freq) -> float | None:  # noqa: ANN001

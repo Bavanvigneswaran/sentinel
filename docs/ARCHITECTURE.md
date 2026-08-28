@@ -13,9 +13,9 @@
                                            │                    │                   │
 [Web app: React+TS]  <── WSS + REST ───────┴────────────  [FastAPI API]  <──────────┘
 [Android viewer: React Native]                                  │
-                                                         [Worker: anomalies,
-                                                          forecasts, alerts,
-                                                          AI insights]
+                                                         [Workers: alerts,
+                                                          forecasts, insights,
+                                                          reports]
 ```
 
 Agents make **outbound** WebSocket connections only. No inbound ports, works behind NAT/corporate firewalls.
@@ -33,8 +33,8 @@ Agents make **outbound** WebSocket connections only. No inbound ports, works beh
 | Web frontend | React + TypeScript + Vite, Tailwind + shadcn/ui | shadcn gives a professional dark ops-console look without design work. |
 | Charts | uPlot (live, 1s, thousands of points) + Recharts (dashboards) | uPlot is the only thing that stays smooth for live streaming. |
 | Android app | React Native (dev-build) + one Kotlin native module | Reuses ~60% of web dashboard logic; native module handles the collector service. |
-| ML | `numpy`/`statsmodels`/`river`/`scikit-learn` | Statistical first, ML second. See below. |
-| LLM (AI Insights only) | Claude API — Haiku 4.5 for summaries, Sonnet 5 for root-cause | Cheap, and separate from your Claude Code budget. |
+| ML | `numpy`/`scipy`/`statsmodels` for layers 1-3 and 5; `scikit-learn` for layer 4 | Statistical first, ML second. See below. |
+| Incident insights | Local templates over the signal bundle (`app/insights/generator.py`) | No hosted model. Deterministic, free, and it cannot state anything the bundle does not contain. |
 
 ## Data flow and sampling
 
@@ -63,15 +63,17 @@ Android exposes far less — see Known Constraints.
 1. **Static thresholds** — user-set per metric, with a `for:` duration so a 2-second spike doesn't page anyone. Ships in Phase 5.
 2. **Adaptive baseline** — EWMA mean + MAD-based robust z-score, per metric per device. Online, no training, no cold start. Catches "this box is at 60% CPU and it's never above 20%". Ships in Phase 6.
 3. **Seasonal residual** — STL decompose hourly rollups, flag residual outliers. Needs ~2–3 weeks of history to be meaningful.
-4. **Multivariate** — `river.anomaly.HalfSpaceTrees` online, or nightly-retrained IsolationForest over the joint metric vector. Catches correlated weirdness no single threshold sees.
+4. **Multivariate** — a per-device `IsolationForest` (scikit-learn) over the joint metric vector, trained on that machine's own 1m history by `backend/scripts/train_novelty_model.py` and served at `GET /devices/{id}/novelty`. Catches correlated weirdness no single threshold sees: high CPU alongside an idle load average, where neither value is individually outside its own range. Built — see `app/analysis/multivariate.py`. Two rules follow this project's own posture rather than scikit-learn's: a row missing any feature is dropped, never imputed, and below 200 usable rows there is no model rather than a bad one. Scores are a percentile against the device's own training distribution, not sklearn's raw score. Training is run by hand, not by a worker.
 5. **Forecasting** — Holt-Winters (statsmodels) per metric, 24 h horizon with prediction intervals. Plus **time-to-exhaustion** linear/robust regression on disk and memory growth — this is the single highest-value forecast in the whole product, and the easiest.
-6. **AI insights** — Claude summarises a *structured bundle* (recent anomalies, alert states, forecast breaches, correlated metrics) in plain language and suggests actions. The LLM never does the detection — it explains it.
+6. **Incident insights** — a *structured bundle* (recent anomalies, alert states, forecast breaches, correlated metrics) is rendered into plain language by `app/insights/generator.py`. Detection is layers 1–5 above; this step only explains it, and being templates rather than a model it *cannot* do otherwise. Originally Claude Haiku/Sonnet over the same bundle; replaced so the product depends on no hosted AI API. A field the bundle leaves null becomes a dropped clause, never a hedge or a zero.
 
 ## Alerting model
 
 State machine per rule per device: `OK → PENDING → FIRING → RESOLVED`. `PENDING` requires the condition to hold for `for_duration` before firing. Dedup key = (device, rule). Notification channels: Web Push (VAPID), FCM (Android), SMTP email.
 
-**Incidents** = alerts correlated by device + time window (default 10 min) + optional dependency graph. AI-suggested root cause runs on the incident's signal bundle.
+**Four rule types, one evaluation path.** `AlertRule.rule_type` discriminates `threshold` (a live reading against a fixed bound), `anomaly` (layer 2's adaptive baseline), `forecast` (layer 5's stored 24h projection) and `multivariate` (layer 4's novelty percentile). All four share one evaluator sweep, one state machine, one set of event/incident bookkeeping and one notification path — adding a rule type means a new judgment function, never a second pipeline.
+
+**Incidents** = alerts correlated by device + time window (default 10 min) + optional dependency graph. The summary and root-cause analysis are generated from the incident's signal bundle by `app/insights/generator.py` — local templates, no hosted model. They were Claude Haiku/Sonnet until that was replaced; see CLAUDE.md's Phase 17.
 
 ## Security
 

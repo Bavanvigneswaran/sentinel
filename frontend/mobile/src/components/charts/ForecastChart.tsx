@@ -11,11 +11,12 @@
  */
 
 import { useState } from "react"
-import { StyleSheet, Text, View, type LayoutChangeEvent } from "react-native"
+import { StyleSheet } from "react-native"
 import Svg, { Line, Polygon, Polyline } from "react-native-svg"
 
+import { PlotFrame } from "@/components/charts/PlotFrame"
 import { buildForecastFrame } from "@/lib/forecastChartFrame"
-import { colors, radius, spacing, text } from "@/theme"
+import { colors } from "@/theme"
 import type { ForecastPoint } from "@/types/forecast"
 
 interface ForecastChartProps {
@@ -37,18 +38,24 @@ export function ForecastChart({
 }: ForecastChartProps) {
   const [width, setWidth] = useState(0)
 
-  const onLayout = (event: LayoutChangeEvent) => setWidth(event.nativeEvent.layout.width)
-
   const frame = buildForecastFrame(points, { width, height, domain, ceiling })
 
   return (
-    <View onLayout={onLayout} style={[styles.plot, { height }]}>
-      {width > 0 && !frame.empty && (
-        <Svg width={width} height={height}>
+    <PlotFrame
+      height={height}
+      hi={frame.hi}
+      lo={frame.lo}
+      valueFormatter={valueFormatter}
+      empty={frame.empty}
+      emptyLabel="Not enough history for a chart yet."
+      onWidth={setWidth}
+    >
+      {(plotWidth) => (
+        <Svg width={plotWidth} height={height}>
           {frame.referenceY !== null && (
             <Line
               x1={0}
-              x2={width}
+              x2={plotWidth}
               y1={frame.referenceY}
               y2={frame.referenceY}
               stroke={colors.mutedDeep}
@@ -68,33 +75,6 @@ export function ForecastChart({
           />
         </Svg>
       )}
-      {frame.empty ? (
-        <View style={styles.overlay} pointerEvents="none">
-          <Text style={text.tiny}>Not enough history for a chart yet.</Text>
-        </View>
-      ) : (
-        <View style={[styles.overlay, styles.axis]} pointerEvents="none">
-          <Text style={text.tiny}>{valueFormatter(frame.hi)}</Text>
-          <Text style={text.tiny}>{valueFormatter(frame.lo)}</Text>
-        </View>
-      )}
-    </View>
+    </PlotFrame>
   )
 }
-
-const styles = StyleSheet.create({
-  plot: {
-    backgroundColor: colors.background,
-    borderRadius: radius.sm,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    overflow: "hidden",
-  },
-  overlay: { ...StyleSheet.absoluteFill, alignItems: "center", justifyContent: "center" },
-  axis: {
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    paddingHorizontal: spacing.xs,
-    paddingVertical: 2,
-  },
-})

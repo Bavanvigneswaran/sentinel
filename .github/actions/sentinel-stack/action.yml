@@ -1,0 +1,186 @@
+name: Bring up the Sentinel stack
+description: >
+  Build the console, migrate a throwaway database, seed the end-to-end account,
+  and serve the API and the console on one origin — the shape a real deployment
+  has. Used by the Selenium, Appium, load-test and DAST jobs so all four drive
+  the same stack instead of each assembling one slightly differently.
+
+# The caller's job MUST declare these services, because a composite action
+# cannot:
+#
+#   services:
+#     timescaledb:
+#       image: timescale/timescaledb:latest-pg16
+#       env:
+#         POSTGRES_USER: sentinel
+#         POSTGRES_PASSWORD: sentinel
+#         POSTGRES_DB: sentinel
+#       ports: ["5432:5432"]
+#       options: >-
+#         --health-cmd "pg_isready -U sentinel" --health-interval 5s
+#         --health-timeout 5s --health-retries 10
+#     redis:
+#       image: redis:7-alpine
+#       ports: ["6379:6379"]
+#       options: >-
+#         --health-cmd "redis-cli ping" --health-interval 5s
+#         --health-timeout 5s --health-retries 10
+#
+# The credentials above are docker-compose.yml's, and backend/.env.ci expects
+# exactly them. The app role itself (`sentinel_app_ci`) is created by migration
+# 0001 from APP_DB_ROLE, so there is no role setup step.
+
+inputs:
+  python-version:
+    description: >
+      Python to install. Must match the interpreter backend/requirements.txt
+      was resolved on — its header says which, and `make deps-lock` stamps it.
+      pyproject.toml's floor is 3.11, but a *pinned* set is specific to one
+      interpreter: numpy 2.5 needs >= 3.12, so 3.11 here fails with "No
+      matching distribution found for numpy==2.5.2", an error that names the
+      package and says nothing about the Python version.
+    default: "3.14"
+  node-version:
+    description: Node to install, for building the console.
+    default: "22"
+  port:
+    description: Port to serve the API and console on.
+    default: "8000"
+  enrollment-code:
+    description: >
+      Also mint a one-time enrollment code, so a real agent can be enrolled and
+      the suites have real metrics to assert against. There is deliberately no
+      metric seeder — see backend/scripts/seed_e2e_account.py.
+    default: "false"
+
+outputs:
+  base-url:
+    description: Origin serving both the console and the API.
+    value: http://127.0.0.1:${{ inputs.port }}
+  email:
+    description: The seeded account's email.
+    value: ${{ steps.seed.outputs.email }}
+  password:
+    description: The seeded account's password.
+    value: ${{ steps.seed.outputs.password }}
+  enrollment-code:
+    description: A one-time code, when `enrollment-code` was requested.
+    value: ${{ steps.seed.outputs.enrollment-code }}
+
+runs:
+  using: composite
+  steps:
+    # WeasyPrint links against these at *import* time, not at render time. Miss
+    # them and `import app.main` fails outright, so the whole backend refuses to
+    # start and the error names Pango rather than anything about reports.
+    - name: Install WeasyPrint's system libraries
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends \
+          libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b libcairo2
+        # gdk-pixbuf was renamed between Ubuntu releases — libgdk-pixbuf2.0-0
+        # on 22.04, libgdk-pixbuf-2.0-0 on 24.04. Pinning either one means the
+        # action breaks the day GitHub moves ubuntu-latest, and it breaks at
+        # `import weasyprint`, so the error names Pango rather than apt.
+        sudo apt-get install -y --no-install-recommends libgdk-pixbuf-2.0-0 \
+          || sudo apt-get install -y --no-install-recommends libgdk-pixbuf2.0-0
+
+    - uses: actions/setup-python@v7
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: pip
+        cache-dependency-path: backend/requirements.txt
+
+    - uses: actions/setup-node@v7
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: npm
+        cache-dependency-path: frontend/web/package-lock.json
+
+    # The pinned files, not `pip install -e .[dev]`: a range means two runs a
+    # week apart can install different code, and a suite that fails only on the
+    # later one is nobody's bug. `--no-deps` on the editable install because
+    # everything it would resolve is already pinned above.
+    - name: Install backend dependencies
+      shell: bash
+      working-directory: backend
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt -r requirements-dev.txt
+        pip install -e . --no-deps
+
+    - name: Build the web console
+      shell: bash
+      working-directory: frontend/web
+      run: |
+        npm ci
+        npm run build
+
+    - name: Create and migrate the CI database
+      shell: bash
+      working-directory: backend
+      env:
+        SENTINEL_ENV_FILE: ${{ github.workspace }}/backend/.env.ci
+      run: |
+        python scripts/create_database.py --drop-existing
+        alembic upgrade head
+
+    - name: Seed the end-to-end account
+      id: seed
+      shell: bash
+      working-directory: backend
+      env:
+        SENTINEL_ENV_FILE: ${{ github.workspace }}/backend/.env.ci
+      run: |
+        args=(--format env)
+        if [ "${{ inputs.enrollment-code }}" = "true" ]; then
+          args+=(--enrollment-code)
+        fi
+        python scripts/seed_e2e_account.py "${args[@]}" > seed.env
+        cat seed.env
+        {
+          echo "email=$(grep '^SENTINEL_E2E_EMAIL=' seed.env | cut -d= -f2-)"
+          echo "password=$(grep '^SENTINEL_E2E_PASSWORD=' seed.env | cut -d= -f2-)"
+          echo "enrollment-code=$(grep '^SENTINEL_E2E_ENROLLMENT_CODE=' seed.env | cut -d= -f2- || true)"
+        } >> "$GITHUB_OUTPUT"
+        rm seed.env
+
+    # 0.0.0.0 rather than 127.0.0.1: an Android emulator reaches the runner at
+    # 10.0.2.2, and a loopback bind is invisible to it. Backgrounded with its
+    # log on disk so a failing job has something to upload.
+    - name: Serve the console and API
+      shell: bash
+      working-directory: backend
+      env:
+        SENTINEL_ENV_FILE: ${{ github.workspace }}/backend/.env.ci
+      run: |
+        nohup uvicorn app.main:app --host 0.0.0.0 --port ${{ inputs.port }} \
+          > "${{ github.workspace }}/sentinel-server.log" 2>&1 &
+        echo $! > "${{ github.workspace }}/sentinel-server.pid"
+
+    # Poll rather than sleep. Startup is dominated by importing scikit-learn,
+    # statsmodels and WeasyPrint, which is seconds and varies with the runner.
+    - name: Wait for the stack to answer
+      shell: bash
+      run: |
+        for _ in $(seq 1 60); do
+          if curl -fsS "http://127.0.0.1:${{ inputs.port }}/health" > /dev/null; then
+            echo "stack is up"
+            # Prove the console is being served too, not just the API. A dist
+            # that failed to build degrades quietly: the API serves its own
+            # routes and says so once in a log nobody reads, and every UI
+            # assertion then fails against a 404 that looks like a routing bug.
+            if ! curl -fsS -H 'Sec-Fetch-Mode: navigate' \
+                 "http://127.0.0.1:${{ inputs.port }}/login" | grep -q '<div id="root">'; then
+              echo "::error::the API is up but the console is not being served"
+              exit 1
+            fi
+            echo "console is served"
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "::error::the stack did not come up in 120s"
+        cat "${{ github.workspace }}/sentinel-server.log" || true
+        exit 1

@@ -30,8 +30,8 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
  * a visible 1/60th step and at 15m it is imperceptible even though the data
  * is identical. */
 const WINDOW_OPTIONS = [
-  { seconds: 60, label: "1m" },
-  { seconds: DEFAULT_LIVE_WINDOW_SECONDS, label: "2m" },
+  { seconds: DEFAULT_LIVE_WINDOW_SECONDS, label: "1m" },
+  { seconds: 120, label: "2m" },
   { seconds: 300, label: "5m" },
   { seconds: 900, label: "15m" },
 ] as const
@@ -82,6 +82,23 @@ function LiveMonitoringView({ deviceId }: { deviceId: string }) {
   const cpuProcesses = stream.processes.filter((p) => p.rank_by === "cpu")
   const memProcesses = stream.processes.filter((p) => p.rank_by === "memory")
 
+  // Which panels exist depends on the platform, exactly as DeviceHistoryPage
+  // decides it (docs/ANDROID_METRICS.md). Android denies an app /proc/stat and
+  // /proc/diskstats and enumerates no other process, so a CPU chart, a disk-IO
+  // chart and the two process tables have nothing to fill them — ever, not
+  // just right now. A permanently empty chart reads as a broken agent, which
+  // is the one impression this whole platform-awareness exists to avoid.
+  //
+  // These panels wait for the device fetch rather than assuming desktop, so a
+  // card only ever *appears* — drawing a CPU chart for a frame and then taking
+  // it away is the same wrong impression, just briefer. The panels every
+  // platform can fill are not gated at all, so the page is never blank while
+  // that fetch is in flight. A failed fetch is a settled answer too: fall back
+  // to desktop rather than withholding the charts forever.
+  const isAndroid = device?.platform === "android"
+  const platformKnown = device !== null || deviceError !== null
+  const desktopOnly = platformKnown && !isAndroid
+
   return (
     <AppLayout active="devices">
       <div className="flex items-center gap-4">
@@ -98,7 +115,7 @@ function LiveMonitoringView({ deviceId }: { deviceId: string }) {
 
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">{device?.name ?? "Device"}</h1>
+          <h1 data-testid="page-title" className="text-xl font-semibold tracking-tight">{device?.name ?? "Device"}</h1>
           <p className="text-sm text-muted-foreground">
             {device?.hostname ?? "—"}
             {device?.os ? ` · ${device.os}` : ""}
@@ -143,20 +160,22 @@ function LiveMonitoringView({ deviceId }: { deviceId: string }) {
       )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <ChartCard title="CPU">
-          <LiveChart
-            title="CPU"
-            buffer={systemRef}
-            height={180}
-            windowSeconds={windowSeconds}
-            series={[
-              { key: "cpu_percent", label: "total", color: colorForIndex(0) },
-              { key: "cpu_user_percent", label: "user", color: colorForIndex(1) },
-              { key: "cpu_system_percent", label: "system", color: colorForIndex(2) },
-            ]}
-            valueFormatter={(v) => `${v.toFixed(0)}%`}
-          />
-        </ChartCard>
+        {desktopOnly && (
+          <ChartCard title="CPU">
+            <LiveChart
+              title="CPU"
+              buffer={systemRef}
+              height={180}
+              windowSeconds={windowSeconds}
+              series={[
+                { key: "cpu_percent", label: "total", color: colorForIndex(0) },
+                { key: "cpu_user_percent", label: "user", color: colorForIndex(1) },
+                { key: "cpu_system_percent", label: "system", color: colorForIndex(2) },
+              ]}
+              valueFormatter={(v) => `${v.toFixed(0)}%`}
+            />
+          </ChartCard>
+        )}
 
         <ChartCard title="Memory">
           <LiveChart
@@ -185,18 +204,20 @@ function LiveMonitoringView({ deviceId }: { deviceId: string }) {
           />
         </ChartCard>
 
-        <ChartCard title="Disk I/O">
-          <LiveChart
-            title="Disk I/O"
-            buffer={diskIoRef}
-            height={180}
-            windowSeconds={windowSeconds}
-            deriveSeries={(keys) =>
-              keys.map((k, i) => ({ key: k, label: k, color: colorForIndex(i) }))
-            }
-            valueFormatter={(v) => formatBytesPerSecond(v)}
-          />
-        </ChartCard>
+        {desktopOnly && (
+          <ChartCard title="Disk I/O">
+            <LiveChart
+              title="Disk I/O"
+              buffer={diskIoRef}
+              height={180}
+              windowSeconds={windowSeconds}
+              deriveSeries={(keys) =>
+                keys.map((k, i) => ({ key: k, label: k, color: colorForIndex(i) }))
+              }
+              valueFormatter={(v) => formatBytesPerSecond(v)}
+            />
+          </ChartCard>
+        )}
 
         <ChartCard title="Latency">
           <LiveChart
@@ -240,10 +261,20 @@ function LiveMonitoringView({ deviceId }: { deviceId: string }) {
         </ChartCard>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <ProcessTable title="Top by CPU" processes={cpuProcesses} metric="cpu" />
-        <ProcessTable title="Top by memory" processes={memProcesses} metric="memory" />
-      </div>
+      {desktopOnly && (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <ProcessTable title="Top by CPU" processes={cpuProcesses} metric="cpu" />
+          <ProcessTable title="Top by memory" processes={memProcesses} metric="memory" />
+        </div>
+      )}
+
+      {isAndroid && (
+        <p className="text-xs text-muted-foreground">
+          No CPU, disk-I/O or process panels: Android denies an app /proc/stat, /proc/diskstats
+          and any process list but its own, so this device measures none of them. They are
+          excluded from its health score rather than counted as healthy.
+        </p>
+      )}
     </AppLayout>
   )
 }

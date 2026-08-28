@@ -1,0 +1,15 @@
+# Pinned resolution of pyproject.toml's [project.optional-dependencies].dev,
+# minus everything already pinned in requirements.txt. Install both:
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+#
+# Regenerate with `make deps-lock`; see requirements.txt for why not pip freeze.
+
+-r requirements.txt
+
+iniconfig==2.3.0
+pluggy==1.6.0
+Pygments==2.21.0
+pytest==9.1.1
+pytest-asyncio==1.4.0
+ruff==0.16.4

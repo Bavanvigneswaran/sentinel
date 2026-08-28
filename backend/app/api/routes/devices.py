@@ -29,8 +29,10 @@ from app.schemas.devices import (
     EnrollRequest,
     EnrollResponse,
 )
+from app.schemas.novelty import DeviceNoveltyOut
 from app.services import enrollment_service as svc
 from app.services.enrollment_service import InvalidEnrollmentCode
+from app.services.novelty_service import NoveltyUnavailable, score_device
 
 router = APIRouter(tags=["devices"])
 
@@ -51,6 +53,10 @@ async def _unique_device_name(session, user_id: uuid.UUID, name: str) -> str:  #
             await session.scalars(
                 sa.select(Device.name).where(
                     Device.user_id == user_id,
+                    # Only live devices hold a name (migration 0013), so a
+                    # machine re-enrolling after it was removed gets its own
+                    # name back rather than a "-2" suffix nobody asked for.
+                    Device.deleted_at.is_(None),
                     Device.name.like(f"{pattern}%", escape="\\"),
                 )
             )
@@ -75,11 +81,25 @@ _code_limit = RateLimit("enrollment_code", limit=20, window=3600, key="ip")
 
 
 @router.get("/devices", response_model=list[DeviceOut])
-async def list_devices(user: CurrentUser, session: TenantSession) -> list[Device]:
-    rows = await session.scalars(
-        sa.select(Device).where(Device.deleted_at.is_(None)).order_by(Device.created_at)
-    )
-    return list(rows)
+async def list_devices(
+    user: CurrentUser,
+    session: TenantSession,
+    include_removed: bool = False,
+) -> list[Device]:
+    """Every device the user has, removed ones excluded by default.
+
+    `include_removed` exists for the surfaces that render *history*: an
+    AlertEvent, an anomaly or an incident may name a device that has since
+    been removed, and those rows are kept deliberately — unlike a forecast,
+    which is a claim about a future the machine no longer has, a firing that
+    really happened is worth keeping. What was not worth keeping was showing
+    it as a bare UUID, which is what a page got when it resolved names
+    against a list that had already filtered the device out.
+    """
+    query = sa.select(Device).order_by(Device.created_at)
+    if not include_removed:
+        query = query.where(Device.deleted_at.is_(None))
+    return list(await session.scalars(query))
 
 
 @router.post("/devices", response_model=DeviceOut, status_code=status.HTTP_201_CREATED)
@@ -122,6 +142,33 @@ async def delete_device(
         .values(revoked_at=sa.func.now(), revoked_reason="admin")
     )
     await session.commit()
+
+
+@router.get("/devices/{device_id}/novelty", response_model=DeviceNoveltyOut)
+async def get_device_novelty(
+    device_id: uuid.UUID, user: CurrentUser, session: TenantSession
+) -> DeviceNoveltyOut:
+    """The layer-4 multivariate novelty score for this device's newest reading.
+
+    200 with `available: false` rather than a 404 when there is no score: the
+    device exists, and "no model trained yet" is a state to explain, not an
+    error. The reason string says which of the several no-score situations
+    this is — see app/services/novelty_service.py.
+    """
+    device = await session.get(Device, device_id)
+    if device is None or device.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+
+    outcome = await score_device(session, device_id)
+    if isinstance(outcome, NoveltyUnavailable):
+        return DeviceNoveltyOut(available=False, reason=outcome.reason)
+    return DeviceNoveltyOut(
+        available=True,
+        score=outcome.score,
+        trained_on_samples=outcome.trained_on_samples,
+        feature_names=list(outcome.feature_names),
+        reading_ts=outcome.reading_ts,
+    )
 
 
 @router.get("/devices/{device_id}/tokens", response_model=list[AgentTokenOut])

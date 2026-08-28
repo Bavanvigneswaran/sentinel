@@ -1,0 +1,119 @@
+# Pinned resolution of the runtime dependency closure declared in pyproject.toml.
+#
+# pyproject.toml stays the source of truth for which packages this project
+# depends on and which *ranges* are acceptable. This file is the exact set of
+# versions those ranges resolved to, and exists for two consumers that cannot
+# read a range:
+#
+#   * Vulnerability scanners. Trivy, OWASP Dependency-Check and GitHub's
+#     Dependency Review all need a concrete version to match against a CVE.
+#     Given only `fastapi>=0.115` they report nothing at all — so before this
+#     file existed, a dependency scan of the largest attack surface in the
+#     product came back empty and looked like a clean result.
+#   * CI. A range means two runs a week apart can install different code, and a
+#     test that fails only on the later one is nobody's bug.
+#
+# DO NOT regenerate this with `pip freeze`. The development venv accumulates
+# packages that are no longer dependencies — `anthropic` is still installed
+# there from before Phase 17 removed the hosted-API calls, and freezing it back
+# in would put a client this product deliberately does not use into the
+# supply chain it declares. Use the closure walk instead:
+#
+#   make deps-lock
+#
+# which resolves the graph from pyproject.toml's declared roots outward and
+# writes both this file and requirements-dev.txt.
+#
+# Regenerate after any change to pyproject.toml's [project.dependencies].
+#
+# RESOLVED FOR: CPython 3.14
+#
+# A pinned set is specific to the interpreter it was resolved on, and that is
+# not a detail: numpy 2.5 requires Python >= 3.12, so installing this file on
+# the 3.11 that pyproject.toml still declares as the floor fails with "No
+# matching distribution found for numpy==..." — an error that names the package
+# and says nothing about the interpreter. pyproject's range stays the source of
+# truth for what the code supports; this file is one resolution of it, and CI
+# has to use a Python that matches.
+
+aiohappyeyeballs==2.7.1
+aiohttp==3.14.3
+aiosignal==1.4.0
+aiosmtplib==5.1.2
+alembic==1.19.1
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.14.2
+argon2-cffi==25.1.0
+argon2-cffi-bindings==26.1.0
+asyncpg==0.31.0
+attrs==26.1.0
+brotli==1.2.0
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.1
+click==8.4.2
+cryptography==50.0.0
+cssselect2==0.9.0
+dnspython==2.8.0
+email-validator==2.3.0
+fastapi==0.141.1
+fonttools==4.63.0
+frozenlist==1.8.0
+google-auth==2.56.3
+greenlet==3.5.5
+h11==0.16.0
+http_ece==1.2.1
+httpcore==1.0.9
+httptools==0.8.0
+httpx==0.28.1
+idna==3.19
+Jinja2==3.1.6
+joblib==1.5.3
+Mako==1.4.1
+MarkupSafe==3.0.3
+multidict==6.7.1
+narwhals==2.25.0
+numpy==2.5.2
+packaging==26.3
+pandas==3.0.5
+patsy==1.0.2
+pillow==12.3.0
+propcache==0.5.2
+py-vapid==1.9.4
+pyasn1==0.6.4
+pyasn1_modules==0.4.2
+pycparser==3.0
+pydantic==2.13.4
+pydantic-settings==2.15.0
+pydantic_core==2.46.4
+pydyf==0.12.1
+PyJWT==2.13.0
+pyphen==0.18.1
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.3
+python-multipart==0.0.32
+pywebpush==2.4.0
+PyYAML==6.0.3
+redis==8.1.0
+requests==2.34.2
+scikit-learn==1.9.0
+scipy==1.18.1
+six==1.17.0
+SQLAlchemy==2.0.52
+starlette==1.6.0
+statsmodels==0.14.6
+threadpoolctl==3.6.0
+tinycss2==1.5.1
+tinyhtml5==2.1.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+urllib3==2.7.0
+uvicorn==0.52.4
+uvloop==0.22.1
+watchfiles==1.2.0
+weasyprint==69.0
+webencodings==0.6.1
+websockets==17.0.1
+yarl==1.24.5
+zopfli==0.4.3

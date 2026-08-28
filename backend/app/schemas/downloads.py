@@ -25,6 +25,14 @@ class AgentBuildOut(BaseModel):
     download_url: str
 
 
+class DownloadTicketOut(BaseModel):
+    """A short-lived, single-filename credential a plain `<a download>` link
+    can carry in its query string, where an Authorization header can't go."""
+
+    ticket: str
+    expires_in: int
+
+
 class AgentDownloadsOut(BaseModel):
     """The catalogue, including the case where it is empty.
 

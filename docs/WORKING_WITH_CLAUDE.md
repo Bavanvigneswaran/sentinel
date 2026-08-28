@@ -46,9 +46,14 @@ Two failure modes will cost you more than model choice ever will:
 - **Building the AI features before the data pipeline is solid.** Phase 3 first. Real numbers on a real chart.
 - **Polishing UI before the feature works.** shadcn/ui already looks professional. Make it correct, then pretty.
 
-## Anthropic API key (Phase 8)
+## Incident insights need no API key
 
-AI Insights uses the Claude API and bills separately from Claude Code. Get a key at console.anthropic.com,
-put it in `backend/.env` as `ANTHROPIC_API_KEY`, never commit it. Use Haiku 4.5 for periodic summaries
-(they run often) and Sonnet 5 for incident root-cause (rare, worth the quality). Cache aggressively —
-don't re-summarise unchanged state.
+Phase 8 originally called the Claude API (Haiku 4.5 for summaries, Sonnet 5 for root-cause) and this
+section told you to put an `ANTHROPIC_API_KEY` in `backend/.env`. It no longer does, and there is no
+key to set: `app/insights/generator.py` renders both texts locally from the signal bundle, so the
+product depends on no hosted AI API and costs nothing per incident. A leftover `ANTHROPIC_API_KEY` in
+an existing `.env` is ignored, not read.
+
+The caching advice survived the change and is still worth following — see
+`analysis/incidents.py`'s `correlation_fingerprint()`. It no longer saves money; it keeps
+`summary_generated_at` meaning "when this explanation was reached" instead of "when a sweep last ran".

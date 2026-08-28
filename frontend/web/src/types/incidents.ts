@@ -1,6 +1,6 @@
 /**
  * Wire types for incidents: a device-level grouping of correlated alerts,
- * plus the cached AI summary/root-cause. Mirrors app/schemas/incidents.py.
+ * plus the cached summary/root-cause. Mirrors app/schemas/incidents.py.
  */
 
 import type { AlertEvent } from "@/types/alerts"

@@ -305,3 +305,77 @@ async def test_like_metacharacters_in_a_device_name_are_handled(client):
 
     names = sorted(d["name"] for d in (await client.get("/devices", headers=headers)).json())
     assert names == ["%", "%-2"], f"collision handling went wrong: {names}"
+
+
+async def test_a_removed_devices_name_can_be_used_again(client):
+    """The delete is soft so metric rows keep a valid FK — a storage
+    decision that had been leaking out as a rule about names. Removing a
+    machine and adding it back was refused with "You already have a device
+    with that name" against a list that no longer held one."""
+    headers = await _auth_headers(client)
+    device_id = (
+        await client.post("/devices", json={"name": "laptop"}, headers=headers)
+    ).json()["id"]
+    assert (await client.delete(f"/devices/{device_id}", headers=headers)).status_code == 204
+
+    again = await client.post("/devices", json={"name": "laptop"}, headers=headers)
+
+    assert again.status_code == 201
+    assert again.json()["id"] != device_id
+    # And the constraint still binds among the devices that do exist.
+    assert (
+        await client.post("/devices", json={"name": "laptop"}, headers=headers)
+    ).status_code == 409
+
+
+async def test_re_enrolling_after_removal_gets_the_original_name_back(client):
+    """The suffix in `_unique_device_name` exists for two live machines that
+    share a hostname. A machine replacing one that was removed is not that
+    case, and coming back as "laptop-2" would read as a second device."""
+    headers = await _auth_headers(client)
+    device_id = (
+        await client.post("/devices", json={"name": "laptop"}, headers=headers)
+    ).json()["id"]
+    await client.delete(f"/devices/{device_id}", headers=headers)
+
+    code = (
+        await client.post("/enrollment-codes", json={}, headers=headers)
+    ).json()["code"]
+    enrolled = await client.post(
+        "/enroll", json={"code": code, "device_name": "laptop"}
+    )
+
+    assert enrolled.status_code == 201
+    devices = (await client.get("/devices", headers=headers)).json()
+    assert [d["name"] for d in devices] == ["laptop"]
+
+
+async def test_removed_devices_are_excluded_by_default_and_available_on_request(client):
+    """The history surfaces (alerts, anomalies, incidents) keep rows pointing
+    at a removed device on purpose. They need to be able to *name* it — the
+    alternative, which is what they did, is rendering a bare UUID."""
+    headers = await _auth_headers(client)
+    device_id = (
+        await client.post("/devices", json={"name": "retired-mac"}, headers=headers)
+    ).json()["id"]
+    await client.delete(f"/devices/{device_id}", headers=headers)
+
+    assert (await client.get("/devices", headers=headers)).json() == []
+
+    listed = (await client.get("/devices?include_removed=true", headers=headers)).json()
+
+    assert [d["name"] for d in listed] == ["retired-mac"]
+    # The flag names them; it does not disguise them as live.
+    assert listed[0]["deleted_at"] is not None
+    assert listed[0]["status"] == "offline"
+
+
+async def test_include_removed_does_not_reach_across_tenants(client):
+    mine = await _auth_headers(client)
+    theirs = await _auth_headers(client, OTHER)
+    device_id = (
+        await client.post("/devices", json={"name": "theirs"}, headers=theirs)
+    ).json()["id"]
+    await client.delete(f"/devices/{device_id}", headers=theirs)
+
+    assert (await client.get("/devices?include_removed=true", headers=mine)).json() == []

@@ -51,6 +51,11 @@ export const UNSUPPORTED_STATUS: CollectorStatus = {
   mode: "normal",
   pushIntervalSeconds: 10,
   bufferedSamples: 0,
+  // Not CollectorConfig.BUFFER_SIZE's 400: there is no buffer here to have a
+  // capacity. Zero is what stops any "n of 400" phrasing describing a ring
+  // that does not exist.
+  bufferCapacity: 0,
+  droppedSamples: 0,
   lastPushAt: null,
   lastSampleAt: null,
   lastError: null,

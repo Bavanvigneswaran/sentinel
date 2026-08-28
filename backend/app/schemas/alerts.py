@@ -18,8 +18,22 @@ Metric = Literal[
     "packet_loss_percent",
     "cpu_iowait_percent",
 ]
+#: The reserved metric a multivariate rule judges — layer 4's novelty
+#: percentile, not a column anything measures. Kept out of `Metric` so the
+#: other three rule types cannot be pointed at it; see models/alerts.py.
+NOVELTY_METRIC = "novelty_score"
+RuleMetric = Literal[
+    "cpu_percent",
+    "mem_percent",
+    "swap_percent",
+    "disk_percent",
+    "packet_loss_percent",
+    "cpu_iowait_percent",
+    "novelty_score",
+]
 Comparison = Literal[">", ">=", "<", "<=", "=="]
-RuleType = Literal["threshold", "anomaly", "forecast"]
+RuleType = Literal["threshold", "anomaly", "forecast", "multivariate"]
+RuleSource = Literal["user", "builtin"]
 AlertState = Literal["ok", "pending", "firing"]
 EventStatus = Literal["firing", "resolved"]
 
@@ -29,7 +43,7 @@ class AlertRuleCreate(BaseModel):
     device_id: uuid.UUID | None = None
     name: str = Field(min_length=1, max_length=100)
     rule_type: RuleType = "threshold"
-    metric: Metric
+    metric: RuleMetric
     #: Required for a threshold or forecast rule, must be omitted for an
     #: anomaly rule — enforced below, mirroring the DB's rule_type_fields
     #: CHECK constraint at the API boundary so a bad combination fails with
@@ -41,11 +55,22 @@ class AlertRuleCreate(BaseModel):
 
     @model_validator(mode="after")
     def _fields_match_rule_type(self) -> AlertRuleCreate:
-        if self.rule_type in ("threshold", "forecast"):
+        if self.rule_type in ("threshold", "forecast", "multivariate"):
             if self.comparison is None or self.threshold is None:
                 raise ValueError(f"{self.rule_type} rules require comparison and threshold")
         elif self.comparison is not None or self.threshold is not None:
             raise ValueError("anomaly rules must not set comparison or threshold")
+        # The type and the reserved metric imply each other, in both
+        # directions, mirroring the DB's multivariate_metric CHECK. Catching
+        # it here makes the wrong combination a 422 naming the field rather
+        # than a raw integrity error — and the reverse direction matters
+        # most: a *threshold* rule on novelty_score would be accepted, read
+        # plausibly, and silently never fire.
+        if (self.rule_type == "multivariate") != (self.metric == NOVELTY_METRIC):
+            raise ValueError(
+                "novelty_score is judged only by multivariate rules, and a "
+                "multivariate rule judges only novelty_score"
+            )
         return self
 
 
@@ -61,7 +86,7 @@ class AlertRuleUpdate(BaseModel):
     device_id: uuid.UUID | None = None
     name: str | None = Field(default=None, min_length=1, max_length=100)
     rule_type: RuleType | None = None
-    metric: Metric | None = None
+    metric: RuleMetric | None = None
     comparison: Comparison | None = None
     threshold: float | None = None
     for_duration_seconds: int | None = Field(default=None, ge=0, le=86400)
@@ -69,7 +94,7 @@ class AlertRuleUpdate(BaseModel):
 
     @model_validator(mode="after")
     def _rule_type_change_carries_matching_fields(self) -> AlertRuleUpdate:
-        if self.rule_type in ("threshold", "forecast") and (
+        if self.rule_type in ("threshold", "forecast", "multivariate") and (
             self.comparison is None or self.threshold is None
         ):
             raise ValueError(
@@ -92,11 +117,15 @@ class AlertRuleOut(BaseModel):
     device_id: uuid.UUID | None
     name: str
     rule_type: RuleType
-    metric: Metric
+    metric: RuleMetric
     comparison: Comparison | None
     threshold: float | None
     for_duration_seconds: int
     enabled: bool
+    #: "builtin" for a rule the product seeded so the account detects things
+    #: out of the box, "user" for one somebody wrote. The clients group by
+    #: this and explain the builtin ones; nothing in the evaluator reads it.
+    source: RuleSource
     created_at: datetime
     updated_at: datetime
 
@@ -118,7 +147,7 @@ class AlertEventOut(BaseModel):
     #: no longer distinguishes every kind).
     rule_name: str
     rule_type: RuleType
-    metric: Metric
+    metric: RuleMetric
     comparison: Comparison | None
     threshold: float | None
     status: EventStatus
@@ -178,6 +207,9 @@ class AnomalyBaselineOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     device_id: uuid.UUID
+    #: Narrow `Metric`, not `RuleMetric`: a baseline is always for a measured
+    #: metric, and anomaly_baselines' own CHECK forbids novelty_score — that
+    #: is a model output, and there is no baseline of a baseline.
     metric: Metric
     mean: float
     #: Unscaled EWMA absolute deviation — see analysis/anomaly.py.

@@ -34,6 +34,7 @@ export const linking: LinkingOptions<RootStackParamList> = {
       },
       Device: "devices/:deviceId",
       Live: "devices/:deviceId/live",
+      History: "devices/:deviceId/history",
       // Settings moved off the tab bar behind More, so its mapping moved with
       // it. Left under Tabs it would resolve to nothing and a push tapped from
       // the notification shade would land on whatever was already open.
@@ -41,6 +42,8 @@ export const linking: LinkingOptions<RootStackParamList> = {
       Anomalies: "anomalies",
       Forecasts: "forecasts",
       Incidents: "incidents",
+      IncidentDetail: "incidents/:incidentId",
+      AlertRules: "alerts/rules",
       Reports: "reports",
     },
   },

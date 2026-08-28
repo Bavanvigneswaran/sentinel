@@ -7,7 +7,7 @@
 import { useState } from "react"
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from "react-native"
 
-import { Button, ErrorNote, Field } from "@/components/ui"
+import { Button, ErrorNote, Field, PasswordField } from "@/components/ui"
 import { API_BASE_URL } from "@/config"
 import { useAuth } from "@/stores/auth"
 import { colors, spacing, text } from "@/theme"
@@ -72,6 +72,7 @@ export function AuthScreen() {
 
         <View style={{ gap: spacing.md }}>
           <Field
+            testID="auth-email"
             label="Email"
             value={email}
             onChangeText={setEmail}
@@ -84,6 +85,7 @@ export function AuthScreen() {
           />
           {mode === "signup" && (
             <Field
+              testID="auth-display-name"
               label="Display name (optional)"
               value={displayName}
               onChangeText={setDisplayName}
@@ -91,11 +93,11 @@ export function AuthScreen() {
               placeholder="Bavan"
             />
           )}
-          <Field
+          <PasswordField
+            testID="auth-password"
             label="Password"
             value={password}
             onChangeText={setPassword}
-            secureTextEntry
             autoCapitalize="none"
             autoComplete={mode === "login" ? "current-password" : "new-password"}
             textContentType={mode === "login" ? "password" : "newPassword"}
@@ -110,6 +112,7 @@ export function AuthScreen() {
         {error && <ErrorNote message={error} />}
 
         <Button
+          testID="auth-submit"
           title={mode === "login" ? "Sign in" : "Create account"}
           onPress={() => void submit()}
           busy={busy}
@@ -117,6 +120,7 @@ export function AuthScreen() {
         />
 
         <Button
+          testID="auth-toggle-mode"
           variant="ghost"
           title={
             mode === "login" ? "No account yet? Sign up" : "Already have an account? Sign in"

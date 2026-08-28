@@ -37,7 +37,10 @@ export function DeviceSummaryCard({
   const worstDisk = disks[0] ?? null
 
   return (
-    <Card onPress={onPress}>
+    // Keyed by device id, not list position, for the reason the web card
+    // records: a suite addressing "the third card" starts asserting about a
+    // different machine as soon as one goes offline and the fleet reorders.
+    <Card onPress={onPress} testID={`device-card-${device.id}`}>
       <View style={styles.headRow}>
         <View style={styles.headText}>
           <Text style={text.heading} numberOfLines={1}>

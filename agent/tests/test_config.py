@@ -5,7 +5,12 @@ import stat
 
 import pytest
 
-from sentinel_agent.config import AgentConfig, ConfigError
+from sentinel_agent.config import (
+    PROTOCOL_RESOLUTIONS,
+    AgentConfig,
+    ConfigError,
+    toml_string,
+)
 from sentinel_agent.transport.client import (
     INITIAL_BACKOFF_SECONDS,
     MAX_BACKOFF_SECONDS,
@@ -210,3 +215,77 @@ def test_the_refusal_can_be_overridden_deliberately(tmp_path, monkeypatch):
 
     enroll_mod.enroll(config, "X4T9-K2QM-7PDR", allow_insecure=True)
     assert config.agent_token == "sag_x"  # noqa: S105
+
+
+# --- values the server will actually accept ----------------------------------
+
+
+@pytest.mark.parametrize("interval", [5, 30, 0, 60])
+def test_an_interval_the_protocol_does_not_accept_is_refused_before_connecting(
+    tmp_path, interval
+):
+    """`Sample.resolution_seconds` is `Literal[1, 10]` on the wire, and both
+    intervals are stamped onto samples as exactly that field. Anything else
+    connects, handshakes, pushes once, and is killed by a non-retryable
+    `invalid_frame` whose message names no field at all."""
+    config = AgentConfig(path=tmp_path / "agent.toml")
+    config.push_interval_seconds = interval
+
+    with pytest.raises(ConfigError) as exc:
+        config.validate_intervals()
+
+    assert "push_interval_seconds" in str(exc.value)
+    assert str(interval) in str(exc.value)
+
+
+def test_the_shipped_defaults_are_resolutions_the_server_accepts(tmp_path):
+    config = AgentConfig(path=tmp_path / "agent.toml")
+
+    config.validate_intervals()
+
+    assert config.sample_interval_seconds in PROTOCOL_RESOLUTIONS
+    assert config.push_interval_seconds in PROTOCOL_RESOLUTIONS
+
+
+def test_pushing_faster_than_sampling_is_refused(tmp_path):
+    config = AgentConfig(path=tmp_path / "agent.toml")
+    config.sample_interval_seconds = 10
+    config.push_interval_seconds = 1
+
+    with pytest.raises(ConfigError, match="shorter than"):
+        config.validate_intervals()
+
+
+# --- writing a file that can be read back ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        'http://host"evil',
+        "http://host\\share",
+        "http://host\ttab",
+        "http://host\x00null",
+    ],
+)
+def test_a_config_holding_a_toml_metacharacter_still_loads(tmp_path, value):
+    """Every string save() writes is user-supplied (`--server`, the latency
+    targets). Interpolating one straight into `key = "..."` produced a file
+    that `enroll` wrote happily and `run` could never read — the same
+    write-succeeds/read-fails shape as the cp1252 encoding bug."""
+    path = tmp_path / "agent.toml"
+    config = AgentConfig(server_url=value, agent_token="sag_secret", path=path)  # noqa: S106
+    config.latency_targets = ['1.1.1.1:443', 'we"ird:80']
+    config.save()
+
+    reloaded = AgentConfig.load(path)
+
+    assert reloaded.server_url == value
+    assert reloaded.latency_targets == ['1.1.1.1:443', 'we"ird:80']
+    assert reloaded.agent_token == "sag_secret"  # noqa: S105
+
+
+def test_toml_string_escapes_rather_than_strips():
+    assert toml_string('a"b') == '"a\\"b"'
+    assert toml_string("a\\b") == '"a\\\\b"'
+    assert toml_string("plain") == '"plain"'

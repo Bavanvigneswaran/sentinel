@@ -32,6 +32,18 @@ async def test_rules_require_authentication(client):
     assert (await client.post("/alerts/rules", json=RULE)).status_code == 401
 
 
+def _user_rules(payload: list[dict]) -> list[str]:
+    """Names of the hand-written rules only.
+
+    Every account is seeded with a default rule set at signup
+    (app/alerts/defaults.py), so "the rules this account has" and "the rules
+    this test created" stopped being the same list. These tests are about the
+    CRUD surface, so they filter to what they actually created — the seeding
+    itself is covered by tests/test_default_rules.py.
+    """
+    return [r["name"] for r in payload if r["source"] == "user"]
+
+
 async def test_create_and_list_a_fleet_wide_rule(client):
     headers = await _auth_headers(client)
     created = await client.post("/alerts/rules", json=RULE, headers=headers)
@@ -41,8 +53,10 @@ async def test_create_and_list_a_fleet_wide_rule(client):
     assert body["enabled"] is True
     assert body["for_duration_seconds"] == 120
 
+    assert body["source"] == "user"
+
     listed = await client.get("/alerts/rules", headers=headers)
-    assert [r["name"] for r in listed.json()] == ["High CPU"]
+    assert _user_rules(listed.json()) == ["High CPU"]
 
 
 async def test_a_rule_against_someone_elses_device_is_a_404(client):
@@ -109,7 +123,7 @@ async def test_delete_a_rule(client):
     assert (
         await client.delete(f"/alerts/rules/{rule['id']}", headers=headers)
     ).status_code == 204
-    assert (await client.get("/alerts/rules", headers=headers)).json() == []
+    assert _user_rules((await client.get("/alerts/rules", headers=headers)).json()) == []
     assert (
         await client.delete(f"/alerts/rules/{rule['id']}", headers=headers)
     ).status_code == 404
@@ -198,9 +212,16 @@ async def test_a_user_cannot_see_another_users_rules(client):
         "/alerts/rules", json={**RULE, "name": "theirs"}, headers=theirs
     )
 
-    assert [r["name"] for r in (await client.get("/alerts/rules", headers=mine)).json()] == [
-        "High CPU"
-    ]
-    assert [
-        r["name"] for r in (await client.get("/alerts/rules", headers=theirs)).json()
-    ] == ["theirs"]
+    my_rules = (await client.get("/alerts/rules", headers=mine)).json()
+    their_rules = (await client.get("/alerts/rules", headers=theirs)).json()
+
+    assert _user_rules(my_rules) == ["High CPU"]
+    assert _user_rules(their_rules) == ["theirs"]
+
+    # The stronger statement, and the one that actually matters: neither
+    # account's list contains the other's rule *at all* — not among the
+    # hand-written ones and not hidden among the seeded ones. Each account's
+    # builtin rules are its own rows, so a leak would show up here.
+    assert "theirs" not in [r["name"] for r in my_rules]
+    assert "High CPU" not in [r["name"] for r in their_rules]
+    assert {r["id"] for r in my_rules}.isdisjoint({r["id"] for r in their_rules})

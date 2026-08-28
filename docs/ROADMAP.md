@@ -38,15 +38,26 @@ Alerts triage page, Settings (thresholds, anomaly sensitivity, channels). Web Pu
 
 ### Phase 6 — Anomaly detection  ·  Opus (model design) → Sonnet (build)  ·  ~2 sessions
 Layer 2 (EWMA + MAD z-score) first, ship it, look at real output on your own machine, tune.
-Then layer 3 (STL residual) and layer 4 (HalfSpaceTrees). Anomalies page with severity + evidence charts.
+Then layer 3 (STL residual) and layer 4. Anomalies page with severity + evidence charts.
+
+Layer 2 shipped as planned. **Layer 3 (STL residual) is still not started.** Layer 4 was built
+later, as a per-device `IsolationForest` rather than the `HalfSpaceTrees` sketched here — batch
+retraining from stored history suited a system that already keeps every reading, where an online
+learner mainly suits one that does not. It has its own alert rule type (`"multivariate"`); see
+`app/analysis/multivariate.py` and CLAUDE.md's layer-4 sections.
 
 ### Phase 7 — Forecasting  ·  Opus (design) → Sonnet (build)  ·  ~1–2 sessions
 Holt-Winters 24 h forecasts with prediction intervals; disk/memory time-to-exhaustion.
 Forecast overlay on real telemetry; "predicted breach" alerts feed the alert engine.
 
 ### Phase 8 — AI Insights + Incidents  ·  Sonnet 5  ·  ~2 sessions
-Signal-bundle builder, Claude API integration (Haiku 4.5 summaries, Sonnet 5 root-cause), response caching,
-strict prompt boundary (metrics are data, never instructions). Incidents workspace with correlated alerts + timeline.
+Signal-bundle builder, insight generation, response caching, strict data/instruction boundary.
+Incidents workspace with correlated alerts + timeline.
+
+Built against the Claude API (Haiku 4.5 summaries, Sonnet 5 root-cause) and later replaced by
+`app/insights/generator.py`, a local template pass over the same bundle, so the product calls no
+hosted AI API. The bundle builder, the caching fingerprint and the incidents workspace are unchanged;
+the prompt boundary is retired rather than weakened, since nothing interprets the data any more.
 
 ### Phase 9 — Analytics + Reports  ·  Sonnet 5  ·  ~1–2 sessions
 Historical trend analytics, availability/reliability stats. Report generator → PDF (WeasyPrint) + CSV export,

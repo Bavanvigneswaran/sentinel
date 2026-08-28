@@ -6,6 +6,7 @@ import { HistoryChart } from "@/components/charts/HistoryChart"
 import type { ForecastOverlay } from "@/components/charts/HistoryChart"
 import { DeviceStatusBadge } from "@/components/DeviceStatusBadge"
 import { ExhaustionSummary } from "@/components/ExhaustionSummary"
+import { NoveltyScore } from "@/components/NoveltyScore"
 import { HealthBreakdown, HealthScore } from "@/components/HealthScore"
 import { TimeRangePicker } from "@/components/TimeRangePicker"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -16,6 +17,7 @@ import { formatBytesPerSecond, formatMs } from "@/lib/formatters"
 import { mergePivots, pivotByEntity, pivotColumns } from "@/lib/seriesPivot"
 import { describeSource, rangeByKey, type TimeRange } from "@/lib/timeRanges"
 import type { DeviceSummary } from "@/types/fleet"
+import type { DeviceNovelty } from "@/types/novelty"
 import type { ExhaustionForecast, MetricForecast } from "@/types/forecast"
 import type { Series } from "@/types/series"
 
@@ -57,6 +59,7 @@ function DeviceHistoryView({ deviceId }: { deviceId: string }) {
 
   const [forecasts, setForecasts] = useState<MetricForecast[]>([])
   const [exhaustion, setExhaustion] = useState<ExhaustionForecast[]>([])
+  const [novelty, setNovelty] = useState<DeviceNovelty | null>(null)
 
   const setRange = (next: TimeRange) => {
     setSearchParams({ range: next.key }, { replace: true })
@@ -100,11 +103,13 @@ function DeviceHistoryView({ deviceId }: { deviceId: string }) {
     Promise.all([
       apiFetch<MetricForecast[]>(`/forecasts?device_id=${deviceId}`),
       apiFetch<ExhaustionForecast[]>(`/forecasts/exhaustion?device_id=${deviceId}`),
+      apiFetch<DeviceNovelty>(`/devices/${deviceId}/novelty`),
     ])
-      .then(([f, e]) => {
+      .then(([f, e, n]) => {
         if (!cancelled) {
           setForecasts(f)
           setExhaustion(e)
+          setNovelty(n)
         }
       })
       .catch(() => {
@@ -140,7 +145,7 @@ function DeviceHistoryView({ deviceId }: { deviceId: string }) {
 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">
+          <h1 data-testid="page-title" className="text-xl font-semibold tracking-tight">
             {summary?.device.name ?? "Device"}
           </h1>
           <p className="text-sm text-muted-foreground">
@@ -173,6 +178,11 @@ function DeviceHistoryView({ deviceId }: { deviceId: string }) {
             {exhaustion.length > 0 && (
               <div className="shrink-0 sm:border-l sm:pl-8">
                 <ExhaustionSummary estimates={exhaustion} />
+              </div>
+            )}
+            {novelty && (
+              <div className="shrink-0 sm:border-l sm:pl-8">
+                <NoveltyScore novelty={novelty} />
               </div>
             )}
           </CardContent>

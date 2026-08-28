@@ -19,6 +19,7 @@ import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.alerts.defaults import ensure_default_rules
 from app.config import get_settings
 from app.models import RefreshToken, User
 from app.security.opaque import new_refresh_token, sha256_bytes
@@ -63,6 +64,13 @@ async def signup(
     )
     session.add(user)
     try:
+        # Flushed, not committed, so the default rules below land in the same
+        # transaction as the account itself: an account that exists but has no
+        # detection configured is exactly the state this seeding exists to
+        # prevent, and a commit in between would create it for real if the
+        # second half failed.
+        await session.flush()
+        await ensure_default_rules(session, user.id)
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()

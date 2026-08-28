@@ -4,6 +4,12 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
+    # Pinned above FastAPI's own floor (>=0.46) because app/main.py relies on
+    # two GZipMiddleware behaviours that arrived later: it declines to compress a
+    # 206, which is what keeps a resumed agent/APK download working, and it takes
+    # `exclude_content_types`. On an older Starlette both are silently absent —
+    # resumable downloads would break rather than fail loudly.
+    "starlette>=1.6",
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
@@ -22,7 +28,7 @@ dependencies = [
     "numpy>=2.0",
     "scipy>=1.13",
     "statsmodels>=0.14",
-    "anthropic>=0.40",
+    "scikit-learn>=1.5",
     "weasyprint>=62",
     "jinja2>=3.1",
 ]
@@ -50,6 +56,19 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
+# joblib 1.5.3 (the latest) sets `array.shape` directly when unpickling, which
+# NumPy 2.5 deprecated. Every novelty model is a forest of hundreds of arrays,
+# so one joblib.load() emits hundreds of these and the layer-4 tests alone
+# produced 4,808 of the suite's 4,811 warnings — burying the three real ones.
+#
+# Ignored narrowly (this module, this message) rather than globally, because it
+# is a genuine forward-compatibility problem we cannot fix here: when NumPy
+# *removes* the behaviour, loading a model breaks. If this filter ever stops
+# matching, that is the signal to check whether joblib has fixed it upstream or
+# whether app/services/novelty_service.py needs a different serialisation.
+filterwarnings = [
+    "ignore:Setting the shape on a NumPy array has been deprecated:DeprecationWarning:joblib.numpy_pickle",
+]
 
 [tool.ruff.lint]
 # ASYNC catches blocking calls inside async functions (a hard rule in CLAUDE.md);

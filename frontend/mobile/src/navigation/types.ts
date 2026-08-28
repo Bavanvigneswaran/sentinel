@@ -30,10 +30,24 @@ export type RootStackParamList = {
    * `| undefined` rather than a required object: React Navigation treats a
    * param type with no undefined in it as mandatory, and `navigate("Reports")`
    * from the More menu would stop typechecking. */
+  /** One device's history over a chosen window — always device-scoped, so
+   * unlike the four below it takes a required param. There is no fleet-wide
+   * history: a chart of every machine's CPU at once is not a thing anybody
+   * reads. */
+  History: { deviceId: string; deviceName?: string }
+  /** One incident's timeline and its insights. Reached from the incidents
+   * list, which only holds `Incident` — the timeline needs a second request
+   * per incident and is not worth making for every row. */
+  IncidentDetail: { incidentId: string }
   Anomalies: { deviceId?: string; deviceName?: string } | undefined
   Forecasts: { deviceId?: string; deviceName?: string } | undefined
   Incidents: { deviceId?: string; deviceName?: string } | undefined
   Reports: { deviceId?: string; deviceName?: string } | undefined
+  /** Same optional-scope shape as the four above, but filtered client-side:
+   * `/alerts/rules` has no device_id parameter, because a rule with a null
+   * device_id genuinely applies to every device and a server-side filter
+   * would have to decide whether those belong in one device's list. */
+  AlertRules: { deviceId?: string; deviceName?: string } | undefined
   Settings: undefined
 }
 

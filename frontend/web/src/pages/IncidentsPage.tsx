@@ -6,6 +6,11 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import { apiFetch } from "@/lib/api"
+import {
+  DEVICE_LIST_WITH_REMOVED,
+  deviceLabel,
+  indexDevices,
+} from "@/lib/deviceNames"
 import type { Device } from "@/types/api"
 import type { Incident, IncidentStatus } from "@/types/incidents"
 
@@ -27,7 +32,7 @@ function formatRelativeTime(iso: string): string {
 
 /**
  * Fleet-wide incidents workspace: every device-level grouping of correlated
- * alerts, newest first, with whatever AI summary the insights worker (or a
+ * alerts, newest first, with whatever summary the insights worker (or a
  * manual regenerate on the detail page) has produced so far. The full
  * correlated-event timeline lives on IncidentDetailPage.
  */
@@ -38,10 +43,13 @@ export function IncidentsPage() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    apiFetch<Device[]>("/devices")
-      .then((devices) => setDevicesById(Object.fromEntries(devices.map((d) => [d.id, d]))))
+    // Removed devices included: this list is history, and a firing on a
+    // machine the user has since removed still has to be able to name it.
+    // See lib/deviceNames.ts.
+    apiFetch<Device[]>(DEVICE_LIST_WITH_REMOVED)
+      .then((devices) => setDevicesById(indexDevices(devices)))
       .catch(() => {
-        // Non-fatal: the list still works with a raw device_id shown.
+        // Non-fatal: the list still works with a short device id shown.
       })
   }, [])
 
@@ -70,9 +78,9 @@ export function IncidentsPage() {
   return (
     <AppLayout active="incidents">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Incidents</h1>
+        <h1 data-testid="page-title" className="text-xl font-semibold tracking-tight">Incidents</h1>
         <p className="text-sm text-muted-foreground">
-          Correlated alerts grouped by device, with an AI-generated summary and root-cause
+          Correlated alerts grouped by device, with a generated summary and root-cause
           analysis for each.
         </p>
       </div>
@@ -117,7 +125,7 @@ export function IncidentsPage() {
                 <CardContent className="flex flex-col gap-2 pt-6">
                   <div className="flex items-center justify-between gap-4">
                     <span className="font-medium">
-                      {devicesById[incident.device_id]?.name ?? incident.device_id}
+                      {deviceLabel(devicesById, incident.device_id)}
                     </span>
                     <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
                       <span

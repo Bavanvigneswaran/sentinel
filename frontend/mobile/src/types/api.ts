@@ -55,4 +55,8 @@ export interface Device {
   last_seen_at: string | null
   enrolled_at: string | null
   created_at: string
+  /** Set on a device the user removed. Only ever populated by
+   * `GET /devices?include_removed=true`, which the history surfaces use so a
+   * removed device can still be named rather than shown as a bare UUID. */
+  deleted_at?: string | null
 }

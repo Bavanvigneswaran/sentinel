@@ -17,7 +17,16 @@ class Device(TimestampMixin, Base):
     __table_args__ = (
         sa.CheckConstraint(in_check("platform", PLATFORMS), name="platform"),
         sa.CheckConstraint(in_check("status", DEVICE_STATUSES), name="status"),
-        sa.UniqueConstraint("user_id", "name", name="uq_devices_user_id_name"),
+        # Unique among *live* devices only: a soft delete is how metric rows
+        # keep a valid FK, and it has no business also meaning "this name is
+        # taken forever". See migration 0013.
+        sa.Index(
+            "uq_devices_user_id_name_live",
+            "user_id",
+            "name",
+            unique=True,
+            postgresql_where=sa.text("deleted_at IS NULL"),
+        ),
         # Redundant against the primary key, but it gives child tables a
         # composite FK target so a row can never reference a device owned by a
         # different user. See agent_tokens and enrollment_codes.

@@ -64,7 +64,27 @@ METRICS = (
     "cpu_iowait_percent",
 )
 COMPARISONS = (">", ">=", "<", "<=", "==")
-RULE_TYPES = ("threshold", "anomaly", "forecast")
+
+#: The reserved "metric" a multivariate rule judges: layer 4's novelty
+#: percentile (app/analysis/multivariate.py), not a column anything measures.
+#:
+#: A multivariate rule genuinely has no single metric — it judges the joint
+#: vector — so the honest model would be a nullable `metric`. That was weighed
+#: and rejected: `metric` is read for display by both frontends, notify.py and
+#: the insights generator, and making it nullable would push a null check into
+#: all four for one rule type. A reserved name keeps every one of those
+#: working unchanged, and RULE_METRICS widens *only* the alert_rules CHECK —
+#: anomaly_baselines and the forecast tables keep their own, narrower METRICS
+#: constraint, so nothing can create a baseline or a forecast for it.
+NOVELTY_METRIC = "novelty_score"
+RULE_METRICS = (*METRICS, NOVELTY_METRIC)
+
+RULE_TYPES = ("threshold", "anomaly", "forecast", "multivariate")
+#: Where a rule came from. "builtin" rows are seeded by
+#: app/alerts/defaults.py so an account detects things without having been
+#: configured; they are ordinary rules in every other respect, including
+#: being editable and deletable.
+RULE_SOURCES = ("user", "builtin")
 ALERT_STATES = ("ok", "pending", "firing")
 EVENT_STATUSES = ("firing", "resolved")
 
@@ -81,14 +101,23 @@ def _device_fk(table: str) -> sa.ForeignKeyConstraint:
 class AlertRule(TimestampMixin, Base):
     __tablename__ = "alert_rules"
     __table_args__ = (
-        sa.CheckConstraint(in_check("metric", METRICS), name="metric"),
+        sa.CheckConstraint(in_check("metric", RULE_METRICS), name="metric"),
         sa.CheckConstraint(in_check("comparison", COMPARISONS), name="comparison"),
         sa.CheckConstraint(in_check("rule_type", RULE_TYPES), name="rule_type"),
+        sa.CheckConstraint(in_check("source", RULE_SOURCES), name="source"),
         sa.CheckConstraint(
-            "(rule_type IN ('threshold', 'forecast') AND threshold IS NOT NULL "
-            "AND comparison IS NOT NULL) "
+            "(rule_type IN ('threshold', 'forecast', 'multivariate') "
+            "AND threshold IS NOT NULL AND comparison IS NOT NULL) "
             "OR (rule_type = 'anomaly' AND threshold IS NULL AND comparison IS NULL)",
             name="rule_type_fields",
+        ),
+        # The reserved metric and the rule type that judges it imply each
+        # other. Without this a threshold rule could be pointed at
+        # novelty_score — which reads plausibly and would silently never fire,
+        # because nothing writes that column.
+        sa.CheckConstraint(
+            "(rule_type = 'multivariate') = (metric = 'novelty_score')",
+            name="multivariate_metric",
         ),
         sa.CheckConstraint("for_duration_seconds >= 0", name="for_duration_seconds_non_negative"),
         _device_fk("alert_rules"),
@@ -108,6 +137,12 @@ class AlertRule(TimestampMixin, Base):
     #: AnomalyBaseline row instead. See module docstring.
     rule_type: Mapped[str] = mapped_column(
         sa.Text, nullable=False, server_default=sa.text("'threshold'")
+    )
+    #: "user" for a hand-written rule, "builtin" for one from
+    #: app/alerts/defaults.py. Presentation only — the evaluator does not read
+    #: it, and a builtin rule is edited and deleted like any other.
+    source: Mapped[str] = mapped_column(
+        sa.Text, nullable=False, server_default=sa.text("'user'")
     )
     metric: Mapped[str] = mapped_column(sa.Text, nullable=False)
     comparison: Mapped[str | None] = mapped_column(sa.Text, nullable=True)

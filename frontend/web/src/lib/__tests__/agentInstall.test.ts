@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  agentServerOrigin,
   androidInstallSteps,
   buildsFor,
+  CODE_PLACEHOLDER,
+  enrollmentPlan,
   installSteps,
+  shellFor,
   isCliInstall,
   archLabelFor,
   isDesktopAgent,
@@ -184,5 +188,197 @@ describe("archLabelFor", () => {
   it("leaves the desktop wording alone, which the ambiguous-Mac card depends on", () => {
     expect(archLabelFor(build({ os: "macos", arch: "arm64" }))).toBe("Apple Silicon / ARM64")
     expect(archLabelFor(build({ os: "linux", arch: "x64" }))).toBe("Intel / AMD64")
+  })
+})
+
+// The realistic origin: `make serve` binds the console and the API to one
+// plaintext LAN address, which is what every enrolled machine has to be
+// pointed at and is exactly what the agent's requires_tls() refuses silently.
+const LAN = "http://10.233.129.19:8000"
+
+describe("enrollmentPlan", () => {
+  it("substitutes the real code, so nothing has to be typed by hand", () => {
+    const commands = enrollmentPlan(build(), "X4T9-K2QM-7PDR", LAN).map((s) => s.command)
+    expect(commands.join("\n")).toContain("enroll --code X4T9-K2QM-7PDR")
+    expect(commands.join("\n")).not.toContain(CODE_PLACEHOLDER)
+  })
+
+  it("shows an obviously fake placeholder before a code has been minted", () => {
+    // Not a plausible-looking code: somebody who pastes this should get an
+    // obvious error rather than a puzzling rejection.
+    expect(enrollmentPlan(build(), null, LAN).map((s) => s.command).join("\n")).toContain(
+      CODE_PLACEHOLDER,
+    )
+  })
+
+  it("starts in the folder the browser actually saved the file to", () => {
+    // The step that was missing: every command shown was correct and the
+    // first one still failed, because the shell opens in $HOME.
+    expect(enrollmentPlan(build(), null, LAN)[0].command).toBe("cd ~/Downloads")
+    expect(enrollmentPlan(build({ os: "windows" }), null, LAN)[0].command).toBe(
+      "cd $HOME\\Downloads",
+    )
+  })
+
+  it("clears the quarantine flag on an unsigned macOS build", () => {
+    // Gatekeeper enforces this before the process starts, so `enroll` fails
+    // with no output of its own. It was prose in a warning box; it is a step.
+    const commands = enrollmentPlan(build(), null, LAN).map((s) => s.command)
+    expect(commands).toContain("xattr -d com.apple.quarantine sentinel-agent-0.1.0-macos-arm64")
+    expect(commands.indexOf("xattr -d com.apple.quarantine sentinel-agent-0.1.0-macos-arm64")).
+      toBeLessThan(commands.findIndex((c) => c.includes("enroll")))
+  })
+
+  it("does not clear quarantine on a signed build, or on Linux", () => {
+    expect(
+      enrollmentPlan(build({ signed: true }), null, LAN).map((s) => s.command).join(" "),
+    ).not.toContain("xattr")
+    expect(
+      enrollmentPlan(build({ os: "linux", filename: "sentinel-agent-linux" }), null, LAN)
+        .map((s) => s.command)
+        .join(" "),
+    ).not.toContain("xattr")
+  })
+
+  it("never tells a Windows user to chmod", () => {
+    expect(
+      enrollmentPlan(build({ os: "windows", filename: "sentinel-agent.exe" }), null, LAN)
+        .map((s) => s.command)
+        .join(" "),
+    ).not.toContain("chmod")
+  })
+
+  it("explains every command it shows", () => {
+    // A command with no explanation is a thing to paste rather than a thing
+    // to understand, and this page's whole point is that the user is running
+    // an unsigned binary on a machine they care about.
+    for (const step of enrollmentPlan(build(), "X4T9-K2QM-7PDR", LAN)) {
+      expect(step.note.length).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe("enrollmentPlan's server address", () => {
+  it("points the agent at this console, not at its own localhost default", () => {
+    // Without --server the binary defaults to http://localhost:8000, which is
+    // wrong on every machine except the one running the backend — i.e. every
+    // machine this page exists to enrol.
+    for (const os of ["macos", "linux", "windows"] as const) {
+      const enrol = enrollmentPlan(build({ os }), "X4T9-K2QM-7PDR", LAN).find((s) =>
+        s.command.includes("enroll"),
+      )
+      expect(enrol?.command).toContain(`--server ${LAN}`)
+    }
+  })
+
+  it("puts --server before the subcommand and --insecure after it", () => {
+    // argparse rejects the whole line with "unrecognized arguments: --server"
+    // when a *global* option follows the subcommand — the same trap
+    // test_service_units.py exists for with --config. Verified against the
+    // agent's own build_parser(): only this ordering parses.
+    const command = enrollmentPlan(
+      build({ os: "windows", filename: "sentinel-agent.exe" }),
+      "X4T9-K2QM-7PDR",
+      LAN,
+    ).find((s) => s.command.includes("enroll"))!.command
+
+    expect(command).toBe(
+      `.\\sentinel-agent.exe --server ${LAN} enroll --code X4T9-K2QM-7PDR --insecure`,
+    )
+    expect(command.indexOf("--server")).toBeLessThan(command.indexOf("enroll"))
+    expect(command.indexOf("--insecure")).toBeGreaterThan(command.indexOf("enroll"))
+  })
+
+  it("does not repeat --server on the steps after enroll, which saved it", () => {
+    // enroll() calls config.save() with the overridden server_url, so
+    // install-service / status / run read it back from the config file.
+    const after = enrollmentPlan(build(), null, LAN)
+      .filter((s) => !s.command.includes("enroll"))
+      .map((s) => s.command)
+      .join(" ")
+    expect(after).not.toContain("--server")
+  })
+
+  it("adds --insecure for a plaintext remote server, because enroll refuses without it", () => {
+    // config.py's requires_tls(): the code and the long-lived token it becomes
+    // both travel in cleartext, so `enroll` refuses a remote http:// URL
+    // outright. Showing the command without the flag hands the user a line
+    // that cannot work against the only backend this project has.
+    const enrol = enrollmentPlan(build(), null, LAN).find((s) => s.command.includes("enroll"))
+    expect(enrol?.command).toContain("--insecure")
+    expect(enrol?.note).toContain("cleartext")
+  })
+
+  it("omits --insecure when it would be neither needed nor accurate", () => {
+    // Mirrors is_loopback()/requires_tls() exactly: https anywhere, or plain
+    // http to this same machine, is already allowed.
+    const https = enrollmentPlan(build(), null, "https://sentinel.example.com").find((s) =>
+      s.command.includes("enroll"),
+    )
+    expect(https?.command).not.toContain("--insecure")
+
+    for (const origin of ["http://localhost:8000", "http://127.0.0.1:8000"]) {
+      const local = enrollmentPlan(build(), null, origin).find((s) => s.command.includes("enroll"))
+      expect(local?.command).not.toContain("--insecure")
+    }
+  })
+
+  it("uses the browser's own origin once the console is served by the API", () => {
+    // `make serve` puts the console, the REST API and the viewer socket on one
+    // origin, which is the whole point of it — so the address in the command
+    // is the address in the address bar.
+    expect(agentServerOrigin("http://10.233.129.19:8000", false)).toBe("http://10.233.129.19:8000")
+  })
+
+  it("does not hand out the Vite dev server's port, which forwards only /api", () => {
+    // The agent posts to /enroll with no prefix (Phase 1), and the dev proxy
+    // forwards /api and /ws only — so :5173 in a command is a command that
+    // cannot work. 8000 is the proxy's own target, read from vite.config.ts.
+    expect(agentServerOrigin("http://localhost:5173", true)).toBe("http://localhost:8000")
+  })
+
+  it("ends with a plain run command for bringing the agent back up by hand", () => {
+    // Asked for directly: what to type after a dropped connection, or once a
+    // machine is switched back on. install-service covers both automatically,
+    // which is why the note says so rather than presenting this as routine.
+    const windows = enrollmentPlan(
+      build({ os: "windows", filename: "sentinel-agent-0.1.0-windows-x64.exe" }),
+      null,
+      LAN,
+    )
+    const last = windows[windows.length - 1]
+    expect(last.command).toBe(".\\sentinel-agent-0.1.0-windows-x64.exe run")
+    expect(last.note).toContain("install-service")
+
+    const unix = enrollmentPlan(build(), null, LAN)
+    expect(unix[unix.length - 1].command).toBe("./sentinel-agent-0.1.0-macos-arm64 run")
+  })
+})
+
+describe("shellFor", () => {
+  it("names the terminal each OS's user would recognise", () => {
+    expect(shellFor(build({ os: "windows" }))).toBe("PowerShell")
+    expect(shellFor(build({ os: "macos" }))).toBe("Terminal")
+    expect(shellFor(build({ os: "linux" }))).toBe("Terminal")
+  })
+})
+
+describe("verifyCommand's host machine", () => {
+  it("uses the browsing machine's tool, not the target platform's", () => {
+    // The APK is checked on the computer that downloaded it — there is no
+    // shell on the phone. Keyed on build.os it handed a Mac user
+    // `sha256sum app-release.apk`, which macOS does not ship. Seen on the
+    // real page.
+    const apk = build({ os: "android", filename: "app-release.apk" })
+    expect(verifyCommand(apk, "macos")).toBe("shasum -a 256 app-release.apk")
+    expect(verifyCommand(apk, "windows")).toContain("Get-FileHash")
+    expect(verifyCommand(apk, "linux")).toBe("sha256sum app-release.apk")
+  })
+
+  it("falls back to the build's own OS when the browser did not identify itself", () => {
+    // The right guess for a desktop agent: the common case is downloading on
+    // the machine you are about to enrol.
+    expect(verifyCommand(build({ os: "linux" }), null)).toContain("sha256sum")
+    expect(verifyCommand(build({ os: "macos" }), null)).toContain("shasum -a 256")
   })
 })

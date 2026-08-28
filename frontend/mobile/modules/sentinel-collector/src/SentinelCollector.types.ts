@@ -21,6 +21,17 @@ export interface CollectorStatus {
   pushIntervalSeconds: number
   /** Samples collected but not yet acked — a backlog means an outage. */
   bufferedSamples: number
+  /** The ring buffer's cap. Reported rather than hardcoded here, so "how close
+   *  to losing data" cannot drift between the notification and this app. */
+  bufferCapacity: number
+  /**
+   * Samples permanently discarded because the buffer was full, this run.
+   *
+   * A backlog is a delay; this is loss. At the cap the oldest sample is dropped
+   * for every new one, and a count that has simply stopped rising looks exactly
+   * like a healthy one — see `lib/bufferPressure.ts`.
+   */
+  droppedSamples: number
   /** ISO-8601, or null if nothing has been acked yet this run. */
   lastPushAt: string | null
   lastSampleAt: string | null
