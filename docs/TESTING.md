@@ -167,10 +167,25 @@ stays: a release APK signed with React Native's *public* debug key lets anyone
 forge an update Android accepts as the same app. The keystore lives in
 `~/.sentinel-keys/`, outside git, so CI cannot produce a release build at all.
 
-`make mobile-apk-debug` is the Appium build. It is a separate target with a
-separate output path, deliberately not a fallback inside `mobile-apk` — a
-fallback is how a debug-signed build ends up published by accident. It is for
-an emulator that is destroyed with the job, and it must never reach a user.
+`make mobile-apk-test` is the Appium build, and it is a **release** build.
+That is not a preference — it was found by installing a debug one.
+`assembleDebug` produces a dev-client shell: `expo-dev-client` makes
+`DevLauncherActivity` the launcher activity and embeds no JS bundle at all, so
+the APK boots into "waiting for Metro" and there is nothing for a driver to
+drive. The build succeeds, the artifact is 202 MB, and `unzip -l` shows no
+`index.android.bundle`. The release build is 82 MB and has one.
+
+Since a release build needs a key, the target generates its own throwaway
+keystore rather than weakening `mobile-apk`'s refusal. That is not the thing
+`plugins/withReleaseSigning.js` guards against: that guard is about React
+Native's *public* debug key, which is in every RN checkout on earth, so anyone
+can forge an update Android installs over the real app. A locally generated key
+signs exactly one artifact that is never published — and the output is moved
+out of `android/app/build/outputs/apk/release/` precisely so it cannot be
+mistaken for a distributable by `register_build.py`.
+
+It carries the same `applicationId` as the real app, so a device holding a
+differently-signed build must `adb uninstall com.sentinel.viewer` first.
 
 The emulator reaches the runner at `10.0.2.2`, never `localhost`, which is why
 `make e2e-serve` and the composite action both bind `0.0.0.0`. Point

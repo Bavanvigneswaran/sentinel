@@ -1,0 +1,19 @@
+{
+  "name": "sentinel-appium-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Appium E2E suite for the Sentinel Android app.",
+  "scripts": {
+    "test": "mocha tests/*.js --timeout 120000 --reporter spec",
+    "test:report": "TEST_SUITE_NAME='Sentinel Android app — Appium E2E' mocha tests/*.js --timeout 120000 --reporter json --reporter-option output=results.json || true",
+    "report": "node ../tools/test-report/mocha-xlsx.js results.json appium-test-report.xlsx",
+    "test:xlsx": "npm run test:report && npm run report"
+  },
+  "dependencies": {
+    "webdriverio": "^9.5.0"
+  },
+  "devDependencies": {
+    "exceljs": "^4.4.0",
+    "mocha": "^11.0.1"
+  }
+}

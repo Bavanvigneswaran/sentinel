@@ -2,11 +2,12 @@
 /**
  * Turn mocha's JSON output into the .xlsx the brief asks for.
  *
- *   node report.js results.json selenium-test-report.xlsx
+ *   node tools/test-report/mocha-xlsx.js results.json report.xlsx
  *
- * Deliberately generic: it reads mocha's reporter format and nothing about
- * Selenium, so the Appium suite points it at its own results.json rather than
- * growing a second copy of this that drifts.
+ * Shared by every mocha-based suite here — Selenium and Appium both — because
+ * it reads *mocha's* reporter format and knows nothing about either driver. A
+ * copy per suite would be two files that drift, and the one that drifts is
+ * always the one you are not looking at.
  *
  * Two things it does that a naive dump does not:
  *
@@ -23,7 +24,35 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const ExcelJS = require("exceljs");
+
+/**
+ * Resolve exceljs from whichever suite invoked us, not from here.
+ *
+ * Node resolves a module's dependencies from the file's *real* path, and this
+ * file is shared: `selenium-tests/node_modules` is never on its lookup chain
+ * no matter how the suite depends on it (an npm `file:` dependency is a
+ * symlink, and symlinks are resolved away before the lookup starts). So a
+ * plain `require("exceljs")` fails with "Cannot find module 'exceljs'" naming
+ * *this* file, which reads as the shared package being broken rather than as
+ * it looking in the wrong place.
+ *
+ * Each suite keeps exceljs in its own devDependencies and this finds it there.
+ */
+function loadExcelJS() {
+  const searchPaths = [process.cwd(), path.join(process.cwd(), "node_modules"), __dirname];
+  try {
+    return require(require.resolve("exceljs", { paths: searchPaths }));
+  } catch {
+    console.error(
+      "Cannot find exceljs.\n" +
+        "Run `npm install` in the suite directory you are reporting on " +
+        `(looked from ${process.cwd()}).`,
+    );
+    process.exit(2);
+  }
+}
+
+const ExcelJS = loadExcelJS();
 
 const [, , inputPath = "results.json", outputPath = "test-report.xlsx"] = process.argv;
 
@@ -114,7 +143,7 @@ async function main() {
 
   const durationSec = stats.duration ? (stats.duration / 1000).toFixed(1) : "—";
   for (const [k, v] of [
-    ["Suite", "Sentinel web console — Selenium E2E"],
+    ["Suite", process.env.TEST_SUITE_NAME || "Sentinel E2E"],
     ["Run at", stats.end || new Date().toISOString()],
     ["Base URL", process.env.SENTINEL_URL || "http://localhost:8000"],
     ["Total test cases", total],

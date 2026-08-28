@@ -4,7 +4,7 @@
         agent-build agent-build-check agent-build-clean \
         train-novelty train-novelty-report \
         mobile mobile-android mobile-prebuild mobile-test mobile-collector-test \
-        mobile-apk mobile-apk-debug \
+        mobile-apk mobile-apk-test \
         mobile-collector-logs \
         deps-lock e2e-db e2e-serve e2e-code
 
@@ -295,31 +295,74 @@ e2e-serve: web-build
 e2e-code:
 	cd backend && $(E2E_ENV) .venv/bin/python scripts/seed_e2e_account.py --enrollment-code
 
-# A DEBUG APK, for Appium and nothing else.
+# An APK for Appium, and nothing else.
 #
-# `make mobile-apk` refuses to build without a real keystore, and that refusal
-# must stay — a release APK signed with React Native's public debug key lets
-# anyone forge an update Android accepts as the same app. But the keystore lives
-# in ~/.sentinel-keys/ outside git, so CI cannot produce a release build at all,
-# and an Appium job with no APK to install is not a test job.
+# This has to be a RELEASE build, and finding that out took installing a debug
+# one. `assembleDebug` produces a dev-client shell: `expo-dev-client` makes
+# DevLauncherActivity the launcher activity and no JS bundle is embedded at
+# all, so the APK boots into "waiting for Metro" and there is no app for a
+# driver to drive. Verified by unzipping it — no index.android.bundle.
 #
-# The debug buildType is signed with that public key on purpose and by Android's
-# own design, which is fine for something installed on an emulator and destroyed
-# with it. What must never happen is this artifact reaching a user, so it is a
-# separate target with a different name and a different output path — never a
-# fallback inside `mobile-apk`, which is how a debug-signed build ends up
-# published by accident.
-mobile-apk-debug:
+# So it is `assembleRelease`, which embeds the bundle and skips the dev
+# launcher. That needs a signing key, and `make mobile-apk` correctly refuses
+# to build without a real one. Rather than weaken that refusal, this target
+# generates its own throwaway keystore.
+#
+# Why a generated keystore is not the thing withReleaseSigning.js exists to
+# prevent: that guard is about React Native's *public* debug key, which is in
+# every RN checkout on earth, so anyone can forge an update Android installs
+# over the real app. This key is generated locally and exists only here. Its
+# password is a literal below and that is fine — the password protects nothing
+# once the file is on your disk; what makes a signing key dangerous to share is
+# the key, and this one signs exactly one thing that is never published.
+#
+# The output is deliberately NOT left at android/app/build/outputs/apk/release/.
+# That is the path a distributable comes from, and an APK signed with a
+# regenerable key sitting there is one `register_build.py --file` away from
+# being published as an update nobody can ever install over.
+TEST_KEYSTORE = $(CURDIR)/frontend/mobile/.test-keystore/appium.jks
+TEST_KEYSTORE_PASS = appium-test-only-never-published
+TEST_APK = $(CURDIR)/frontend/mobile/build/app-appium.apk
+
+mobile-apk-test:
 	@if [ ! -d "$(ANDROID_SDK)" ]; then \
 		echo "No Android SDK at $(ANDROID_SDK). Set ANDROID_HOME."; \
 		exit 1; \
 	fi
-	cd frontend/mobile && npx expo prebuild --platform android --clean && \
-		cd android && ANDROID_HOME="$(ANDROID_SDK)" ./gradlew assembleDebug
+	@if [ ! -f "$(TEST_KEYSTORE)" ]; then \
+		echo "Generating a throwaway keystore for test builds..."; \
+		mkdir -p $(dir $(TEST_KEYSTORE)); \
+		keytool -genkeypair -v -keystore "$(TEST_KEYSTORE)" -alias appium \
+			-keyalg RSA -keysize 2048 -validity 3650 \
+			-storepass "$(TEST_KEYSTORE_PASS)" -keypass "$(TEST_KEYSTORE_PASS)" \
+			-dname "CN=Sentinel Appium Test, OU=Testing, O=Sentinel, C=GB" 2>&1 | tail -2; \
+	fi
+	cd frontend/mobile && \
+		SENTINEL_ANDROID_KEYSTORE="$(TEST_KEYSTORE)" \
+		SENTINEL_ANDROID_KEYSTORE_PASSWORD="$(TEST_KEYSTORE_PASS)" \
+		SENTINEL_ANDROID_KEY_ALIAS=appium \
+		SENTINEL_ANDROID_KEY_PASSWORD="$(TEST_KEYSTORE_PASS)" \
+		npx expo prebuild --platform android --clean && \
+		cd android && \
+		SENTINEL_ANDROID_KEYSTORE="$(TEST_KEYSTORE)" \
+		SENTINEL_ANDROID_KEYSTORE_PASSWORD="$(TEST_KEYSTORE_PASS)" \
+		SENTINEL_ANDROID_KEY_ALIAS=appium \
+		SENTINEL_ANDROID_KEY_PASSWORD="$(TEST_KEYSTORE_PASS)" \
+		ANDROID_HOME="$(ANDROID_SDK)" ./gradlew assembleRelease
+	@mkdir -p $(dir $(TEST_APK))
+	@mv frontend/mobile/android/app/build/outputs/apk/release/app-release.apk "$(TEST_APK)"
 	@echo ""
-	@echo "  Debug APK: frontend/mobile/android/app/build/outputs/apk/debug/app-debug.apk"
-	@echo "  For emulator testing only. Never publish this — it is signed with"
-	@echo "  React Native's public debug key. See docs/PACKAGING.md."
+	@echo "  Appium APK: $(TEST_APK)"
+	@echo ""
+	@echo "  Signed with a generated throwaway key, for an emulator that is"
+	@echo "  destroyed with the job. NEVER publish it: the key is regenerable,"
+	@echo "  so an update signed with a later one could not install over it."
+	@echo "  'make mobile-apk' is the distributable. See docs/PACKAGING.md."
+	@echo ""
+	@echo "  It carries the same applicationId as the real app, so a device"
+	@echo "  holding a differently-signed build must uninstall first:"
+	@echo "    adb uninstall com.sentinel.viewer"
+	@echo ""
 
 # --- collector (Phase 10b: the phone as a monitored device) -------------------
 # The Kotlin foreground-service collector lives in frontend/mobile/modules/sentinel-collector.

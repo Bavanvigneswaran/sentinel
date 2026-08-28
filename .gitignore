@@ -25,6 +25,13 @@ backend/var/
 # Test run output. The suites and the reports that render them are source; a
 # particular run's results are not — they describe one machine at one moment,
 # and a committed .xlsx is a stale claim about a pass rate.
+# The throwaway keystore make mobile-apk-test generates, and its output. Both
+# are per-machine build artifacts; the keystore in particular must never be
+# shared, not because it is secret but because sharing it would make it look
+# like a distribution key.
+frontend/mobile/.test-keystore/
+frontend/mobile/build/
+
 selenium-tests/results.json
 appium-tests/results.json
 load-tests/summary.json

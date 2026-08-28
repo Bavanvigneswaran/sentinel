@@ -1,0 +1,11 @@
+{
+  "name": "@sentinel/test-report",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Render a mocha JSON run as the .xlsx the test brief asks for.",
+  "main": "mocha-xlsx.js",
+  "bin": { "mocha-xlsx": "mocha-xlsx.js" },
+  "dependencies": {
+    "exceljs": "^4.4.0"
+  }
+}
