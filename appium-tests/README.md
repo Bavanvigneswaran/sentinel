@@ -14,7 +14,21 @@ appium                                  # leave running on :4723
 ```
 
 An emulator must be booted (`emulator -avd <name>` or Android Studio), and
-`adb devices` must list it.
+`adb devices` must list it. Verified against Appium 3.7.0 and
+uiautomator2 8.5.0.
+
+Then check the machine before blaming the app:
+
+```bash
+npm install
+npm run smoke
+```
+
+`smoke.js` signs in and walks to the More tab. It lives outside `tests/` so it
+never runs as part of the suite — it answers "is my machine set up", not "does
+the app behave", and it exercises the three things that break independently:
+the driver reaching the emulator, the APK's baked-in `EXPO_PUBLIC_API_URL`
+reaching the backend, and the `testID` hooks resolving as `resource-id`.
 
 ## The APK
 
@@ -71,8 +85,9 @@ rather than assumed:
 
 **`testID` → `resource-id`.** Note it is the bare string — `auth-email`, not
 `com.sentinel.viewer:id/auth-email` — so `~` accessibility-id syntax is wrong
-for these and `driver.$('android=new UiSelector().resourceId("auth-email")')`
-or `AppiumBy.id("auth-email")` is right.
+for these. In webdriverio that means
+`driver.$('android=new UiSelector().resourceId("auth-email")')`; in a Java or
+Python client, `AppiumBy.id("auth-email")`.
 
 | Hook | Where |
 | --- | --- |
