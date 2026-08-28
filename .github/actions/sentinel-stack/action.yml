@@ -86,13 +86,13 @@ runs:
         sudo apt-get install -y --no-install-recommends libgdk-pixbuf-2.0-0 \
           || sudo apt-get install -y --no-install-recommends libgdk-pixbuf2.0-0
 
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@v7
       with:
         python-version: ${{ inputs.python-version }}
         cache: pip
         cache-dependency-path: backend/requirements.txt
 
-    - uses: actions/setup-node@v4
+    - uses: actions/setup-node@v7
       with:
         node-version: ${{ inputs.node-version }}
         cache: npm
