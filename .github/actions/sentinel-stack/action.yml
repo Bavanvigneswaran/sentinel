@@ -32,8 +32,14 @@ description: >
 
 inputs:
   python-version:
-    description: Python to install. 3.11 is the project floor.
-    default: "3.11"
+    description: >
+      Python to install. Must match the interpreter backend/requirements.txt
+      was resolved on — its header says which, and `make deps-lock` stamps it.
+      pyproject.toml's floor is 3.11, but a *pinned* set is specific to one
+      interpreter: numpy 2.5 needs >= 3.12, so 3.11 here fails with "No
+      matching distribution found for numpy==2.5.2", an error that names the
+      package and says nothing about the Python version.
+    default: "3.14"
   node-version:
     description: Node to install, for building the console.
     default: "22"

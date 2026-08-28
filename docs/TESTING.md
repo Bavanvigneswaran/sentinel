@@ -225,6 +225,15 @@ genuine product behaviour and should be reported, not tuned away.
 Static analysis, dependency scanning and DAST all work against this repo, with
 two prerequisites:
 
+**The pinned set is tied to one interpreter.** `backend/requirements.txt`'s
+header records which — `make deps-lock` stamps it — and CI has to install on a
+matching Python. pyproject.toml's `requires-python` floor is 3.11 and stays the
+source of truth for what the *code* supports, but a resolution of it is not
+portable across versions: numpy 2.5 needs >= 3.12, so a 3.11 runner fails with
+"No matching distribution found for numpy==2.5.2", which names the package and
+says nothing about the interpreter. Found by running the workflow, not by
+reading it.
+
 **Dependency scanning needs `backend/requirements.txt`.** `pyproject.toml`
 declares ranges, and no scanner can match a CVE against `fastapi>=0.115` — it
 reports nothing, which looks exactly like a clean result. `make deps-lock`

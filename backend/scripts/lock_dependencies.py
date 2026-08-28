@@ -67,6 +67,16 @@ RUNTIME_HEADER = """\
 # writes both this file and requirements-dev.txt.
 #
 # Regenerate after any change to pyproject.toml's [project.dependencies].
+#
+# RESOLVED FOR: CPython {python_version}
+#
+# A pinned set is specific to the interpreter it was resolved on, and that is
+# not a detail: numpy 2.5 requires Python >= 3.12, so installing this file on
+# the 3.11 that pyproject.toml still declares as the floor fails with "No
+# matching distribution found for numpy==..." — an error that names the package
+# and says nothing about the interpreter. pyproject's range stays the source of
+# truth for what the code supports; this file is one resolution of it, and CI
+# has to use a Python that matches.
 """
 
 DEV_HEADER = """\
@@ -121,6 +131,7 @@ def _render(pins: dict[str, str]) -> str:
 
 
 def main() -> int:
+    python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
     project = tomllib.loads(PYPROJECT.read_text())["project"]
     extras = project.get("optional-dependencies", {})
 
@@ -139,10 +150,11 @@ def main() -> int:
 
     dev_only = {name: v for name, v in combined.items() if name not in runtime}
 
-    (BACKEND_DIR / "requirements.txt").write_text(RUNTIME_HEADER + "\n" + _render(runtime))
+    header = RUNTIME_HEADER.format(python_version=python_version)
+    (BACKEND_DIR / "requirements.txt").write_text(header + "\n" + _render(runtime))
     (BACKEND_DIR / "requirements-dev.txt").write_text(DEV_HEADER + "\n" + _render(dev_only))
 
-    print(f"requirements.txt: {len(runtime)} pinned")
+    print(f"requirements.txt: {len(runtime)} pinned (CPython {python_version})")
     print(f"requirements-dev.txt: {len(dev_only)} pinned (plus the runtime set)")
     return 0
 

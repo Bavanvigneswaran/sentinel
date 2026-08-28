@@ -25,6 +25,16 @@
 # writes both this file and requirements-dev.txt.
 #
 # Regenerate after any change to pyproject.toml's [project.dependencies].
+#
+# RESOLVED FOR: CPython 3.14
+#
+# A pinned set is specific to the interpreter it was resolved on, and that is
+# not a detail: numpy 2.5 requires Python >= 3.12, so installing this file on
+# the 3.11 that pyproject.toml still declares as the floor fails with "No
+# matching distribution found for numpy==..." — an error that names the package
+# and says nothing about the interpreter. pyproject's range stays the source of
+# truth for what the code supports; this file is one resolution of it, and CI
+# has to use a Python that matches.
 
 aiohappyeyeballs==2.7.1
 aiohttp==3.14.3
