@@ -60,6 +60,10 @@ react-native-svg for charts) in `mobile/`, plus a Kotlin collector module in Pha
 - `make e2e-db` / `make e2e-serve` / `make e2e-code` — the stack the browser, device and
   load suites run against, configured by `backend/.env.ci`. **Not `make serve`** — see
   `docs/TESTING.md`. · `make mobile-apk-debug` — an emulator-only APK for Appium
+- `selenium-tests/` (mocha + selenium-webdriver) and `load-tests/` (k6, 100 VUs for a
+  minute) each have a README and a `report.js` that renders the run as `.xlsx`. The
+  `e2e-stack` workflow is the self-test for `.github/actions/sentinel-stack`, which is
+  what a CI job uses to bring the whole stack up in one step.
 
 ## Where things stand right now
 
