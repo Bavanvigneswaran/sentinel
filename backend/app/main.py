@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES, GZipMiddleware
 
 from app.config import get_settings
 from app.db import dispose_engines
@@ -103,6 +104,34 @@ def create_app() -> FastAPI:
         else:
             app.add_middleware(WebConsoleMiddleware, dist=dist)
             logger.info("serving the web console from %s", dist)
+
+    # Added last, so it runs FIRST and wraps every response — the console's own
+    # JS/CSS included, not just the API's JSON. (Starlette applies middleware in
+    # reverse registration order, the same rule WebConsoleMiddleware above
+    # depends on.)
+    #
+    # Not a micro-optimisation. `/devices/{id}/series` answers the history
+    # screen with ~2 MB of JSON: 720 time buckets each repeating the same ~35
+    # field names, across five domains. Measured on real data in that shape it
+    # is ~11x compressible, so the phone was pulling ~1.9 MB where ~170 KB
+    # would do. The console never showed it because it talks to this process
+    # over loopback on the machine serving it; a phone on the Funnel pays for
+    # every byte.
+    #
+    # Two exclusions beyond Starlette's defaults, both already-compressed
+    # payloads where gzip burns CPU and saves nothing: the APK, and the
+    # PyInstaller agent binaries (the only octet-stream this API serves).
+    # Range requests need no exclusion — the middleware already declines to
+    # touch a 206, which is what keeps a resumed download working.
+    app.add_middleware(
+        GZipMiddleware,
+        minimum_size=1024,
+        exclude_content_types=(
+            *DEFAULT_EXCLUDED_CONTENT_TYPES,
+            "application/octet-stream",
+            "application/vnd.android.package-archive",
+        ),
+    )
 
     from app.api.routes.alerts import router as alerts_router
     from app.api.routes.auth import router as auth_router

@@ -4,6 +4,12 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
+    # Pinned above FastAPI's own floor (>=0.46) because app/main.py relies on
+    # two GZipMiddleware behaviours that arrived later: it declines to compress a
+    # 206, which is what keeps a resumed agent/APK download working, and it takes
+    # `exclude_content_types`. On an older Starlette both are silently absent —
+    # resumable downloads would break rather than fail loudly.
+    "starlette>=1.6",
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
