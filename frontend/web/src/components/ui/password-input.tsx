@@ -9,6 +9,11 @@ import { cn } from "@/lib/utils"
 function PasswordInput({ className, ...props }: React.ComponentProps<"input">) {
   const [visible, setVisible] = React.useState(false)
 
+  // Derived from the input's own id rather than a constant, so a page with two
+  // password fields (changing a password, say) gets two distinct hooks instead
+  // of a duplicate selector that silently matches the wrong one.
+  const toggleTestId = props.id ? `${props.id}-toggle` : "password-toggle"
+
   return (
     <div className="relative">
       <Input
@@ -24,6 +29,7 @@ function PasswordInput({ className, ...props }: React.ComponentProps<"input">) {
         onClick={() => setVisible((v) => !v)}
         aria-label={visible ? "Hide password" : "Show password"}
         aria-pressed={visible}
+        data-testid={toggleTestId}
       >
         {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
       </Button>

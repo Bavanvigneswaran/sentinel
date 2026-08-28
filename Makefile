@@ -4,14 +4,21 @@
         agent-build agent-build-check agent-build-clean \
         train-novelty train-novelty-report \
         mobile mobile-android mobile-prebuild mobile-test mobile-collector-test \
-        mobile-apk \
-        mobile-collector-logs
+        mobile-apk mobile-apk-debug \
+        mobile-collector-logs \
+        deps-lock e2e-db e2e-serve e2e-code
 
 install:
 	cd backend && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 	cd agent && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 	cd frontend/web && npm install
 	cd frontend/mobile && npm install
+
+# Pin the dependency closure declared in backend/pyproject.toml into
+# backend/requirements.txt. Vulnerability scanners cannot match a CVE against
+# `fastapi>=0.115`; they need a version. NOT `pip freeze` — see the script.
+deps-lock:
+	cd backend && .venv/bin/python scripts/lock_dependencies.py
 
 up:
 	docker compose up -d
@@ -244,6 +251,75 @@ mobile-apk:
 		echo "Publish it with: python agent/build/register_build.py --os android \\" && \
 		echo "  --arch arm64 --version 0.1.0 --signed --signing '<your key>' \\" && \
 		echo "  --file frontend/mobile/android/app/build/outputs/apk/release/app-release.apk"
+
+# --- end-to-end suites (Selenium, Appium, load) -------------------------------
+# These run against a *separate* stack from `make serve`, configured by
+# backend/.env.ci. That is not tidiness: `make serve` runs ENVIRONMENT=prod,
+# where rate limiting refuses the 11th login of a 300-case suite and
+# COOKIE_SECURE=true means the refresh cookie is dropped over http://localhost.
+# Both failures are reported by the browser as application bugs. See
+# backend/.env.ci for the full list and docs/TESTING.md for how the suites use
+# this.
+
+E2E_ENV = SENTINEL_ENV_FILE=$(CURDIR)/backend/.env.ci
+
+# 8000 matches what a generated suite defaults to, and collides with a running
+# `make serve` — stop that first, or override: `make e2e-serve E2E_PORT=8001`.
+E2E_PORT ?= 8000
+
+# Reset the CI database and seed the account the suites sign in as. Destructive
+# by design — the script refuses any database not named *_ci or *_test.
+#
+# The credentials are not ours to choose: a generated suite hardcodes whatever
+# pair it was written with, and the account has to exist under *that* pair or
+# every case fails at sign-in rather than at the thing it is testing. So:
+#
+#   make e2e-db SENTINEL_E2E_EMAIL=testuser@sentinel.dev \
+#               SENTINEL_E2E_PASSWORD='SecureP@ssw0rd123'
+e2e-db:
+	cd backend && $(E2E_ENV) .venv/bin/python scripts/create_database.py --drop-existing
+	cd backend && $(E2E_ENV) .venv/bin/alembic upgrade head
+	cd backend && $(E2E_ENV) .venv/bin/python scripts/seed_e2e_account.py
+
+# The console and the API on one origin, exactly as `make serve` does it, so a
+# driver and a phone both see the shape a real deployment has. 0.0.0.0 because
+# an Android emulator reaches the host at 10.0.2.2, never at localhost.
+e2e-serve: web-build
+	cd backend && $(E2E_ENV) .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $(E2E_PORT)
+
+# Mint an enrollment code against the seeded account, so a REAL agent can be
+# enrolled and the suites get real metrics to assert against. There is no
+# metric seeder and there will not be one: CLAUDE.md's first hard rule is that
+# every number came from a real agent reading a real machine, and a fixture
+# that fabricates CPU history is exactly what that forbids.
+e2e-code:
+	cd backend && $(E2E_ENV) .venv/bin/python scripts/seed_e2e_account.py --enrollment-code
+
+# A DEBUG APK, for Appium and nothing else.
+#
+# `make mobile-apk` refuses to build without a real keystore, and that refusal
+# must stay — a release APK signed with React Native's public debug key lets
+# anyone forge an update Android accepts as the same app. But the keystore lives
+# in ~/.sentinel-keys/ outside git, so CI cannot produce a release build at all,
+# and an Appium job with no APK to install is not a test job.
+#
+# The debug buildType is signed with that public key on purpose and by Android's
+# own design, which is fine for something installed on an emulator and destroyed
+# with it. What must never happen is this artifact reaching a user, so it is a
+# separate target with a different name and a different output path — never a
+# fallback inside `mobile-apk`, which is how a debug-signed build ends up
+# published by accident.
+mobile-apk-debug:
+	@if [ ! -d "$(ANDROID_SDK)" ]; then \
+		echo "No Android SDK at $(ANDROID_SDK). Set ANDROID_HOME."; \
+		exit 1; \
+	fi
+	cd frontend/mobile && npx expo prebuild --platform android --clean && \
+		cd android && ANDROID_HOME="$(ANDROID_SDK)" ./gradlew assembleDebug
+	@echo ""
+	@echo "  Debug APK: frontend/mobile/android/app/build/outputs/apk/debug/app-debug.apk"
+	@echo "  For emulator testing only. Never publish this — it is signed with"
+	@echo "  React Native's public debug key. See docs/PACKAGING.md."
 
 # --- collector (Phase 10b: the phone as a monitored device) -------------------
 # The Kotlin foreground-service collector lives in frontend/mobile/modules/sentinel-collector.

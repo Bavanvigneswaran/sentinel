@@ -24,22 +24,29 @@ export function Card({
   children,
   style,
   onPress,
+  testID,
 }: {
   children: ReactNode
   style?: StyleProp<ViewStyle>
   onPress?: () => void
+  testID?: string
 }) {
   if (onPress) {
     return (
       <Pressable
         onPress={onPress}
+        testID={testID}
         style={({ pressed }) => [styles.card, pressed && styles.cardPressed, style]}
       >
         {children}
       </Pressable>
     )
   }
-  return <View style={[styles.card, style]}>{children}</View>
+  return (
+    <View style={[styles.card, style]} testID={testID}>
+      {children}
+    </View>
+  )
 }
 
 export function CardTitle({ children }: { children: ReactNode }) {
@@ -57,6 +64,7 @@ export function Button({
   size = "md",
   disabled = false,
   busy = false,
+  testID,
 }: {
   title: string
   onPress: () => void
@@ -64,14 +72,22 @@ export function Button({
   size?: "sm" | "md"
   disabled?: boolean
   busy?: boolean
+  /** Surfaces as Android `resource-id`, which is what Appium locates by. */
+  testID?: string
 }) {
   const isDisabled = disabled || busy
   return (
     <Pressable
       accessibilityRole="button"
+      // Without this the Pressable has a role and no name: the title is a child
+      // Text, so the a11y tree carries it as a separate node and Android sets
+      // no content-desc on the button itself. TalkBack coped by reading the
+      // child; a content-desc lookup found nothing. Same string either way.
+      accessibilityLabel={title}
       accessibilityState={{ disabled: isDisabled, busy }}
       disabled={isDisabled}
       onPress={onPress}
+      testID={testID}
       style={({ pressed }) => [
         styles.button,
         size === "sm" && styles.buttonSm,

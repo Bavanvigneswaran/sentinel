@@ -55,6 +55,11 @@ react-native-svg for charts) in `mobile/`, plus a Kotlin collector module in Pha
 - `make mobile-collector-test` — 40 Kotlin JVM tests, no emulator needed
 - `make train-novelty` — fit the layer-4 IsolationForest per device from real history, and print
   what it trained on · `make train-novelty-report` — score against the models already on disk
+- `make deps-lock` — pin backend/pyproject.toml's dependency closure into
+  `backend/requirements.txt`. Not `pip freeze`; see the script for why.
+- `make e2e-db` / `make e2e-serve` / `make e2e-code` — the stack the browser, device and
+  load suites run against, configured by `backend/.env.ci`. **Not `make serve`** — see
+  `docs/TESTING.md`. · `make mobile-apk-debug` — an emulator-only APK for Appium
 
 ## Where things stand right now
 
@@ -81,8 +86,8 @@ Three things live outside git and will not survive a fresh clone:
 Also outside git, unchanged from earlier phases: the release keystore in `~/.sentinel-keys/`, and
 `agent/dist/` with its five published builds.
 
-**Everything is green as of 2026-08-28.** 613 backend tests, 175 agent, 80 web, 95 mobile JS, 57
-Kotlin — 1020 in total — plus `make lint` and `make typecheck`. Migrations are at head (`0015`).
+**Everything is green as of 2026-08-28.** 624 backend tests, 175 agent, 80 web, 95 mobile JS, 57
+Kotlin — 1031 in total — plus `make lint` and `make typecheck`. Migrations are at head (`0015`).
 
 **Deployment is this Mac and nothing else.** `make serve` builds the console and serves it, the REST
 API and the viewer socket on one origin; Tailscale Funnel gives that port a stable public
@@ -146,6 +151,40 @@ flush-before-counting ordering holds.
 server already running keeps the old (unconfigured) values until it is restarted — a config edit
 with no restart looks exactly like a config edit that didn't take.
 
+### Browser security headers
+
+`app/security/headers.py` adds CSP, HSTS, `X-Content-Type-Options`,
+`X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy` and the two
+cross-origin isolation headers to **every** HTTP response. It is registered last in
+`app/main.py`, so it runs outermost and no route — not the API, not the console's static
+files, not an agent binary download — can fail to carry them by forgetting to. These are
+the headers whose absence is invisible: nothing fails, and the browser silently applies
+its permissive default.
+
+Four things about it that are load-bearing and not guesses:
+
+* **`style-src` needs `'unsafe-inline'` and always will.** uPlot positions its cursor
+  and legend by writing inline style attributes every frame, and CSP does not distinguish
+  a style attribute from a `<style>` block. `script-src` needs no such keyword, because
+  the Vite build emits one external module script and no inline script — if that ever
+  changes the console breaks loudly, which is the correct failure.
+* **`connect-src 'self'` covers the viewer WebSocket.** `liveSocket.ts` builds its URL
+  from `window.location.host`, and CSP3 matches a same-origin `ws://` against `'self'`.
+  Verified in a browser against a live socket, because CSP2 did not.
+* **HSTS is gated on the request scheme, not on `ENVIRONMENT`.** Behind the Funnel
+  `--proxy-headers` rewrites it to https and the header appears; over the LAN `http://`
+  address it does not. Telling a browser to refuse plaintext to a host that only speaks
+  plaintext takes the deployment offline for a year and no later configuration takes it
+  back. No `includeSubDomains`: the front door is a name under a shared `ts.net` domain.
+* **Naming a client-hint feature in `Permissions-Policy` switches it off.** The ones
+  we do not name keep their defaults, which is why `ch-ua-arch` is absent — `platform.ts`
+  reads it to decide which Mac build to offer, and already treats a block as "unknown",
+  so disabling it would silently stop the download page distinguishing Apple Silicon
+  from Intel rather than raising anything.
+
+`/docs` and `/redoc` are exempt from the CSP **only** (Swagger UI boots from an inline
+script and a CDN bundle). That exemption cannot reach production — both 404 there.
+
 ### How the history is filed
 
 **`docs/HISTORY.md` is the phase-by-phase record** — Phase 5 through Layer 4, every defect found by
@@ -158,7 +197,8 @@ invariant below exists because something in HISTORY.md went wrong first, so when
 arbitrary, the reasoning is there. When they disagree, this file wins.
 
 The other authorities, unchanged: `docs/ARCHITECTURE.md` for design decisions,
-`docs/ROADMAP.md` for what phase we're in, `docs/ANDROID_METRICS.md` for what a phone may report,
+`docs/ROADMAP.md` for what phase we're in, `docs/TESTING.md` for how the end-to-end
+suites are run, `docs/ANDROID_METRICS.md` for what a phone may report,
 `docs/PACKAGING.md` for how anything is built or installed as a service.
 
 ## Conventions
@@ -167,6 +207,12 @@ The other authorities, unchanged: `docs/ARCHITECTURE.md` for design decisions,
 - SQLAlchemy ORM models in `backend/app/models/`; Pydantic wire schemas in `backend/app/schemas/`.
   The schemas are the contract — TS types in `frontend/web/src/types/` are hand-written for now and generated
   from OpenAPI later.
+- **UI elements a test drives carry an explicit hook, never a class name or a position.**
+  `data-testid` on the web (`login-submit`, `nav-alerts`), `testID` on Android (which
+  surfaces as `resource-id`). Anything keyed to a row gets the entity's id, not its index
+  — `device-card-{uuid}` — because a suite addressing "the third card" silently starts
+  asserting about a different machine as soon as the fleet reorders. `docs/TESTING.md`
+  lists the ones with non-obvious behaviour behind them.
 - All timestamps UTC, `timestamptz`, ISO-8601 on the wire.
 - Async everywhere in the backend; nothing blocking on the event loop.
 - Tests alongside features, not after the phase.

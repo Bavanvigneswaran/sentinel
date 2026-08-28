@@ -59,6 +59,16 @@ class Settings(BaseSettings):
     db_max_overflow: int = 5
     db_pool_pre_ping: bool = True
 
+    # The owner-role pool, used only by the pre-auth paths (signup, login,
+    # refresh, logout) because there is no tenant to scope to yet. Small on
+    # purpose — those are a rounding error against ordinary traffic — but
+    # configurable, because it is the ceiling on concurrent *logins* and a
+    # hardcoded one is invisible: a load test that saturates it sees latency
+    # climb while `DB_POOL_SIZE` (the other pool entirely) looks untouched, and
+    # tuning the obvious knob changes nothing.
+    admin_db_pool_size: int = 3
+    admin_db_max_overflow: int = 2
+
     redis_url: str = "redis://localhost:6379/0"
 
     # --- JWT ------------------------------------------------------------

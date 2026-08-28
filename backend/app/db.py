@@ -44,8 +44,8 @@ engine = create_async_engine(
 
 admin_engine = create_async_engine(
     settings.admin_database_url,
-    pool_size=3,
-    max_overflow=2,
+    pool_size=settings.admin_db_pool_size,
+    max_overflow=settings.admin_db_max_overflow,
     pool_pre_ping=settings.db_pool_pre_ping,
 )
 

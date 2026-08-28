@@ -63,9 +63,21 @@ function TabsNavigator() {
     >
       {/* FleetScreen under the name "Devices": the merged tab is the fleet
           view, and "Devices" is the noun for what it lists. */}
-      <Tabs.Screen name="Devices" component={FleetScreen} />
-      <Tabs.Screen name="Alerts" component={AlertsScreen} />
-      <Tabs.Screen name="More" component={MoreScreen} />
+      <Tabs.Screen
+        name="Devices"
+        component={FleetScreen}
+        options={{ tabBarButtonTestID: "tab-devices" }}
+      />
+      <Tabs.Screen
+        name="Alerts"
+        component={AlertsScreen}
+        options={{ tabBarButtonTestID: "tab-alerts" }}
+      />
+      <Tabs.Screen
+        name="More"
+        component={MoreScreen}
+        options={{ tabBarButtonTestID: "tab-more" }}
+      />
     </Tabs.Navigator>
   )
 }

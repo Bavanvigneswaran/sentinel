@@ -53,20 +53,25 @@ export function SignupPage() {
 
   return (
     <AuthForm
+      testId="signup"
       title="Create an account"
       description="Start monitoring your infrastructure."
       footer={
         <>
           Already registered?{" "}
-          <Link to="/login" className="text-foreground underline-offset-4 hover:underline">
+          <Link
+            to="/login"
+            data-testid="signup-to-login"
+            className="text-foreground underline-offset-4 hover:underline"
+          >
             Sign in
           </Link>
         </>
       }
     >
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4" data-testid="signup-form">
         {error && (
-          <Alert variant="destructive">
+          <Alert variant="destructive" data-testid="signup-error">
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
@@ -75,6 +80,7 @@ export function SignupPage() {
           <Label htmlFor="displayName">Name</Label>
           <Input
             id="displayName"
+            data-testid="signup-display-name"
             autoComplete="name"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
@@ -85,6 +91,7 @@ export function SignupPage() {
           <Label htmlFor="email">Email</Label>
           <Input
             id="email"
+            data-testid="signup-email"
             type="email"
             autoComplete="email"
             required
@@ -97,6 +104,7 @@ export function SignupPage() {
           <Label htmlFor="password">Password</Label>
           <PasswordInput
             id="password"
+            data-testid="signup-password"
             autoComplete="new-password"
             required
             minLength={PASSWORD_MIN_LENGTH}
@@ -108,7 +116,7 @@ export function SignupPage() {
           </p>
         </div>
 
-        <Button type="submit" disabled={submitting}>
+        <Button type="submit" disabled={submitting} data-testid="signup-submit">
           {submitting ? "Creating account…" : "Create account"}
         </Button>
       </form>

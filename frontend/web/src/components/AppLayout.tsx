@@ -51,7 +51,10 @@ export function AppLayout({ children, active }: AppLayoutProps) {
           the nav's own scroll region, and `gap-x-6` is a real gap rather than
           the incidental space `justify-between` leaves — which is none once
           the two groups overflow, so "Settings" ran straight into the email. */}
-      <header className="flex items-center justify-between gap-x-6 border-b px-6 py-4">
+      <header
+        className="flex items-center justify-between gap-x-6 border-b px-6 py-4"
+        data-testid="app-header"
+      >
         <div className="flex min-w-0 flex-1 items-center gap-6">
           <span className="shrink-0 font-semibold tracking-tight">Sentinel</span>
           <nav className="flex min-w-0 items-center gap-4 overflow-x-auto">
@@ -59,6 +62,7 @@ export function AppLayout({ children, active }: AppLayoutProps) {
               <Link
                 key={item.key}
                 to={item.to}
+                data-testid={`nav-${item.key}`}
                 className={cn(
                   "shrink-0 whitespace-nowrap text-sm text-muted-foreground transition-colors hover:text-foreground",
                   active === item.key && "font-medium text-foreground",
@@ -75,16 +79,21 @@ export function AppLayout({ children, active }: AppLayoutProps) {
               address would push the sign-out button off the edge on its own.
               Below `sm` there is no such room, and signing out is the one thing
               you still need to be able to reach. */}
-          <span className="hidden max-w-56 truncate text-sm text-muted-foreground sm:inline">
+          <span
+            className="hidden max-w-56 truncate text-sm text-muted-foreground sm:inline"
+            data-testid="current-user-email"
+          >
             {user?.email}
           </span>
-          <Button variant="outline" size="sm" onClick={handleLogout}>
+          <Button variant="outline" size="sm" onClick={handleLogout} data-testid="sign-out">
             Sign out
           </Button>
         </div>
       </header>
 
-      <main className="mx-auto flex max-w-5xl flex-col gap-6 p-6">{children}</main>
+      <main className="mx-auto flex max-w-5xl flex-col gap-6 p-6" data-testid="page-content">
+        {children}
+      </main>
     </div>
   )
 }
