@@ -338,6 +338,17 @@ jobs:
           api-level: 35
           target: default
           arch: x86_64
+          # `pixel_7`, to match the AVD the suite's 560 cases were actually
+          # validated against — 1080x2400 at 420dpi. Leaving this unset does
+          # not give a neutral default, it gives the emulator's fallback skin:
+          # 320x640 at 160dpi, on which the More menu's sixth card (Settings)
+          # falls below the fold. `getPageSource()` returns only what is
+          # rendered, so the row is not merely off-screen, it is absent from
+          # the tree — and 57 cases failed reporting a menu the app renders
+          # correctly. The suite already knows this trap for two other screens
+          # and reaches for `fullSnapshot()` there; the fix here is a screen
+          # the size the suite was written for, not more snapshots.
+          profile: pixel_7
           ram-size: 4096M
           # These REPLACE the action's defaults rather than adding to them, so
           # -no-snapshot has to be restated: without it a run can resume a
