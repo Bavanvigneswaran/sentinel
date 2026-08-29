@@ -1859,15 +1859,30 @@ describe("Sentinel Web Frontend — E2E Suite", function () {
     it("TC-315 offers a way back to the dashboard from the not-found page", async () => {
       await go("/definitely-not-a-route");
       const from = await currentPath();
+      // NotFoundPage carries `page-title` itself — its heading is literally
+      // "Page not found" — so waiting for that hook to merely *exist* after
+      // the click is satisfied instantly by the page being left, and this case
+      // would report success without the destination ever rendering. Hold the
+      // node and wait for React to unmount it, exactly as clickNav() does.
+      const previousTitle = await present("page-title");
       const link = await driver.findElement(By.css("[data-testid='not-found'] a"));
       await link.click();
       // Wait for the link to take effect at all, then assert *where* it landed.
       // Waiting for "/" directly turns any other destination into a bare
       // 20-second timeout that says nothing about what actually happened.
       await driver.wait(async () => (await currentPath()) !== from, WAIT, "the link did nothing");
+      await driver.wait(
+        until.stalenessOf(previousTitle),
+        WAIT,
+        "the not-found page never unmounted",
+      );
       await settle();
-      await present("page-title");
+      // The path first, then the heading. A destination that renders no
+      // `page-title` at all — /login renders `login-title` instead — otherwise
+      // fails as an unexplained 20-second timeout rather than saying where it
+      // actually went.
       assert.strictEqual(await currentPath(), "/");
+      await present("page-title");
     });
 
     it("TC-316 shows the not-found page to an anonymous visitor too", async () => {
