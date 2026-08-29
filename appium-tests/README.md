@@ -71,12 +71,20 @@ adb install frontend/mobile/build/app-appium.apk
   platformName: "Android",
   "appium:automationName": "UiAutomator2",
   "appium:deviceName": "Android Emulator",
-  "appium:app": "<repo>/frontend/mobile/build/app-appium.apk",
   "appium:appPackage": "com.sentinel.viewer",
   "appium:appActivity": "com.sentinel.viewer.MainActivity",
-  "appium:newCommandTimeout": 120,
+  "appium:newCommandTimeout": 600,
 }
 ```
+
+**There is deliberately no `appium:app`, and the APK must already be
+installed.** The suite launches a build that is on the device rather than
+handing one to the driver, which is what the `adb install` in Setup above is
+for. This block used to list an `appium:app` the suite has never sent, and the
+cost of believing it was a CI job that built the APK, never installed it, and
+failed at session creation with "Either provide 'app' option to install
+com.sentinel.viewer or consider setting 'noReset' to 'true'" — before a single
+case ran.
 
 ## Locators
 

@@ -104,9 +104,43 @@ Three things live outside git and will not survive a fresh clone:
 Also outside git, unchanged from earlier phases: the release keystore in `~/.sentinel-keys/`, and
 `agent/dist/` with its five published builds.
 
-**Everything is green as of 2026-08-29.** 777 backend tests, 188 agent, 80 web, 95 mobile JS, 57
-Kotlin — 1197 in total — plus `make lint` and `make typecheck`, `make test` and both suites all
-re-verified after the security remediation deliverable 3 below describes. Migrations are at head (`0016`).
+**Everything is green as of 2026-08-29, on a runner as well as on this Mac.** 777 backend tests,
+188 agent, 80 web, 95 mobile JS, 57 Kotlin — 1197 in total — plus `make lint` and `make typecheck`.
+Migrations are at head (`0016`), applied locally. **`test-suites.yml` run 7 was fully green**: 421
+Selenium, 560 Appium, 100 VUs at 0.00% failed, six security jobs, and all five workbooks
+downloadable from the one run. That took seven runs and eleven fixes — `docs/HISTORY.md`'s last two
+entries are the account, and the short version is that "green" beforehand meant "green on the
+configuration we happened to run", which is not the same claim.
+
+Five of those eleven were latent defects rather than CI plumbing, and three of them would fail on
+real hardware:
+
+* **Two had been failing `security-review.yml` on every push since deliverable 3** and nobody had
+  seen it, because that workflow had never been run on a runner either — an `Informational`
+  severity `list.index()` raised on, and two secret-scan false positives graded Critical.
+* **Selenium TC-315 was passing for the wrong reason.** `NotFoundPage` carries `page-title`
+  itself, so the post-click wait was satisfied by the heading of the page being left. It now holds
+  that node and waits for it to go stale, the way `clickNav()` always did.
+* **`go()` now waits for the page load's `/auth/refresh` to land before anything navigates
+  again.** Every page load runs `bootstrapAuth()` and the backend *rotates* the cookie, so a
+  navigation begun mid-exchange presents a token that has already been rotated away — a replay,
+  refused with a 401, and a session lost in the middle of a suite that never signed out. The app is
+  right; the suite was starting the next load too early. `dropSessionCookie()` documents the
+  deletion half of the same hazard.
+* **`EXPECTED_DEVICE_NAME_RE` refused spaces**, so it would reject a real `Build.MODEL` like
+  "Pixel 7 Pro". It passed only because the AVD it was written against reports `sdk_gphone64_arm64`.
+* **Appium module 24 asserted an absence the forecaster never promises.** It cited
+  `MIN_POINTS_TREND` (24), which governs the trend charts; the empty state is driven by exhaustion
+  rows, whose floor is `MIN_POINTS_EXHAUSTION` (8), and the worker plans its window from first
+  report — so a four-minute-old device legitimately has projections. It now asserts what is
+  invariant, that nothing is presented as trustworthy below six hours of history.
+
+**A long-running `uvicorn` serves stale *code*, not just stale settings.** The `@lru_cache` on
+`get_settings()` is the documented half of this; the other half bit during these runs. A server
+started before the CSP was tightened kept serving `style-src 'self' 'unsafe-inline'` for days, so
+TC-356 failed locally and passed in CI — which reads as a CI-only defect and is the exact opposite.
+If a local run disagrees with CI about a header, a template or a route, restart the server before
+believing either.
 
 On top of those, the first two of `docs/TEST_BRIEF.md`'s five artefacts are delivered:
 **`selenium-tests/tests/login-tests.js`, 421 browser cases, 421 passing in 51.8s.** It needs the
