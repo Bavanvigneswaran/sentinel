@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES, GZipMiddleware
 
-from app.config import get_settings
+from app.config import PUBLISHED_JWT_SECRETS, get_settings
 from app.db import dispose_engines
 from app.security.headers import SecurityHeadersMiddleware
 from app.webapp import ApiPrefixMiddleware, WebConsoleMiddleware, resolve_dist
@@ -62,6 +62,20 @@ def create_app() -> FastAPI:
     `/auth/login`. Any production reverse proxy must strip `/api` the same way.
     """
     settings = get_settings()
+
+    # The prod validator refuses a published signing key outright, but only when
+    # ENVIRONMENT is "prod" — and that is opt-in, since the field defaults to
+    # "dev". A deployment that never set it therefore gets no error at all, and
+    # a signing key anyone can read off this repository is the one dev default
+    # that is catastrophic rather than merely inconvenient. So it is also said
+    # out loud, on every start, in every environment but the test suite's.
+    if settings.jwt_secret in PUBLISHED_JWT_SECRETS and settings.environment != "test":
+        logger.warning(
+            "SECURITY: JWT_SECRET is a placeholder published in this repository. "
+            "Anyone who has read it can mint an access token for any account. "
+            "This is safe only on a loopback-bound development server. "
+            'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(48))"'
+        )
 
     # The interactive docs enumerate every endpoint and schema. Useful in
     # development, free reconnaissance in production.

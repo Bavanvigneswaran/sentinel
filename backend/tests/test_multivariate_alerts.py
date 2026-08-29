@@ -28,7 +28,7 @@ from app.config import get_settings
 from app.models import AlertEvent, AlertRule, AlertState, Device, MetricSample, User
 from app.security.tokens import issue_access_token
 from app.services import enrollment_service as svc
-from app.services import novelty_service
+from app.services import model_integrity, novelty_service
 
 NOW = datetime.now(UTC)
 
@@ -88,7 +88,10 @@ def _write_model(directory, device_id):
     ]
     model = train(rows)
     assert model is not None
-    joblib.dump(model, directory / f"{device_id}.joblib")
+    _path = directory / f"{device_id}.joblib"
+    joblib.dump(model, _path)
+    # An unsigned model is refused at load — model_integrity.py.
+    model_integrity.sign(_path)
 
 
 def _rule(user_id, device_id, **overrides) -> AlertRule:

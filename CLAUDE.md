@@ -37,8 +37,10 @@ react-native-svg for charts) in `mobile/`, plus a Kotlin collector module in Pha
 
 - `make install` — create backend venv + install deps, `npm install` for web
 - `make up` — start TimescaleDB + Redis via Docker
-- `make serve` — **build the console and serve it + the API on one port, bound to 0.0.0.0.**
-  The only command that produces something reachable from another machine.
+- `make serve` — **build the console and serve it + the API on one port, bound to 127.0.0.1.**
+  Reachable from another machine through the Tailscale Funnel, which proxies from localhost.
+  `SERVE_HOST=0.0.0.0` restores the plaintext LAN bind and prints a warning saying why you
+  should not — see the security assessment's SEC-001.
 - `make dev-backend` — FastAPI dev server on :8000 (reload, localhost only)
 - `make dev-frontend` — Vite dev server on :5173 (proxies `/api` → :8000, `/ws` → :8000)
 - `make migrate` — apply Alembic migrations · `make revision m="..."` — autogenerate a new one
@@ -82,7 +84,7 @@ that still declared it. Splitting them apart cost more than reviewing them toget
 
 **`review/codebase-fixes` is stale** — it was 38 commits behind at the merge and does not have the
 novelty model, the fourth rule type, or migration `0015`. Rebase or retire it; do not branch from
-it. `master` has migration `0015`, so `make migrate` after pulling.
+it. `master` has migration `0016`, so `make migrate` after pulling.
 
 Three things live outside git and will not survive a fresh clone:
 
@@ -102,8 +104,9 @@ Three things live outside git and will not survive a fresh clone:
 Also outside git, unchanged from earlier phases: the release keystore in `~/.sentinel-keys/`, and
 `agent/dist/` with its five published builds.
 
-**Everything is green as of 2026-08-28.** 624 backend tests, 175 agent, 80 web, 95 mobile JS, 57
-Kotlin — 1031 in total — plus `make lint` and `make typecheck`. Migrations are at head (`0015`).
+**Everything is green as of 2026-08-29.** 777 backend tests, 188 agent, 80 web, 95 mobile JS, 57
+Kotlin — 1197 in total — plus `make lint` and `make typecheck`, `make test` and both suites all
+re-verified after the security remediation deliverable 3 below describes. Migrations are at head (`0016`).
 
 On top of those, the first two of `docs/TEST_BRIEF.md`'s five artefacts are delivered:
 **`selenium-tests/tests/login-tests.js`, 421 browser cases, 421 passing in 51.8s.** It needs the
@@ -135,13 +138,41 @@ locator the conventions forbid. `AlertsScreen` had already got this right with
 own recorded gap is push: the emulator image has no Google Play services, so the suite
 asserts that Settings *says* push is unavailable rather than pretending the channel works.
 
+Deliverable 3 as well: **`Vulnerability Test Results/`, an eight-phase security assessment**
+(`security-review.md`, `executive-summary.md`, `dependency-report.md`, `endpoint-inventory.xlsx`,
+`findings.xlsx`), plus `.github/workflows/security-review.yml` running the same checks in CI. First
+pass found 18 issues (0 Critical, 1 High, 6 Medium, 11 Low) at a weighted score of 87/100; every one
+that code could fix was fixed, and the report was regenerated to describe the fixed state as a single
+assessment rather than a before/after diary — that's what a rubric or a reviewer should see. Current
+result: **4 findings — 0 Critical, 0 High, 1 Medium, 1 Low, 2 Informational — at 98/100.** The one
+Medium (four unsigned desktop agent binaries) is the only finding left that needs anything other than
+code: an Apple Developer ID and an Authenticode certificate, which the build tooling and CI workflow
+already read the secrets for. Everything else — CSP tightened to drop `'unsafe-inline'` entirely
+(the reason it was thought necessary turned out to be wrong — see the CSP section above), SSRF
+closed on the web-push endpoint, both WebSocket handshakes now check `Origin`, the download ticket
+moved from a query string into an HttpOnly cookie, a second CSRF layer added via `Sec-Fetch-Site`,
+RLS forced on the nine tables that can be, novelty models HMAC-verified before unpickling,
+`ENVIRONMENT` made a required setting, the rate limiter degrading instead of disappearing on a
+Redis outage, and all 28 JavaScript dependency advisories closed across five projects (two by
+forward `overrides` that at first looked unfixable — see `dependency-report.md` for both) — is
+fixed and covered by 91 new tests. Both the 421-case Selenium suite and the 560-case Appium suite
+were re-run against the final state and pass. Migration `0016` is the one this produced.
+
 **Deployment is this Mac and nothing else.** `make serve` builds the console and serves it, the REST
 API and the viewer socket on one origin; Tailscale Funnel gives that port a stable public
 `https://` front door so the APK and remote agents keep working when the LAN address moves. It runs
-in `ENVIRONMENT=prod`, which means the prod validator's four requirements are genuinely satisfied
-(rate limiting on, a ≥32-byte `JWT_SECRET`, `COOKIE_SECURE=true`, a rotated `sentinel_app`
-password) — and that **`/docs`, `/redoc` and `/openapi.json` all 404**, deliberately. If you need to
-inspect the schema, run a dev server rather than concluding the route is missing.
+in `ENVIRONMENT=prod`, which means the prod validator's requirements are genuinely satisfied
+(rate limiting on, a `JWT_SECRET` that is neither short nor one of the placeholders published in
+this repo, `COOKIE_SECURE=true`, a rotated `sentinel_app` password) — and that **`/docs`, `/redoc`
+and `/openapi.json` all 404**, deliberately. If you need to inspect the schema, run a dev server
+rather than concluding the route is missing.
+
+**The Funnel URL is now the only way in, and that is the fix for the assessment's one High
+finding.** `make serve` binds loopback, so the process no longer answers plaintext `http://` on
+every LAN interface — which it did, carrying the account password on `POST /auth/login`, with HSTS
+correctly absent because it is scheme-gated and so never appeared on the listener that needed it.
+Point `frontend/mobile/.env` at the Funnel hostname, not a LAN IP. `SERVE_HOST=0.0.0.0` is still
+there for a genuinely trusted network and says what it costs.
 
 The honest limits, unchanged: no code-signing certificates exist, so all four desktop builds are
 unsigned and Gatekeeper/SmartScreen interrupt every install; and there is no cloud deployment — if
@@ -209,9 +240,16 @@ its permissive default.
 
 Four things about it that are load-bearing and not guesses:
 
-* **`style-src` needs `'unsafe-inline'` and always will.** uPlot positions its cursor
-  and legend by writing inline style attributes every frame, and CSP does not distinguish
-  a style attribute from a `<style>` block. `script-src` needs no such keyword, because
+* **`style-src` carries no `'unsafe-inline'`, and the belief that it needed one was
+  wrong.** The original reasoning was that uPlot positions its cursor and legend by
+  writing inline style *attributes* every frame, and that CSP cannot distinguish an
+  attribute from a `<style>` block. Checking the library instead of the assumption:
+  uPlot only assigns CSSOM properties (`el.style.transform = ...`), which `style-src`
+  does not govern at all — the script doing the assigning already passed `script-src`.
+  Verified in a browser against five live charts streaming from a real agent:
+  `setAttribute("style", ...)` and an injected `<style>` element are both refused while
+  every chart renders. `style-src-attr 'none'` is named explicitly so a future relaxation
+  of `style-src` cannot silently re-admit it. `script-src` needs no keyword either, because
   the Vite build emits one external module script and no inline script — if that ever
   changes the console breaks loudly, which is the correct failure.
 * **`connect-src 'self'` covers the viewer WebSocket.** `liveSocket.ts` builds its URL
@@ -285,6 +323,17 @@ suites are run, `docs/ANDROID_METRICS.md` for what a phone may report,
 - **The access token never leaves memory.** Not localStorage, not sessionStorage, not a cookie. The
   refresh cookie is HttpOnly with `Path=/` (the Vite proxy strips `/api`, so a narrower path is never
   sent back) and `secure` is off in dev because Safari drops Secure cookies over http://localhost.
+- **`/auth/refresh` and `/auth/logout` carry a second CSRF layer behind `SameSite=strict`.**
+  `app/api/csrf.py`'s `enforce_same_site()` refuses a request whose `Sec-Fetch-Site` header reads
+  anything but `same-origin` or absent. Deliberately not a double-submit token: a token has to be
+  readable by the client that echoes it back, which works in a browser and does not on Android —
+  React Native's cookie jar is the platform's own (OkHttp via `CookieManager`), and reading it from
+  JS needs a native module and a signed rebuild. `Sec-Fetch-Site` needs no client change at all:
+  every current browser sets it and page JavaScript cannot forge it (it is a forbidden header name),
+  while every non-browser client — the Python agent, the Kotlin collector, React Native — sends
+  nothing and is untouched. An absent header is allowed on purpose, to avoid breaking those clients
+  and pre-16.4 Safari; `SameSite=strict` still covers that gap. The refusal is a 403, not a 401 — the
+  credential may be perfectly valid, and a 401 would send a legitimate client into a re-login loop.
 - **A page restored from the back/forward cache must revalidate its session.** A bfcache restore
   replays the document rather than re-executing it: `main.tsx` never runs, `bootstrapAuth()` is
   never called again, and `stores/auth.ts`'s module memory — status, user and the access token —
@@ -864,13 +913,18 @@ suites are run, `docs/ANDROID_METRICS.md` for what a phone may report,
   for no gain, since an agent is useless without an enrollment code and minting one requires signing
   in. `AGENT_DOWNLOAD_BASE_URL` is the escape hatch for scale, and the page switches to a plain
   anchor for an absolute URL rather than trying to fetch it with a bearer token it has no business
-  sending cross-origin. For a same-origin build, the anchor carries a short-lived, filename-scoped
-  ticket (`app/services/download_tickets.py`) instead of a bearer token — `CurrentUserOrNone` in
-  `app/api/deps.py` accepts either, so a real `<a download>` click still authenticates without an
-  Authorization header a plain link can't send. Unlike the WebSocket ticket in `app/live/tickets.py`,
-  this one is **not** single-use: a mobile connection resuming a stalled transfer replays the same
-  URL as an HTTP Range request, and `GETDEL` would burn the ticket on the download manager's own
-  first byte-range request, breaking resume before it started.
+  sending cross-origin. For a same-origin build, `CurrentUserOrNone` in `app/api/deps.py` accepts
+  a bearer token or a short-lived, filename-scoped ticket
+  (`app/services/download_tickets.py`) instead, so a real `<a download>` click still authenticates
+  without an Authorization header a plain link can't send. The ticket travels as an **HttpOnly,
+  SameSite=strict cookie** (`app/security/cookies.py`'s `set_download_cookie`), not in the URL — a
+  query string is the one place a credential reliably leaks, into the server's own access log and
+  the browser's history. `Path="/"`, for the same reason the refresh cookie is: `ApiPrefixMiddleware`
+  rewrites `/api/*` to `/*`, so a cookie scoped to `/downloads` would be stored under that path and
+  never sent back on the `/api/...` request the browser actually makes. Unlike the WebSocket ticket
+  in `app/live/tickets.py`, this one is **not** single-use: a mobile connection resuming a stalled
+  transfer replays the same cookie on an HTTP Range request, and `GETDEL` would burn it on the
+  download manager's own first byte-range request, breaking resume before it started.
 - **A same-origin download link needs its `/api` prefix added explicitly — nothing does it for you.**
   `AgentBuildOut.download_url` is deliberately unprefixed (Phase 1's "routes carry no `/api` prefix
   in FastAPI"), which is fine for `apiFetch`/`apiDownload`, since those add the prefix themselves. A
@@ -932,9 +986,18 @@ suites are run, `docs/ANDROID_METRICS.md` for what a phone may report,
 - **Ruff's `ASYNC` rules cannot see any of this.** They fire on known-blocking calls written
   directly inside an `async def`, and every blocking call here sits in a *sync* helper that async
   code calls. A clean lint run is not evidence that nothing blocks the loop.
-- **`joblib.load` is pickle, and that is acceptable only because these files are operator-written.**
-  They are never uploaded, never user-supplied, never fetched over a network. If that stops being
-  true, this needs a serialisation format that is not pickle — not a sandbox.
+- **`joblib.load` is pickle, and that is acceptable because these files are operator-written —
+  a claim that is now checked twice, not just asserted once.** `_only_owner_can_write()`
+  (`app/services/novelty_service.py`) refuses a model file, or its directory, that any other local
+  account could write. `model_integrity.verify()` then checks a detached HMAC-SHA256 sidecar keyed
+  on a value derived from `JWT_SECRET`, before the bytes reach the unpickler — a missing sidecar is
+  a failure, not a pass, because deleting one file is how a signature scheme is usually defeated in
+  practice. `backend/scripts/train_novelty_model.py` signs every model it writes in the same
+  breath it dumps it. Neither check is a substitute for a serialisation format that is not code:
+  if models ever need to move between machines, this still wants skops or ONNX. The signing key is
+  derived rather than a setting of its own, on purpose — a second secret is one more that gets left
+  at its default, and anyone who already holds `JWT_SECRET` can mint an access token for any
+  account, so a separate key would protect nothing they could not already reach.
 - **Training is `make train-novelty`, run by hand, and lives in `backend/scripts/` rather than
   `app/`** because it enumerates every device across every tenant — precisely what
   `tests/test_unscoped_import_guard.py` exists to keep out of `app/`.

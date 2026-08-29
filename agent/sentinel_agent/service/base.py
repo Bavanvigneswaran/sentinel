@@ -56,7 +56,9 @@ def agent_executable() -> list[str]:
     return [sys.executable, "-m", "sentinel_agent.cli"]
 
 
-def agent_command(config_path: Path, log_file: Path | None = None) -> list[str]:
+def agent_command(
+    config_path: Path, log_file: Path | None = None, *, insecure: bool = False
+) -> list[str]:
     """The full argv a service manager should run.
 
     `--config` is a *global* option declared before the subparser, so it has to
@@ -68,11 +70,21 @@ def agent_command(config_path: Path, log_file: Path | None = None) -> list[str]:
     `log_file` is for the platforms whose service manager does not capture
     output. launchd redirects stdout in the plist and systemd owns the journal;
     Task Scheduler throws it away, so the Windows installer passes one.
+
+    `insecure` renders `run --insecure`, and the installer passes it when the
+    configured server is a remote `http://` one. Without that, `run`'s refusal
+    to send the agent token in cleartext would turn into a service that fails
+    at every restart forever — the operator made that choice at enrollment and
+    should not have to discover it again from a service manager's logs. It is a
+    *subcommand* option, so it goes after `run`, unlike `--config`.
     """
     argv = [*agent_executable(), "--config", str(config_path)]
     if log_file is not None:
         argv += ["--log-file", str(log_file)]
-    return [*argv, "run"]
+    argv = [*argv, "run"]
+    if insecure:
+        argv.append("--insecure")
+    return argv
 
 
 @dataclass(frozen=True, slots=True)

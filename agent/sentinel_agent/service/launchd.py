@@ -49,7 +49,9 @@ def _reject_system_scope(scope: Scope) -> None:
         )
 
 
-def build_plist(config_path: Path, scope: Scope = "user") -> dict:
+def build_plist(
+    config_path: Path, scope: Scope = "user", *, insecure: bool = False
+) -> dict:
     _reject_system_scope(scope)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     return {
@@ -60,7 +62,7 @@ def build_plist(config_path: Path, scope: Scope = "user") -> dict:
         # agent_command() is shared with systemd and the Windows task so all
         # three cannot drift on that ordering — or on finding a PyInstaller
         # binary rather than a venv console script.
-        "ProgramArguments": agent_command(config_path),
+        "ProgramArguments": agent_command(config_path, insecure=insecure),
         "RunAtLoad": True,
         # launchd restarts the agent if it exits for any reason. The agent has
         # its own reconnect backoff, so this only catches a hard crash.
@@ -73,12 +75,14 @@ def build_plist(config_path: Path, scope: Scope = "user") -> dict:
     }
 
 
-def install(config_path: Path, scope: Scope = "user") -> InstallResult:
+def install(
+    config_path: Path, scope: Scope = "user", *, insecure: bool = False
+) -> InstallResult:
     _reject_system_scope(scope)
     PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     with PLIST_PATH.open("wb") as handle:
-        plistlib.dump(build_plist(config_path), handle)
+        plistlib.dump(build_plist(config_path, scope, insecure=insecure), handle)
 
     uid = os.getuid()
     # bootout first so a reinstall picks up the new plist; it fails harmlessly

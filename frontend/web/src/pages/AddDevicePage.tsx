@@ -304,7 +304,7 @@ function Step({
 }
 
 function DownloadRow({ build }: { build: AgentBuild }) {
-  const [ticket, setTicket] = useState<string | null>(null)
+  const [ready, setReady] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -315,16 +315,19 @@ function DownloadRow({ build }: { build: AgentBuild }) {
 
   const mintTicket = useCallback(() => {
     if (external) return
-    apiFetch<{ ticket: string; expires_in: number }>(
+    // The ticket comes back as an HttpOnly cookie, not in the body — see
+    // app/api/routes/downloads.py. Nothing here holds the secret; this call
+    // exists to have the browser holding a fresh one before the tap.
+    apiFetch<{ expires_in: number }>(
       `/downloads/agent/${encodeURIComponent(build.filename)}/ticket`,
       { method: "POST" },
     )
-      .then((res) => {
-        setTicket(res.ticket)
+      .then(() => {
+        setReady(true)
         setError(null)
       })
       .catch((err) => {
-        setTicket(null)
+        setReady(false)
         setError(
           err instanceof ApiError && err.status === 404
             ? "This build is no longer on the server — it may have been rebuilt since this page loaded. Refresh and try again."
@@ -357,8 +360,8 @@ function DownloadRow({ build }: { build: AgentBuild }) {
   // exactly what was silently coming back as "app-release.apk.html".
   const href = external
     ? build.download_url
-    : ticket
-      ? `/api${build.download_url}?ticket=${encodeURIComponent(ticket)}`
+    : ready
+      ? `/api${build.download_url}`
       : null
 
   return (

@@ -1,5 +1,7 @@
 """Device management and the agent enrollment exchange."""
 
+import uuid
+
 import sqlalchemy as sa
 
 SIGNUP = "/auth/signup"
@@ -379,3 +381,40 @@ async def test_include_removed_does_not_reach_across_tenants(client):
     await client.delete(f"/devices/{device_id}", headers=theirs)
 
     assert (await client.get("/devices?include_removed=true", headers=mine)).json() == []
+
+
+async def test_listing_tokens_for_a_device_that_is_not_yours_is_a_404(client):
+    """Every other per-device route answers 404 for a device outside the tenant.
+
+    This one answered `200 []`, because RLS simply returned no rows. It
+    disclosed nothing — the same empty list came back for a device that never
+    existed — but it was the one route where "not yours" had a different shape,
+    and a caller comparing responses across routes could see the difference."""
+    mine = await _auth_headers(client)
+    code = (await client.post("/enrollment-codes", json={}, headers=mine)).json()["code"]
+    enrolled = (await client.post("/enroll", json={"code": code, "device_name": "mac"})).json()
+
+    client.cookies.clear()
+    theirs = await _auth_headers(client, OTHER)
+    resp = await client.get(f"/devices/{enrolled['device_id']}/tokens", headers=theirs)
+    assert resp.status_code == 404
+
+
+async def test_listing_tokens_for_a_device_that_does_not_exist_is_a_404(client):
+    headers = await _auth_headers(client)
+    resp = await client.get(f"/devices/{uuid.uuid4()}/tokens", headers=headers)
+    assert resp.status_code == 404
+
+
+async def test_listing_tokens_for_a_removed_device_is_a_404(client):
+    """A soft-deleted device is gone as far as the API is concerned, and its
+    tokens were revoked with it."""
+    headers = await _auth_headers(client)
+    code = (await client.post("/enrollment-codes", json={}, headers=headers)).json()["code"]
+    enrolled = (await client.post("/enroll", json={"code": code, "device_name": "mac"})).json()
+
+    assert (
+        await client.delete(f"/devices/{enrolled['device_id']}", headers=headers)
+    ).status_code == 204
+    resp = await client.get(f"/devices/{enrolled['device_id']}/tokens", headers=headers)
+    assert resp.status_code == 404

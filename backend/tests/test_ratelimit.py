@@ -1,8 +1,9 @@
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 
-from app.api.ratelimit import RateLimit
+from app.api.ratelimit import RateLimit, reset_local_limiter
 from app.config import Settings
 
 LOGIN = "/auth/login"
@@ -38,12 +39,63 @@ async def test_a_429_carries_a_numeric_retry_after(client, settings, redis_clien
 
 async def test_the_limiter_fails_open_when_redis_is_unreachable(client, redis_client):
     """A Redis outage must not lock every user out of the product."""
+    reset_local_limiter()
     await client.post(SIGNUP, json=CREDS)
     await redis_client.flushdb()
 
     with patch("app.api.ratelimit._hit", side_effect=ConnectionError("redis is down")):
         r = await client.post(LOGIN, json=CREDS)
     assert r.status_code == 200
+
+
+async def test_a_redis_outage_degrades_the_limiter_rather_than_removing_it(
+    client, settings, redis_client
+):
+    """Failing open is the right trade; failing open all the way to *unlimited*
+    was not.
+
+    Brute-force protection on /auth/login and on /enroll — the only
+    unauthenticated write in the system — used to disappear entirely for the
+    length of an outage, with one ERROR log line as the only sign. The
+    in-process fallback is weaker than Redis (per-worker, and forgotten on
+    restart) but it is a limit."""
+    reset_local_limiter()
+    await client.post(SIGNUP, json=CREDS)
+    await redis_client.flushdb()
+
+    bad = {**CREDS, "password": "wrong-but-long-enough"}
+    with patch("app.api.ratelimit._hit", side_effect=ConnectionError("redis is down")):
+        statuses = [
+            (await client.post(LOGIN, json=bad)).status_code
+            for _ in range(settings.rl_login_per_minute + 4)
+        ]
+
+    assert 401 in statuses, "the first attempts should still be served"
+    assert 429 in statuses, "the fallback never engaged — the endpoint is unthrottled"
+    reset_local_limiter()
+
+
+async def test_the_fallback_forgets_its_state_when_reset(client, redis_client):
+    """The counter is per-process and does not survive a restart. Asserted so
+    that limitation is a stated property rather than a surprise."""
+    reset_local_limiter()
+    await client.post(SIGNUP, json=CREDS)
+    await redis_client.flushdb()
+
+    limiter = RateLimit("fallback-probe", limit=1, window=60, key="ip")
+
+    class _Req:
+        client = type("C", (), {"host": "203.0.113.7"})()
+
+    with patch("app.api.ratelimit._hit", side_effect=ConnectionError("redis is down")):
+        await limiter(_Req())
+        with pytest.raises(HTTPException) as refused:
+            await limiter(_Req())
+        assert refused.value.status_code == 429
+
+        reset_local_limiter()
+        await limiter(_Req())  # a fresh process would allow it again
+    reset_local_limiter()
 
 
 async def test_the_limiter_is_a_noop_when_disabled(monkeypatch):

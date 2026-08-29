@@ -36,3 +36,9 @@ selenium-tests/results.json
 appium-tests/results.json
 load-tests/summary.json
 *.xlsx
+
+# The security assessment's two workbooks are a deliverable, not a run
+# artefact: docs/TEST_BRIEF.md names them in its file tree, and unlike a test
+# report they describe the codebase at a commit rather than one machine at one
+# moment. The `*.xlsx` rule above is about the latter.
+!Vulnerability Test Results/*.xlsx

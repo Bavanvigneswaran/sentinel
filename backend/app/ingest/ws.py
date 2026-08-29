@@ -39,6 +39,7 @@ from app.schemas.protocol import (
     PongFrame,
     WelcomeFrame,
 )
+from app.security.origins import websocket_origin_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +187,13 @@ async def agent_socket(websocket: WebSocket) -> None:
     # Authenticate before accepting: a rejected token should never get a live
     # socket. The handshake carries the header because the agent is a native
     # client, not a browser.
+    # An agent is a native client and sends no Origin, so this only ever
+    # rejects a browser — which has no business on the ingest socket and could
+    # not set the Authorization header below anyway.
+    if not websocket_origin_allowed(websocket):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
     token = extract_token(websocket.headers.get("authorization"))
     if token is None:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)

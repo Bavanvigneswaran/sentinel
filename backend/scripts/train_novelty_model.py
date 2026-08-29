@@ -47,6 +47,7 @@ from app.analysis.multivariate import (  # noqa: E402
 )
 from app.config import get_settings  # noqa: E402
 from app.db import AdminSessionLocal  # noqa: E402
+from app.services import model_integrity
 
 DEFAULT_DAYS = 7
 
@@ -154,6 +155,9 @@ async def main() -> int:
                 if not path.exists():
                     print(f"{name[:31]:32} {platform:9} {len(history):>6}  no model on disk")
                     continue
+                if not model_integrity.verify(path):
+                    print(f"{name[:31]:32} {platform:9} {len(history):>6}  signature mismatch")
+                    continue
                 model: TrainedModel = joblib.load(path)
                 detail = _describe(model, history) if history else "no history in window"
                 print(f"{name[:31]:32} {platform:9} {len(history):>6}  {detail}")
@@ -169,6 +173,10 @@ async def main() -> int:
                 continue
 
             joblib.dump(model, path)
+            # Sign it in the same breath. An unsigned model is refused at load
+            # (app/services/model_integrity.py), so writing one without this
+            # would produce a file the API silently declines to use.
+            model_integrity.sign(path)
             trained += 1
             print(
                 f"{name[:31]:32} {platform:9} {len(history):>6}  "

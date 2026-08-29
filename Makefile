@@ -33,7 +33,7 @@ logs:
 	docker compose logs -f
 
 dev-backend:
-	cd backend && .venv/bin/uvicorn app.main:app --reload --port 8000
+	cd backend && .venv/bin/uvicorn app.main:app --reload --port 8000 --no-server-header
 
 dev-frontend:
 	cd frontend/web && npm run dev
@@ -56,30 +56,51 @@ dev:
 web-build:
 	cd frontend/web && npm run build
 
+# Loopback by default, and that is a security decision rather than a
+# convenience one. Bound to 0.0.0.0 the same process answers plaintext http://
+# on every LAN interface, and POST /auth/login carries the account password —
+# so anyone on the same Wi-Fi could read it, with nothing in the browser saying
+# the request was not encrypted. HSTS cannot help: it is correctly gated on the
+# request scheme, so it never appears on the listener that would need it.
+#
+# The Tailscale Funnel proxies from localhost, so the public https:// front door
+# keeps working exactly as before, and that is the address the APK and remote
+# agents should use. Override deliberately if the LAN really is trusted:
+#
+#   make serve SERVE_HOST=0.0.0.0
+SERVE_HOST ?= 127.0.0.1
+
 serve: web-build
 	@ip=$$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $$1}'); \
 	funnel_url=$$(command -v tailscale >/dev/null 2>&1 && tailscale funnel status --json 2>/dev/null \
 		| python3 -c "import json,sys; d=json.load(sys.stdin); w=list(d.get('Web') or {}); print('https://'+w[0].split(':')[0]) if w else None" 2>/dev/null); \
 	echo ""; \
-	echo "  Console + API:  http://$$ip:8000"; \
-	echo "  On this Mac:    http://localhost:8000"; \
+	if [ "$(SERVE_HOST)" = "127.0.0.1" ]; then \
+		echo "  Console + API:  http://localhost:8000  (loopback only)"; \
+	else \
+		echo "  Console + API:  http://$$ip:8000"; \
+		echo "  On this Mac:    http://localhost:8000"; \
+		echo "  WARNING: bound to $(SERVE_HOST) without TLS. Logins on that address"; \
+		echo "           cross the network in cleartext."; \
+	fi; \
 	if [ -n "$$funnel_url" ]; then \
 		echo "  Public (Tailscale Funnel):  $$funnel_url"; \
 	fi; \
 	echo ""; \
 	if [ -n "$$funnel_url" ]; then \
-		echo "  Point frontend/mobile/.env at $$funnel_url before building an APK —"; \
-		echo "  it won't go stale when this machine changes networks. Otherwise:"; \
-		echo "  http://$$ip:8000 works too, but only on this network and until the"; \
-		echo "  IP changes. See docs/PACKAGING.md's 'Serving the console' section."; \
+		echo "  Point frontend/mobile/.env at $$funnel_url before building an APK."; \
+		echo "  It is https, it won't go stale when this machine changes networks,"; \
+		echo "  and it is the only address that does not send the password in the"; \
+		echo "  clear. See docs/PACKAGING.md's 'Serving the console' section."; \
 	else \
-		echo "  Point frontend/mobile/.env at http://$$ip:8000 before building an APK."; \
-		echo "  This address is only reachable on this network and can change —"; \
-		echo "  see docs/PACKAGING.md for using Tailscale Funnel for a stable one."; \
+		echo "  No Tailscale Funnel is running, so there is no https address to"; \
+		echo "  point an APK at. Set one up (docs/PACKAGING.md) rather than using"; \
+		echo "  http://$$ip:8000 — and if you must, re-run with SERVE_HOST=0.0.0.0"; \
+		echo "  knowing that logins on that address are readable on the network."; \
 	fi; \
 	echo ""
-	cd backend && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 \
-		--proxy-headers --forwarded-allow-ips=127.0.0.1
+	cd backend && .venv/bin/uvicorn app.main:app --host $(SERVE_HOST) --port 8000 \
+		--proxy-headers --forwarded-allow-ips=127.0.0.1 --no-server-header
 
 test:
 	cd backend && .venv/bin/pytest -q
@@ -261,7 +282,12 @@ mobile-apk:
 # backend/.env.ci for the full list and docs/TESTING.md for how the suites use
 # this.
 
-E2E_ENV = SENTINEL_ENV_FILE=$(CURDIR)/backend/.env.ci
+# JWT_SECRET is generated per invocation rather than committed to .env.ci: a
+# signing key in the repository is a true positive for any secret scanner even
+# when the database it guards is dropped on every run. Nothing in a test stack
+# needs a stable one — no suite verifies a token minted by a previous run.
+E2E_JWT_SECRET := $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(48))')
+E2E_ENV = SENTINEL_ENV_FILE=$(CURDIR)/backend/.env.ci JWT_SECRET=$(E2E_JWT_SECRET)
 
 # 8000 matches what a generated suite defaults to, and collides with a running
 # `make serve` — stop that first, or override: `make e2e-serve E2E_PORT=8001`.
@@ -285,7 +311,8 @@ e2e-db:
 # driver and a phone both see the shape a real deployment has. 0.0.0.0 because
 # an Android emulator reaches the host at 10.0.2.2, never at localhost.
 e2e-serve: web-build
-	cd backend && $(E2E_ENV) .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $(E2E_PORT)
+	cd backend && $(E2E_ENV) .venv/bin/uvicorn app.main:app --host 0.0.0.0 \
+		--port $(E2E_PORT) --no-server-header
 
 # Mint an enrollment code against the seeded account, so a REAL agent can be
 # enrolled and the suites get real metrics to assert against. There is no

@@ -149,13 +149,18 @@ runs:
     # 0.0.0.0 rather than 127.0.0.1: an Android emulator reaches the runner at
     # 10.0.2.2, and a loopback bind is invisible to it. Backgrounded with its
     # log on disk so a failing job has something to upload.
+    # JWT_SECRET is generated here rather than committed to .env.ci — see that
+    # file. One value for the life of the server process, which is all a test
+    # stack needs: nothing verifies a token minted by a previous run.
     - name: Serve the console and API
       shell: bash
       working-directory: backend
       env:
         SENTINEL_ENV_FILE: ${{ github.workspace }}/backend/.env.ci
       run: |
+        export JWT_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
         nohup uvicorn app.main:app --host 0.0.0.0 --port ${{ inputs.port }} \
+          --no-server-header \
           > "${{ github.workspace }}/sentinel-server.log" 2>&1 &
         echo $! > "${{ github.workspace }}/sentinel-server.pid"
 

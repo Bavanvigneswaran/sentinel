@@ -59,6 +59,7 @@ def build_task_xml(
     *,
     user_id: str | None = None,
     log_file: Path | None = None,
+    insecure: bool = False,
 ) -> str:
     """Render the Task Scheduler definition. Pure — assertable from a Mac.
 
@@ -67,7 +68,11 @@ def build_task_xml(
     `/TR` quoting problem: neither field is word-split, so a path with a space
     in it needs no quoting at all.
     """
-    argv = agent_command(config_path, log_file or (log_dir(scope, system="Windows") / "agent.log"))
+    argv = agent_command(
+        config_path,
+        log_file or (log_dir(scope, system="Windows") / "agent.log"),
+        insecure=insecure,
+    )
     command, arguments = argv[0], argv[1:]
 
     if scope == "system":
@@ -182,11 +187,13 @@ def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(argv, 127, "", f"{argv[0]}: {exc}")
 
 
-def install(config_path: Path, scope: Scope = "user") -> InstallResult:
+def install(
+    config_path: Path, scope: Scope = "user", *, insecure: bool = False
+) -> InstallResult:
     logs = log_dir(scope, system="Windows")
     log_file = logs / "agent.log"
     logs.mkdir(parents=True, exist_ok=True)
-    xml = build_task_xml(config_path, scope, log_file=log_file)
+    xml = build_task_xml(config_path, scope, log_file=log_file, insecure=insecure)
 
     # schtasks /XML requires the file to be UTF-16 with a BOM when the
     # declaration says so, and it rejects the file outright otherwise with an

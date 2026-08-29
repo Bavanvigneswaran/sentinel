@@ -26,10 +26,15 @@ class AgentBuildOut(BaseModel):
 
 
 class DownloadTicketOut(BaseModel):
-    """A short-lived, single-filename credential a plain `<a download>` link
-    can carry in its query string, where an Authorization header can't go."""
+    """How long the download credential this request just minted will last.
 
-    ticket: str
+    The credential itself is **not** here: it goes back as an HttpOnly cookie
+    (`app/security/cookies.py`), because a query string is the one place a URL
+    reliably leaks — access logs, browser history, `Referer`. The page needs
+    only the lifetime, so it can re-mint before a backgrounded tab's ticket
+    lapses.
+    """
+
     expires_in: int
 
 

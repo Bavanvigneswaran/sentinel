@@ -147,16 +147,30 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
-    if requires_tls(config.server_url):
-        # A warning, not a refusal: this agent is already enrolled and already
-        # working, and killing a running monitor over a transport choice its
-        # operator has presumably already made would be the wrong trade. The
-        # refusal lives at enrollment, where the credential is minted.
-        logger.warning(
-            "connecting to %s without TLS — the agent token is sent in cleartext "
-            "on every reconnect. Move the server behind https://.",
-            config.server_url,
+    if requires_tls(config.server_url) and not args.insecure:
+        # A refusal, matching enrollment, with an explicit way past it.
+        #
+        # This used to warn and carry on, reasoning that killing a working
+        # monitor over a transport choice its operator had already made was the
+        # wrong trade. That reasoning had the exposure backwards. Enrollment
+        # sends the credential once; `run` replays the same agent token in the
+        # handshake on *every reconnect*, and the agent reconnects with backoff,
+        # so an outage hands anyone on the path a fresh copy every few seconds —
+        # along with every metric the machine reports. `run` is the
+        # higher-exposure half of the pair, not the lower one.
+        #
+        # The escape hatch is the same one enrollment has, so an operator who
+        # genuinely means it on a trusted LAN types it once in their service
+        # definition rather than being stuck.
+        print(
+            f"Refusing to connect to {config.server_url} without TLS: the agent token "
+            "is sent in cleartext on every reconnect, and so is everything this "
+            "machine reports.\n"
+            "Move the server behind https:// (see docs/PACKAGING.md on Tailscale "
+            "Funnel), or pass --insecure if this is a network you trust.",
+            file=sys.stderr,
         )
+        return 1
 
     agent = Agent(config)
 
@@ -302,8 +316,21 @@ def cmd_install_service(args: argparse.Namespace) -> int:
     if warning:
         print(f"Warning: {warning}\n", file=sys.stderr)
 
+    # `run` refuses a remote http:// server unless told otherwise, so a service
+    # registered without this would fail at every restart forever. The choice
+    # was already made — and warned about — at enrollment; rediscovering it from
+    # a service manager's logs is not a second decision worth forcing.
+    insecure = requires_tls(config.server_url)
+    if insecure:
+        print(
+            f"Warning: {config.server_url} is a remote http:// server, so the service "
+            "is registered with --insecure. The agent token and every metric this "
+            "machine reports travel in cleartext.\n",
+            file=sys.stderr,
+        )
+
     try:
-        result = installer.install(config.path, scope)
+        result = installer.install(config.path, scope, insecure=insecure)
     except ServiceError as exc:
         print(f"Could not install the service: {exc}", file=sys.stderr)
         return 1
@@ -425,7 +452,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     enroll_parser.set_defaults(func=cmd_enroll)
 
-    sub.add_parser("run", help="run the agent in the foreground").set_defaults(func=cmd_run)
+    run_parser = sub.add_parser("run", help="run the agent in the foreground")
+    run_parser.add_argument(
+        "--insecure",
+        action="store_true",
+        help=(
+            "allow connecting to a remote http:// server. The agent token is "
+            "replayed in cleartext on every reconnect, and so is every metric "
+            "this machine reports; only do this on a network you trust."
+        ),
+    )
+    run_parser.set_defaults(func=cmd_run)
     sample_parser = sub.add_parser("sample", help="print one real sample and exit")
     sample_parser.add_argument(
         "--timing",

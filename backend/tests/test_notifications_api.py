@@ -97,3 +97,54 @@ async def test_web_push_subscribe_and_unsubscribe(client):
         headers=headers,
     )
     assert unsubscribe.status_code == 204
+
+
+# --- web push endpoints are request targets, not just strings ----------------
+
+
+async def test_subscribing_refuses_an_internal_endpoint(client):
+    """The server POSTs to this URL on every alert (app/alerts/notify.py), so a
+    caller who can choose it can choose where the server sends a request.
+
+    Each of these was accepted before the field was validated."""
+    headers = await _auth_headers(client)
+    for endpoint in (
+        "http://169.254.169.254/latest/meta-data/",
+        "http://127.0.0.1:6379/",
+        "file:///etc/passwd",
+        "https://127.0.0.1/push",
+        "https://localhost/push",
+        "https://10.0.0.5/push",
+    ):
+        resp = await client.post(
+            "/notifications/web-push/subscribe",
+            json={"endpoint": endpoint, "p256dh": "key", "auth": "secret"},
+            headers=headers,
+        )
+        assert resp.status_code == 422, f"{endpoint} was accepted: {resp.text}"
+
+
+async def test_the_refusal_says_why(client):
+    headers = await _auth_headers(client)
+    resp = await client.post(
+        "/notifications/web-push/subscribe",
+        json={"endpoint": "http://push.example/abc", "p256dh": "k", "auth": "s"},
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    assert "https" in resp.text
+
+
+async def test_unsubscribing_is_deliberately_not_validated(client):
+    """A row written before the endpoint was validated must stay removable.
+
+    Deleting by exact string cannot reach anything the caller does not already
+    own — RLS scopes the statement and the route filters on user_id too."""
+    headers = await _auth_headers(client)
+    resp = await client.request(
+        "DELETE",
+        "/notifications/web-push/subscribe",
+        json={"endpoint": "http://127.0.0.1:6379/"},
+        headers=headers,
+    )
+    assert resp.status_code == 204

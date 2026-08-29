@@ -14,7 +14,9 @@ import json
 import pytest
 
 from app.config import Settings
+from app.security.cookies import DOWNLOAD_COOKIE_NAME
 from app.services import download_service as svc
+from app.services.download_tickets import TICKET_TTL_SECONDS
 
 SIGNUP = "/auth/signup"
 CREDS = {"email": "downloads-owner@example.com", "password": "a-perfectly-fine-password"}
@@ -330,11 +332,16 @@ async def test_a_ticket_lets_an_unauthenticated_request_download(
     _point_at(monkeypatch, tmp_path)
     filename = "sentinel-agent-0.1.0-macos-arm64"
 
-    ticket = (
-        await client.post(f"{CATALOG}/{filename}/ticket", headers=await _auth_headers(client))
-    ).json()["ticket"]
+    minted = await client.post(
+        f"{CATALOG}/{filename}/ticket", headers=await _auth_headers(client)
+    )
+    assert minted.status_code == 200
+    # The secret is in an HttpOnly cookie, never the body — a query string is
+    # the one place a URL reliably leaks (access logs, history, Referer).
+    assert "ticket" not in minted.json()
+    assert DOWNLOAD_COOKIE_NAME in minted.cookies
 
-    resp = await client.get(f"{CATALOG}/{filename}", params={"ticket": ticket})
+    resp = await client.get(f"{CATALOG}/{filename}")
     assert resp.status_code == 200
     assert resp.content == b"not really a binary"
 
@@ -366,16 +373,13 @@ async def test_a_ticket_is_bound_to_its_own_filename(client, monkeypatch, tmp_pa
     )
     _point_at(monkeypatch, tmp_path)
 
-    ticket = (
-        await client.post(
-            f"{CATALOG}/sentinel-agent-0.1.0-macos-arm64/ticket",
-            headers=await _auth_headers(client),
-        )
-    ).json()["ticket"]
-
-    resp = await client.get(
-        f"{CATALOG}/sentinel-agent-0.1.0-linux-x64", params={"ticket": ticket}
+    await client.post(
+        f"{CATALOG}/sentinel-agent-0.1.0-macos-arm64/ticket",
+        headers=await _auth_headers(client),
     )
+
+    # The cookie is carried automatically; it still must not open a different build.
+    resp = await client.get(f"{CATALOG}/sentinel-agent-0.1.0-linux-x64")
     assert resp.status_code == 401
 
 
@@ -383,10 +387,10 @@ async def test_a_garbage_ticket_does_not_authenticate(client, monkeypatch, tmp_p
     _write_manifest(tmp_path, [_build()])
     _point_at(monkeypatch, tmp_path)
 
-    resp = await client.get(
-        f"{CATALOG}/sentinel-agent-0.1.0-macos-arm64", params={"ticket": "not-a-real-ticket"}
-    )
+    client.cookies.set(DOWNLOAD_COOKIE_NAME, "not-a-real-ticket")
+    resp = await client.get(f"{CATALOG}/sentinel-agent-0.1.0-macos-arm64")
     assert resp.status_code == 401
+    client.cookies.delete(DOWNLOAD_COOKIE_NAME)
 
 
 async def test_a_ticket_survives_being_used_more_than_once(client, monkeypatch, tmp_path):
@@ -396,12 +400,10 @@ async def test_a_ticket_survives_being_used_more_than_once(client, monkeypatch, 
     _point_at(monkeypatch, tmp_path)
     filename = "sentinel-agent-0.1.0-macos-arm64"
 
-    ticket = (
-        await client.post(f"{CATALOG}/{filename}/ticket", headers=await _auth_headers(client))
-    ).json()["ticket"]
+    await client.post(f"{CATALOG}/{filename}/ticket", headers=await _auth_headers(client))
 
-    first = await client.get(f"{CATALOG}/{filename}", params={"ticket": ticket})
-    second = await client.get(f"{CATALOG}/{filename}", params={"ticket": ticket})
+    first = await client.get(f"{CATALOG}/{filename}")
+    second = await client.get(f"{CATALOG}/{filename}")
     assert first.status_code == 200
     assert second.status_code == 200
 
@@ -480,3 +482,41 @@ async def test_a_backslash_filename_is_not_offered(client, monkeypatch, tmp_path
     _point_at(monkeypatch, tmp_path)
 
     assert (await client.get(CATALOG, headers=await _auth_headers(client))).json()["builds"] == []
+
+
+async def test_a_ticket_in_the_query_string_no_longer_authenticates(
+    client, monkeypatch, tmp_path
+):
+    """The whole point of moving it to a cookie.
+
+    A URL carrying the credential is the one that lands in the server's access
+    log and the browser's history, so the query parameter is gone rather than
+    merely deprecated — a caller that kept using it gets a 401, not a silent
+    fallback."""
+    _write_manifest(tmp_path, [_build()])
+    _point_at(monkeypatch, tmp_path)
+    filename = "sentinel-agent-0.1.0-macos-arm64"
+
+    await client.post(f"{CATALOG}/{filename}/ticket", headers=await _auth_headers(client))
+    real = client.cookies.get(DOWNLOAD_COOKIE_NAME)
+    client.cookies.delete(DOWNLOAD_COOKIE_NAME)
+
+    resp = await client.get(f"{CATALOG}/{filename}", params={"ticket": real})
+    assert resp.status_code == 401
+
+
+async def test_the_download_cookie_is_httponly_and_samesite(client, monkeypatch, tmp_path):
+    """It is ambient (Path=/) because the /api prefix rewrite makes a scoped
+    path unworkable — see app/security/cookies.py — so the flags carry the
+    weight instead."""
+    _write_manifest(tmp_path, [_build()])
+    _point_at(monkeypatch, tmp_path)
+
+    resp = await client.post(
+        f"{CATALOG}/sentinel-agent-0.1.0-macos-arm64/ticket",
+        headers=await _auth_headers(client),
+    )
+    raw = resp.headers["set-cookie"]
+    assert "HttpOnly" in raw
+    assert "SameSite=strict" in raw
+    assert f"Max-Age={TICKET_TTL_SECONDS}" in raw

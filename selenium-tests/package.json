@@ -6,7 +6,7 @@
   "scripts": {
     "test": "mocha tests/*.js --timeout 60000 --reporter spec",
     "test:report": "mocha tests/*.js --timeout 60000 --reporter json --reporter-option output=results.json || true",
-    "report": "TEST_SUITE_NAME='Sentinel web console — Selenium E2E' node ../tools/test-report/mocha-xlsx.js results.json selenium-test-report.xlsx",
+    "report": "TEST_SUITE_NAME='Sentinel web console \u2014 Selenium E2E' node ../tools/test-report/mocha-xlsx.js results.json selenium-test-report.xlsx",
     "test:xlsx": "npm run test:report && npm run report",
     "smoke": "node smoke.js"
   },
@@ -16,5 +16,10 @@
   "devDependencies": {
     "exceljs": "^4.4.0",
     "mocha": "^11.0.1"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.1.0",
+    "diff": "^9.0.0",
+    "uuid": "^14.0.2"
   }
 }

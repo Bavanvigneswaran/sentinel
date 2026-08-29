@@ -2070,11 +2070,22 @@ describe("Sentinel Web Frontend — E2E Suite", function () {
       assert.strictEqual(scriptSrc, "script-src 'self'");
     });
 
-    it("TC-356 allows inline styles, which uPlot's cursor requires", () => {
-      // uPlot writes inline style attributes every frame and CSP does not
-      // distinguish a style attribute from a <style> block, so this keyword is
-      // load-bearing rather than sloppy.
-      assert.ok(loginPage.headers["content-security-policy"].includes("style-src 'self' 'unsafe-inline'"));
+    it("TC-356 forbids inline styles, and uPlot does not need them", () => {
+      // This case used to assert the opposite, on the belief that uPlot writes
+      // inline style *attributes* every frame and that CSP cannot distinguish
+      // one from a <style> block. The first half is wrong: uPlot assigns CSSOM
+      // properties (el.style.transform = ...), which CSP does not govern at all
+      // — the script doing the assigning already passed script-src. Only a
+      // <style> element, a style="..." attribute parsed from markup, or
+      // setAttribute("style", ...) is subject to this directive.
+      //
+      // Verified in a browser against five live charts streaming from a real
+      // agent: cursor, legend and axes all render, while setAttribute("style")
+      // and an injected <style> element are both refused.
+      const csp = loginPage.headers["content-security-policy"];
+      assert.ok(csp.includes("style-src 'self'"));
+      assert.ok(!csp.includes("'unsafe-inline'"), "the CSP must not carry 'unsafe-inline' anywhere");
+      assert.ok(csp.includes("style-src-attr 'none'"));
     });
 
     it("TC-357 restricts connect-src to same-origin, covering the viewer WebSocket", () => {

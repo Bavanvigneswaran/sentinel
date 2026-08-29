@@ -121,3 +121,32 @@ async def test_middleware_passes_websocket_scope_through():
         {"type": "websocket", "path": "/ws/viewer"}, None, record
     )
     assert sent == [{"type": "websocket.accept"}]
+
+
+async def test_the_csp_carries_no_unsafe_inline_anywhere(client):
+    """The console needs no inline style, and the reason it was once thought to
+    is worth a regression guard.
+
+    The belief was that uPlot positions its cursor and legend by writing inline
+    style *attributes* every frame. It does not: it assigns CSSOM properties
+    (`el.style.transform = ...`), which CSP does not govern at all — the script
+    doing the assigning already passed `script-src`. Only a `<style>` element, a
+    `style="..."` attribute parsed from markup, or `setAttribute("style", ...)`
+    is subject to `style-src`, and the built console produces none of the three.
+
+    Verified in a browser against five live charts streaming from a real agent
+    before this was tightened; this is the guard that stops the keyword coming
+    back on the strength of the old explanation.
+    """
+    csp = (await client.get("/health")).headers["content-security-policy"]
+    assert "'unsafe-inline'" not in csp
+    assert "style-src 'self'" in csp
+    assert "style-src-attr 'none'" in csp
+
+
+async def test_script_src_is_still_free_of_the_keyword(client):
+    """The half that always mattered. If a future Vite config turns on the
+    inline modulepreload polyfill the console breaks loudly, which is the
+    correct failure — it must not be fixed by widening the directive."""
+    csp = (await client.get("/health")).headers["content-security-policy"]
+    assert "script-src 'self'" in csp

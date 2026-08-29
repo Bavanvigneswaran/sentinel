@@ -5,7 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
+from app.security.outbound import UnsafeUrl, validate_push_endpoint
 
 Sensitivity = Literal["low", "medium", "high"]
 
@@ -32,12 +34,36 @@ class NotificationSettingsUpdate(BaseModel):
 
 
 class WebPushSubscribeRequest(BaseModel):
+    """A browser's push subscription.
+
+    `endpoint` is the one URL in this product that a user chooses and the server
+    later fetches (app/alerts/notify.py sends to it on every alert), so it is
+    validated as a request target rather than merely as a string. Without this
+    the field was a length bound and nothing else, and an authenticated user
+    could point the server at a metadata service or a loopback port.
+    """
+
     endpoint: str = Field(min_length=1, max_length=2000)
     p256dh: str = Field(min_length=1, max_length=500)
     auth: str = Field(min_length=1, max_length=500)
 
+    @field_validator("endpoint")
+    @classmethod
+    def _endpoint_is_a_safe_target(cls, value: str) -> str:
+        try:
+            return validate_push_endpoint(value)
+        except UnsafeUrl as exc:
+            raise ValueError(str(exc)) from exc
+
 
 class WebPushUnsubscribeRequest(BaseModel):
+    """Deliberately *not* validated the way subscribing is.
+
+    A row written before that validation existed must stay removable, and
+    deleting by an exact string cannot reach anything a caller does not already
+    own — RLS scopes the statement and the route filters on user_id as well.
+    """
+
     endpoint: str = Field(min_length=1, max_length=2000)
 
 

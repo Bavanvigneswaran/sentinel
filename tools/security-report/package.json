@@ -1,0 +1,19 @@
+{
+  "name": "@sentinel/security-report",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Render the security assessment as the two .xlsx workbooks the test brief asks for.",
+  "main": "security-xlsx.js",
+  "bin": {
+    "security-xlsx": "security-xlsx.js"
+  },
+  "scripts": {
+    "report": "node security-xlsx.js"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0"
+  },
+  "overrides": {
+    "uuid": "^14.0.2"
+  }
+}

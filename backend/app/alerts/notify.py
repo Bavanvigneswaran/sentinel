@@ -22,6 +22,7 @@ from app.config import get_settings
 from app.models.alerts import AlertEvent
 from app.models.notifications import FcmToken, NotificationSettings, WebPushSubscription
 from app.models.user import User
+from app.security.outbound import resolve_is_public
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,17 @@ async def _send_web_push(session: AsyncSession, user_id: uuid.UUID, payload: dic
         )
     )
     for sub in subscriptions:
+        # Checked again here, not just at registration. The schema validates the
+        # endpoint's shape offline; only an actual resolution can say where the
+        # name points *now*, and a row written before that validation existed
+        # has never been checked at all. A skip, not a delete: a transient DNS
+        # failure must not discard a legitimate subscription.
+        if not await asyncio.to_thread(resolve_is_public, sub.endpoint):
+            logger.warning(
+                "web push skipped, endpoint does not resolve to a public address endpoint=%s",
+                sub.endpoint,
+            )
+            continue
         try:
             await asyncio.to_thread(
                 webpush,

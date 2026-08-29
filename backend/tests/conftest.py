@@ -23,8 +23,17 @@ from __future__ import annotations
 
 import os
 import pathlib
+import secrets
 
 os.environ.setdefault("SENTINEL_ENV_FILE", str(pathlib.Path(__file__).parents[1] / ".env.test"))
+
+# Generated per session rather than committed. `.env.test` carries no
+# JWT_SECRET, because a signing key in the repository is a true positive for any
+# secret scanner even when the database it guards is dropped after every run —
+# and nothing here needs a stable one: no test verifies a token minted by a
+# previous session. One value for the whole session, because get_settings() is
+# lru_cached and every token minted in a test must verify in the same process.
+os.environ.setdefault("JWT_SECRET", secrets.token_urlsafe(48))
 
 import uuid  # noqa: E402
 from collections.abc import AsyncIterator  # noqa: E402

@@ -13,11 +13,12 @@ cannot serve something the page did not offer.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse
 
 from app.api.deps import CREDENTIALS_ERROR, CurrentUser, CurrentUserOrNone
 from app.schemas.downloads import AgentBuildOut, AgentDownloadsOut, DownloadTicketOut
+from app.security.cookies import DOWNLOAD_COOKIE_NAME, set_download_cookie
 from app.services import download_service as svc
 from app.services import download_tickets
 
@@ -50,28 +51,44 @@ async def list_agent_builds(user: CurrentUser) -> AgentDownloadsOut:
 
 
 @router.post("/downloads/agent/{filename}/ticket", response_model=DownloadTicketOut)
-async def mint_agent_download_ticket(filename: str, user: CurrentUser) -> DownloadTicketOut:
+async def mint_agent_download_ticket(
+    filename: str, user: CurrentUser, response: Response
+) -> DownloadTicketOut:
     """Mint a short-lived credential the download link can carry instead of a
     bearer token, so a plain `<a download>` — and the browser's own
-    resumable-download handling — can own the transfer end to end."""
+    resumable-download handling — can own the transfer end to end.
+
+    The ticket goes back as an **HttpOnly cookie**, not in the response body for
+    the page to put in a URL. A query string is the one place a URL reliably
+    leaks: the server's own access log, browser history, and any `Referer` a
+    later navigation sends. A cookie reaches none of those, and the browser
+    replays it on a resumed Range request exactly as it would a query
+    parameter.
+
+    `DownloadTicketOut.expires_in` is still returned so the page can re-mint
+    before it lapses; the secret itself is not.
+    """
     catalog = await svc.load_catalog()
     if svc.resolve_artifact(catalog, filename) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such build")
 
     ticket = await download_tickets.mint_download_ticket(filename)
-    return DownloadTicketOut(ticket=ticket, expires_in=download_tickets.TICKET_TTL_SECONDS)
+    set_download_cookie(response, ticket, max_age=download_tickets.TICKET_TTL_SECONDS)
+    return DownloadTicketOut(expires_in=download_tickets.TICKET_TTL_SECONDS)
 
 
 @router.get("/downloads/agent/{filename}")
 async def download_agent_build(
     filename: str,
     user: CurrentUserOrNone,
-    ticket: str | None = None,
+    request: Request,
 ) -> FileResponse:
     # A bearer token still works here unchanged (any other authenticated
     # caller). A ticket is the only credential a plain download link can
     # carry, so it is checked as an equally valid alternative rather than a
-    # replacement.
+    # replacement — and it arrives as a cookie rather than a query parameter,
+    # so it never lands in an access log or the browser's history.
+    ticket = request.cookies.get(DOWNLOAD_COOKIE_NAME)
     ticket_ok = bool(ticket) and await download_tickets.check_download_ticket(ticket, filename)
     if user is None and not ticket_ok:
         raise CREDENTIALS_ERROR

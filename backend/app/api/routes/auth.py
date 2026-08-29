@@ -14,6 +14,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
+from app.api.csrf import enforce_same_site
 from app.api.deps import CurrentUser, UnscopedSession
 from app.api.ratelimit import (
     login_email_limit,
@@ -118,7 +119,9 @@ async def login(
 
 
 @router.post(
-    "/refresh", response_model=SessionResponse, dependencies=[Depends(refresh_limit())]
+    "/refresh",
+    response_model=SessionResponse,
+    dependencies=[Depends(refresh_limit()), Depends(enforce_same_site)],
 )
 async def refresh(
     request: Request,
@@ -149,7 +152,7 @@ async def refresh(
 @router.post(
     "/logout",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(logout_limit())],
+    dependencies=[Depends(logout_limit()), Depends(enforce_same_site)],
 )
 async def logout(request: Request, response: Response, session: UnscopedSession) -> Response:
     """Always 204, even with no cookie or an unknown one.

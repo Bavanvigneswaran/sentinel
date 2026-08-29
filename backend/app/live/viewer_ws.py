@@ -49,6 +49,7 @@ from app.schemas.live import (
     ViewerPingFrame,
     ViewerPongFrame,
 )
+from app.security.origins import websocket_origin_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +256,12 @@ class ViewerSession:
 
 @router.websocket("/ws/viewer")
 async def viewer_socket(websocket: WebSocket) -> None:
+    # Before the ticket is even looked at, let alone spent: a cross-site
+    # handshake must not be able to burn a ticket it happened to obtain.
+    if not websocket_origin_allowed(websocket):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
     ticket = websocket.query_params.get("ticket")
     if not ticket:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)

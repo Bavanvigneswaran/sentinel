@@ -175,6 +175,18 @@ async def get_device_novelty(
 async def list_agent_tokens(
     device_id: uuid.UUID, user: CurrentUser, session: TenantSession
 ) -> list[AgentToken]:
+    """404 for a device that is not the caller's, like every other per-device route.
+
+    RLS alone would answer 200 with an empty list, which discloses nothing —
+    the same empty list comes back for a device that never existed — but it
+    made this the one route where "not yours" had a different shape from the
+    rest of the API. A caller cannot tell the two cases apart either way; the
+    point is that there is one answer to give.
+    """
+    device = await session.get(Device, device_id)
+    if device is None or device.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+
     rows = await session.scalars(
         sa.select(AgentToken)
         .where(AgentToken.device_id == device_id)

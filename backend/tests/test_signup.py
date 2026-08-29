@@ -64,3 +64,53 @@ async def test_password_is_stored_as_an_argon2id_hash(client, admin_session):
     )
     assert stored.startswith("$argon2id$")
     assert GOOD["password"] not in stored
+
+
+# --- the other half of NIST SP 800-63B --------------------------------------
+
+
+async def test_signup_refuses_a_commonly_guessed_password(client):
+    """The length floor follows 800-63B, which discourages composition rules —
+    but pairs the floor with a check against known compromised passwords, and
+    only the first half existed. `password123456` is fourteen characters."""
+    for weak in (
+        "password123456",
+        "123456789012",
+        "qwertyuiop123",
+        "aaaaaaaaaaaaaa",
+        "abababababababab",
+    ):
+        r = await client.post(SIGNUP, json={**GOOD, "password": weak})
+        assert r.status_code == 422, f"{weak!r} was accepted"
+
+
+async def test_the_refusal_explains_itself(client):
+    r = await client.post(SIGNUP, json={**GOOD, "password": "password1234"})
+    assert r.status_code == 422
+    assert "commonly used" in r.text
+
+
+async def test_a_long_uncommon_password_is_still_accepted(client):
+    """The screening must not fail a password a human would call strong — a
+    policy that does is one people route around. These include this project's
+    own seeded end-to-end credential, which a naive "must not contain the
+    product name or the email" rule would have rejected."""
+    for strong in (
+        "a-perfectly-fine-password",
+        "e2e-Sentinel-Test-2026",
+        "correct horse battery staple",
+        "xkcd-tribble-lantern-9",
+    ):
+        r = await client.post(
+            SIGNUP,
+            json={"email": f"strong-{strong[:4].strip()}@example.com", "password": strong},
+        )
+        assert r.status_code == 201, f"{strong!r} was refused: {r.text}"
+
+
+async def test_login_never_applies_the_policy(client):
+    """Enforcing it at login would leak the policy and let an attacker skip
+    candidate passwords — the same reason LoginRequest uses min_length=1."""
+    r = await client.post("/auth/login", json={"email": GOOD["email"], "password": "password1234"})
+    assert r.status_code == 401  # rejected as wrong, never as weak
+    assert "commonly used" not in r.text

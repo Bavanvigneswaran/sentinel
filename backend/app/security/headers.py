@@ -21,10 +21,18 @@ which was checked rather than guessed:
   polyfill (which *is* inline) this breaks loudly, which is the correct
   failure: silently adding 'unsafe-inline' to fix it would retire the whole
   directive.
-* `style-src` needs `'unsafe-inline'`. uPlot positions its cursor and legend by
-  writing inline style attributes on every frame, and CSP makes no distinction
-  between a style attribute and a `<style>` block. There is no version of this
-  that keeps live charts and drops the keyword.
+* `style-src 'self'` — **no `'unsafe-inline'`**, and the reason it was once
+  thought to need one is worth recording because it was wrong. The belief was
+  that uPlot positions its cursor and legend by writing inline style
+  *attributes* every frame. It does not: it assigns CSSOM properties
+  (`el.style.transform = ...`), and CSP does not govern those at all — the
+  script doing the assigning already passed `script-src`. Only a `<style>`
+  element, a `style="..."` attribute parsed from markup, or
+  `setAttribute("style", ...)` is subject to this directive, and the built
+  console produces none of the three: Vite extracts CSS to a `<link>`ed file,
+  React's `style={{...}}` prop compiles to CSSOM assignment, and neither client
+  contains `dangerouslySetInnerHTML`. Verified by loading every console route
+  under the tightened policy and watching for violations, not by reading.
 * `worker-src 'self'` — `lib/webPush.ts` registers `/sw.js`. Omitting it falls
   back to `script-src`, which happens to be identical, but only by coincidence.
 * `img-src 'self' data:` — `data:` for the inline SVG data URIs lucide-react
@@ -58,7 +66,12 @@ CONTENT_SECURITY_POLICY = "; ".join(
         "frame-ancestors 'none'",
         "form-action 'self'",
         "script-src 'self'",
-        "style-src 'self' 'unsafe-inline'",
+        "style-src 'self'",
+        # Belt and braces: `style-src` already covers attributes, but naming
+        # `style-src-attr` explicitly means a future relaxation of the former
+        # cannot silently re-admit the latter, which is the half an injected
+        # payload actually reaches for.
+        "style-src-attr 'none'",
         "img-src 'self' data:",
         "font-src 'self'",
         "connect-src 'self'",

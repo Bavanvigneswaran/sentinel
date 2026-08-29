@@ -84,3 +84,12 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
 # The report's HTML/CSS template is a single string constant; wrapping its
 # lines would only make the markup harder to read, not the Python around it.
 "app/reports/templates.py" = ["E501"]
+# S103 flags a permissive chmod, which is precisely what this file sets — on a
+# tmp_path model file, to prove novelty_service refuses to unpickle one that
+# another local account could have written. Scoped to this file rather than to
+# tests/*, so a permissive chmod anywhere else is still an error.
+"tests/test_novelty_model_trust.py" = ["S103"]
+# S311 flags `random` as unsuitable for cryptography, which it is. A fuzzer
+# wants the opposite property: a seeded, reproducible generator, so a failure
+# can be replayed rather than described. Nothing here is a secret.
+"tests/test_ingest_frame_fuzz.py" = ["S311"]

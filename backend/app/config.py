@@ -32,6 +32,26 @@ _ENV_FILES: tuple[Path, ...] | Path = (
 DEV_JWT_SECRET = "dev-secret-change-me"  # noqa: S105 — a sentinel to detect, not a secret
 DEV_APP_DB_PASSWORD = "sentinel_app"  # noqa: S105 — dev-only default, rejected in prod
 
+#: Every JWT secret that appears anywhere in this repository, and therefore
+#: every one an attacker already has.
+#:
+#: Checking only DEV_JWT_SECRET was not enough, and the gap was a real one:
+#: `.env.example` ships `change-me-to-a-long-random-value`, which is 32 bytes,
+#: so an operator who copied that file and then satisfied every other
+#: production requirement — cookie_secure, rate limiting, a rotated database
+#: password — started cleanly while signing every access token with a string
+#: published in this repository. Anyone who has read it could mint a token for
+#: any user id they chose. A placeholder is not safer than a default for saying
+#: "change me" in its own text.
+PUBLISHED_JWT_SECRETS = frozenset(  # noqa: S105 — values to detect, not to use
+    {
+        DEV_JWT_SECRET,
+        "change-me-to-a-long-random-value",  # backend/.env.example
+        "test-secret-not-used-anywhere-real",  # backend/.env.test
+        "ci-secret-not-used-anywhere-real-at-least-32-bytes",  # backend/.env.ci
+    }
+)
+
 # The role password is interpolated into `CREATE ROLE ... PASSWORD '...'`, which
 # cannot take a bind parameter. This pattern makes that interpolation provably safe.
 ROLE_PASSWORD_RE = re.compile(r"^[A-Za-z0-9_\-]{8,64}$")
@@ -42,7 +62,16 @@ class Settings(BaseSettings):
         env_file=_ENV_FILES, env_file_encoding="utf-8", extra="ignore"
     )
 
-    environment: Literal["dev", "test", "prod"] = "dev"
+    #: Required, with no default, and that is the whole point.
+    #:
+    #: Every check in `_refuse_insecure_production()` below is gated on this
+    #: field being "prod". While it defaulted to "dev", a deployment that simply
+    #: never set it was never validated at all — it started cleanly with whatever
+    #: signing key, cookie flag and rate-limit setting its .env happened to
+    #: carry, and the guard that exists to catch precisely that said nothing.
+    #: A missing value now fails at startup naming the field, which is the one
+    #: failure mode an operator can act on.
+    environment: Literal["dev", "test", "prod"]
 
     # --- Database -------------------------------------------------------
     # `database_url` connects as the restricted role (RLS enforced).
@@ -220,8 +249,12 @@ class Settings(BaseSettings):
             )
         if self.environment == "prod":
             problems = []
-            if self.jwt_secret == DEV_JWT_SECRET:
-                problems.append("jwt_secret is still the development default")
+            if self.jwt_secret in PUBLISHED_JWT_SECRETS:
+                problems.append(
+                    "jwt_secret is a placeholder published in this repository "
+                    "(generate one with `python -c \"import secrets; "
+                    'print(secrets.token_urlsafe(48))"`)'
+                )
             elif len(self.jwt_secret.encode()) < 32:
                 # RFC 7518 3.2: an HMAC key shorter than the digest weakens HS256.
                 problems.append("jwt_secret must be at least 32 bytes")

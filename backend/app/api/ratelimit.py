@@ -39,6 +39,41 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
+#: The per-process fallback used while Redis is unreachable. Keys already carry
+#: their window bucket, so an entry is only ever valid for one window and old
+#: ones are dropped on the next miss rather than expired on a timer.
+_local_counts: dict[str, int] = {}
+_LOCAL_MAX_KEYS = 10_000
+
+
+def _local_hit(key: str, limit: int, window: int) -> tuple[bool, int]:
+    """Count in this process, for when Redis cannot be reached.
+
+    Weaker than the real limiter in two ways worth being explicit about: it is
+    per-worker rather than per-deployment, and it forgets everything on a
+    restart. It is still enormously better than the previous behaviour, which
+    was no limit at all — brute-force protection on /auth/login and /enroll
+    disappearing silently for the length of an outage, with one log line as the
+    only sign. Failing *open* stays the right call; failing open all the way
+    down to unlimited was not.
+    """
+    if len(_local_counts) > _LOCAL_MAX_KEYS:
+        # Every key embeds its bucket, so anything not in the current window is
+        # dead. Cheaper and more predictable than tracking expiry per key.
+        current = str(int(time.time()) // window)
+        for stale in [k for k in _local_counts if not k.endswith(f":{current}")]:
+            del _local_counts[stale]
+
+    count = _local_counts.get(key, 0) + 1
+    _local_counts[key] = count
+    return count <= limit, window
+
+
+def reset_local_limiter() -> None:
+    """Drop the fallback's state. For tests; nothing in the app calls it."""
+    _local_counts.clear()
+
+
 async def _hit(key: str, limit: int, window: int) -> tuple[bool, int]:
     """Increment the counter for this window. Returns (allowed, retry_after)."""
     redis = get_redis()
@@ -90,11 +125,18 @@ class RateLimit:
         try:
             allowed, retry_after = await _hit(key, self.limit, self.window)
         except Exception:
-            # Fail open. A Redis outage must not lock every user out of the
-            # product. The tradeoff is real: brute-force protection is gone
-            # while Redis is down, so production must alert on this log line.
-            logger.error("rate limiter unavailable, failing open", exc_info=True)
-            return
+            # Degrade, rather than disappear. A Redis outage must not lock every
+            # user out of the product — that part of the original trade-off is
+            # unchanged and correct — but it must not silently remove the limit
+            # from /auth/login and /enroll either. The in-process counter is
+            # per-worker and does not survive a restart, so it is a weaker
+            # control, not an equivalent one. Production must still alert on
+            # this log line: it is the only sign the strong limiter is gone.
+            logger.error(
+                "rate limiter unavailable, degrading to the in-process fallback",
+                exc_info=True,
+            )
+            allowed, retry_after = _local_hit(key, self.limit, self.window)
 
         if not allowed:
             raise HTTPException(

@@ -1,0 +1,1229 @@
+{
+  "meta": {
+    "product": "Sentinel \u2014 cross-platform infrastructure monitoring",
+    "assessed_at": "2026-08-29",
+    "commit": "066d168",
+    "branch": "master",
+    "target": "http://127.0.0.1:8000 (make e2e-db + make e2e-serve, backend/.env.ci)",
+    "assessor": "Application security assessment \u2014 deliverable 3 of docs/TEST_BRIEF.md",
+    "score": 98
+  },
+  "findings": [
+    {
+      "id": "SEC-001",
+      "severity": "Medium",
+      "type": "Missing code signing / installer integrity (CWE-347)",
+      "file": "agent/build/signing.py:51",
+      "endpoint": "GET /downloads/agent/{filename}",
+      "exposure": "Ships to users",
+      "description": "All four desktop agent builds are unsigned. `agent/build/signing.py` is written for signing and reads `SENTINEL_MACOS_SIGN_IDENTITY` / `SENTINEL_WINDOWS_SIGN_THUMBPRINT`, and `.github/workflows/agent-build.yml` already passes the secrets \u2014 but no certificates exist, so `sign()` returns `signed=False`. The manifest records it and the download page renders it, quoting the Gatekeeper/SmartScreen dialog verbatim before the click, which is the right handling of the constraint. It is still a user being trained to click past an OS warning to install a process that reads their machine and holds a long-lived credential.",
+      "exploitation": "Two paths. (1) A user who has learned to dismiss 'unidentified developer' for the real agent dismisses it for a substituted one; with no signature there is nothing for the OS to compare. (2) The download page publishes a sha256 per build \u2014 the only integrity check available \u2014 and it is served by the same origin as the binary, so an attacker who can alter one alters both.",
+      "impact": "An attacker who can modify the published artifact or intercept its delivery gets code execution on every monitored machine, as a service that starts at boot. The agent's own trust boundary \u2014 opaque revocable tokens, a 0600 config, never a password \u2014 would not survive it.",
+      "fix": "Obtain an Apple Developer ID and an EV/OV Authenticode certificate and set the secrets the workflow already reads; no code changes are needed. Until then, publish the manifest's sha256 values somewhere this API does not serve, so the hash is not vouched for by the same channel as the file.",
+      "status": "Open \u2014 blocked on a certificate, not on code",
+      "verified": "Code review + docs/PACKAGING.md",
+      "cwe": "CWE-347",
+      "cvss": "6.8 (AV:N/AC:H/PR:N/UI:R/S:U/C:H/I:H/A:H)"
+    },
+    {
+      "id": "SEC-002",
+      "severity": "Low",
+      "type": "Credentials committed to version control (CWE-798)",
+      "file": "backend/.env.ci:48",
+      "endpoint": "n/a",
+      "exposure": "Throwaway CI databases only",
+      "description": "`backend/.env.ci` and `backend/.env.test` each carry two database URLs with passwords. The JWT signing keys they used to hold are gone \u2014 generated per run by the Makefile, the composite CI action and `tests/conftest.py` instead \u2014 which removes the part that was genuinely a credential. What remains is `sentinel`/`sentinel_app`, which is what `docker-compose.yml` publishes to create the local database in the first place, on roles that exist only for databases `make e2e-db` drops and recreates. `backend/.env` \u2014 the real JWT secret, the VAPID keypair and the Gmail App Password \u2014 is gitignored and has never been committed, confirmed against the full history.",
+      "exploitation": "None. The credentials authenticate to a local development database whose own compose file declares the same values, and the roles have no existence outside it.",
+      "impact": "None. A true positive for the pattern, and not a credential in any meaningful sense.",
+      "fix": "Removing them would mean generating a role password and threading it through `create_database.py`, migration 0001's `CREATE ROLE`, Alembic and the server across separate `make` invocations \u2014 real fragility in the stack four test suites depend on, to hide a value `docker-compose.yml` has to publish anyway. `.github/workflows/security-review.yml` allow-lists these two paths with the reason inline, so a secret in a third file is still a failure.",
+      "status": "Open \u2014 accepted; the signing keys were removed, the compose credentials remain",
+      "verified": "detect-secrets + git history review",
+      "cwe": "CWE-798",
+      "cvss": "0.0"
+    },
+    {
+      "id": "SEC-003",
+      "severity": "Informational",
+      "type": "Row-level security not forced for the owner role on 14 tables (CWE-266)",
+      "file": "backend/migrations/versions/0016_force_rls.py",
+      "endpoint": "the pre-authentication paths",
+      "exposure": "Internal \u2014 requires a code change to reach",
+      "description": "Migration 0016 applies `FORCE ROW LEVEL SECURITY` to the nine tenant tables no owner-role path touches, so the table owner is now subject to the policies there. Fourteen cannot join them, and the reason is architectural rather than an oversight: signup and login must read `users` and `refresh_tokens` before an identity exists; `/enroll` is authenticated by the code itself and writes `enrollment_codes`, `devices` and `agent_tokens`; the ingest socket authenticates a *device* and writes the six metric tables; and four workers each enumerate one table to discover which tenants to sweep.",
+      "exploitation": "Requires a code change, not a request. `tests/test_unscoped_import_guard.py` walks the AST of `app/` and fails the build on any new use of the owner session, with a seven-entry allow-list each carrying its reason. `tests/test_rls_force.py` records which fourteen tables are exempt and why, so adding one to the forced list fails with the explanation rather than at runtime in a worker nobody is watching.",
+      "impact": "None reachable. Recorded so the split is a documented decision rather than an accident.",
+      "fix": "No further action. The remaining fourteen cannot be forced without breaking the paths named above; the AST guard is the control that covers them.",
+      "status": "Informational \u2014 the forceable nine are forced; the rest are tested and documented",
+      "verified": "Live database inspection + 5 tests",
+      "cwe": "CWE-266",
+      "cvss": "0.0"
+    },
+    {
+      "id": "SEC-004",
+      "severity": "Informational",
+      "type": "Pickle as a model serialisation format (CWE-502)",
+      "file": "backend/app/services/novelty_service.py:99",
+      "endpoint": "GET /devices/{device_id}/novelty",
+      "exposure": "Requires both a local write and this deployment's secret",
+      "description": "`joblib.load` is pickle, and unpickling executes arbitrary code in the API process. Two controls stand in front of it now. `_only_owner_can_write()` refuses a model file, or a directory, that any other local account could write. `model_integrity.verify()` then checks a detached HMAC-SHA256 sidecar keyed on a value derived from this deployment's own secret, before the bytes reach the unpickler \u2014 so a file an attacker did manage to write, by a permissions drift or a restored backup, is refused rather than executed. A missing sidecar is a failure, not a pass.",
+      "exploitation": "Not reachable. An attacker would need both a write into the operator's model directory and the deployment's signing key \u2014 and anyone holding the latter can already mint an access token for any account, so the model file would be the harder path, not the easier one.",
+      "impact": "None reachable. The residual is that the format is still code rather than data.",
+      "fix": "No further action while models are written by the local training script and read by the same machine. If they ever need to move between machines, replace joblib with a format that is not code \u2014 skops, ONNX, or the forest's parameters as JSON. An HMAC proves provenance, not safety.",
+      "status": "Informational \u2014 provenance and permissions both enforced",
+      "verified": "Code review + 11 tests",
+      "cwe": "CWE-502",
+      "cvss": "0.0"
+    }
+  ],
+  "endpoints": [
+    {
+      "method": "DELETE",
+      "path": "/agent-tokens/{token_id}",
+      "module": "devices",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "token_id",
+      "request_body": "no",
+      "source": "app/api/routes/devices.py:188",
+      "notes": "404 when the row is invisible or already revoked.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/alerts/anomaly-baselines",
+      "module": "alerts",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "device_id",
+      "request_body": "no",
+      "source": "app/api/routes/alerts.py",
+      "notes": "",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/alerts/events",
+      "module": "alerts",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "status, device_id, limit",
+      "request_body": "no",
+      "source": "app/api/routes/alerts.py:123",
+      "notes": "limit bounded ge=1 le=MAX_EVENTS; status is a Literal.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/alerts/rules",
+      "module": "alerts",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "-",
+      "request_body": "no",
+      "source": "app/api/routes/alerts.py",
+      "notes": "",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "POST",
+      "path": "/alerts/rules",
+      "module": "alerts",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "-",
+      "request_body": "yes",
+      "source": "app/api/routes/alerts.py",
+      "notes": "rule_type discriminator enforced by Pydantic and a DB CHECK.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "PATCH",
+      "path": "/alerts/rules/{rule_id}",
+      "module": "alerts",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "rule_id",
+      "request_body": "yes",
+      "source": "app/api/routes/alerts.py",
+      "notes": "session.refresh() before serialising the server-evaluated updated_at.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "DELETE",
+      "path": "/alerts/rules/{rule_id}",
+      "module": "alerts",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "rule_id",
+      "request_body": "no",
+      "source": "app/api/routes/alerts.py",
+      "notes": "alert_events.rule_id is ON DELETE SET NULL; alert_states cascades.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/alerts/silences",
+      "module": "alerts",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "-",
+      "request_body": "no",
+      "source": "app/api/routes/alerts.py",
+      "notes": "",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "POST",
+      "path": "/alerts/silences",
+      "module": "alerts",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "-",
+      "request_body": "yes",
+      "source": "app/api/routes/alerts.py",
+      "notes": "Suppresses notification only, never the state machine.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "DELETE",
+      "path": "/alerts/silences/{silence_id}",
+      "module": "alerts",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "silence_id",
+      "request_body": "no",
+      "source": "app/api/routes/alerts.py",
+      "notes": "",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/login",
+      "module": "auth",
+      "auth": "None (pre-auth)",
+      "rate_limit": "login 10/min/IP + 5/15min/email",
+      "tenancy": "Pre-auth (owner role)",
+      "params": "-",
+      "request_body": "yes",
+      "source": "app/api/routes/auth.py:92",
+      "notes": "Dummy-hash verify on unknown email; identical body for every failure.",
+      "exposure": "Pre-auth by necessity \u2014 the credential is the payload. Rate limited 10/min/IP + 5/15min/email"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/logout",
+      "module": "auth",
+      "auth": "Refresh cookie",
+      "rate_limit": "logout 60/min/IP",
+      "tenancy": "Pre-auth (owner role)",
+      "params": "-",
+      "request_body": "no",
+      "source": "app/api/routes/auth.py:154",
+      "notes": "Always 204; revokes the whole family. Same two CSRF layers as /auth/refresh.",
+      "exposure": "Cookie-authenticated \u2014 HttpOnly, SameSite=strict. Rate limited 60/min/IP"
+    },
+    {
+      "method": "GET",
+      "path": "/auth/me",
+      "module": "auth",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS via scope_to_user",
+      "params": "-",
+      "request_body": "no",
+      "source": "app/api/routes/auth.py:167",
+      "notes": "UserOut has no password_hash field at all.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/refresh",
+      "module": "auth",
+      "auth": "Refresh cookie",
+      "rate_limit": "refresh 30/min/IP",
+      "tenancy": "Pre-auth (owner role)",
+      "params": "-",
+      "request_body": "no",
+      "source": "app/api/routes/auth.py:123",
+      "notes": "Rotates; replay revokes the family. SameSite=strict plus a Sec-Fetch-Site check \u2014 a header page JavaScript cannot forge \u2014 refuse a cross-site call.",
+      "exposure": "Cookie-authenticated \u2014 HttpOnly, SameSite=strict; replay revokes the family. Rate limited 30/min/IP"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/signup",
+      "module": "auth",
+      "auth": "None (pre-auth)",
+      "rate_limit": "signup 5/hour/IP",
+      "tenancy": "Creates the tenant",
+      "params": "-",
+      "request_body": "yes",
+      "source": "app/api/routes/auth.py:63",
+      "notes": "Argon2id hash; seeds default alert rules in the same transaction.",
+      "exposure": "Pre-auth by necessity \u2014 this is where a credential is created. Rate limited 5/hour/IP"
+    },
+    {
+      "method": "GET",
+      "path": "/devices",
+      "module": "devices",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "include_removed",
+      "request_body": "no",
+      "source": "app/api/routes/devices.py:84",
+      "notes": "include_removed is a bool; validated by FastAPI.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "POST",
+      "path": "/devices",
+      "module": "devices",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "-",
+      "request_body": "yes",
+      "source": "app/api/routes/devices.py:103",
+      "notes": "platform is a Literal; server-owned fields are not on the schema.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "DELETE",
+      "path": "/devices/{device_id}",
+      "module": "devices",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "device_id",
+      "request_body": "no",
+      "source": "app/api/routes/devices.py:120",
+      "notes": "Soft delete; revokes the device's agent tokens in the same transaction.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/devices/{device_id}",
+      "module": "fleet",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "device_id",
+      "request_body": "no",
+      "source": "app/api/routes/fleet.py",
+      "notes": "404 for both 'not found' and 'not yours'.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/devices/{device_id}/novelty",
+      "module": "devices",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "device_id",
+      "request_body": "no",
+      "source": "app/api/routes/devices.py:141",
+      "notes": "Loads a per-device joblib model. Permission-checked and HMAC-verified against this deployment's own key before it is unpickled \u2014 SEC-004.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/devices/{device_id}/samples/recent",
+      "module": "live",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "device_id, seconds",
+      "request_body": "no",
+      "source": "app/api/routes/live.py:142",
+      "notes": "seconds bounded ge=1 le=MAX_RECENT_SECONDS.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/devices/{device_id}/series",
+      "module": "series",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "device_id, start, end, range_seconds, domains, max_points",
+      "request_body": "no",
+      "source": "app/api/routes/series.py:57",
+      "notes": "range_seconds and max_points bounded; domains is a Literal set. ~2 MB response, gzipped.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/devices/{device_id}/summary",
+      "module": "fleet",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "device_id, window_seconds",
+      "request_body": "no",
+      "source": "app/api/routes/fleet.py",
+      "notes": "Same computation as the fleet overview, one device.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/devices/{device_id}/tokens",
+      "module": "devices",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "device_id",
+      "request_body": "no",
+      "source": "app/api/routes/devices.py:175",
+      "notes": "Answers 404 for a device outside the tenant, like every sibling route.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/downloads/agent",
+      "module": "downloads",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "n/a (global catalogue)",
+      "params": "-",
+      "request_body": "no",
+      "source": "app/api/routes/downloads.py:28",
+      "notes": "Authenticated on purpose: /enroll stays the only unauthenticated route.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/downloads/agent/{filename}",
+      "module": "downloads",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "n/a",
+      "params": "filename, ticket",
+      "request_body": "no",
+      "source": "app/api/routes/downloads.py:63",
+      "notes": "filename matched against the manifest allow-list by exact equality, then containment-checked. Accepts a bearer token or the download cookie.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "POST",
+      "path": "/downloads/agent/{filename}/ticket",
+      "module": "downloads",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "n/a",
+      "params": "filename",
+      "request_body": "no",
+      "source": "app/api/routes/downloads.py:47",
+      "notes": "Mints a 600s filename-scoped ticket, returned as an HttpOnly SameSite=strict cookie rather than in the body, so it never reaches an access log or the browser's history.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "POST",
+      "path": "/enroll",
+      "module": "devices",
+      "auth": "None (pre-auth)",
+      "rate_limit": "enroll 10/hour/IP",
+      "tenancy": "Pre-auth (owner role)",
+      "params": "-",
+      "request_body": "yes",
+      "source": "app/api/routes/devices.py:232",
+      "notes": "The only unauthenticated write. 60-bit code, 15-min TTL, consumed by one atomic UPDATE ... RETURNING.",
+      "exposure": "Code-authenticated \u2014 a 60-bit single-use code, 15-min TTL, consumed by one atomic statement. Rate limited 10/hour/IP"
+    },
+    {
+      "method": "POST",
+      "path": "/enrollment-codes",
+      "module": "devices",
+      "auth": "Bearer access JWT",
+      "rate_limit": "enrollment_code 20/hour/IP",
+      "tenancy": "RLS",
+      "params": "-",
+      "request_body": "yes",
+      "source": "app/api/routes/devices.py:201",
+      "notes": "device_id ownership re-checked before minting; plaintext returned once.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/fleet/overview",
+      "module": "fleet",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "window_seconds",
+      "request_body": "no",
+      "source": "app/api/routes/fleet.py",
+      "notes": "One build_summaries() call over the caller's devices.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/forecasts",
+      "module": "forecasts",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "device_id",
+      "request_body": "no",
+      "source": "app/api/routes/forecasts.py",
+      "notes": "Read-only; the worker is the only writer.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/forecasts/exhaustion",
+      "module": "forecasts",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "device_id",
+      "request_body": "no",
+      "source": "app/api/routes/forecasts.py",
+      "notes": "",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "module": "core",
+      "auth": "None (public probe)",
+      "rate_limit": "none",
+      "tenancy": "n/a",
+      "params": "-",
+      "request_body": "no",
+      "source": "app/main.py:171",
+      "notes": "Unauthenticated liveness probe. Returns no version or build detail.",
+      "exposure": "Public by design \u2014 returns only {\"status\":\"ok\"}; no version, no build, no state"
+    },
+    {
+      "method": "GET",
+      "path": "/incidents",
+      "module": "incidents",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "status, device_id",
+      "request_body": "no",
+      "source": "app/api/routes/incidents.py:74",
+      "notes": "status filter is a Literal.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/incidents/{incident_id}",
+      "module": "incidents",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "incident_id",
+      "request_body": "no",
+      "source": "app/api/routes/incidents.py",
+      "notes": "summary_text/root_cause_text are inert display text.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "POST",
+      "path": "/incidents/{incident_id}/regenerate",
+      "module": "incidents",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "incident_id",
+      "request_body": "no",
+      "source": "app/api/routes/incidents.py",
+      "notes": "Local template pass; no hosted API is called. CPU-bounded by the bundle size.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "POST",
+      "path": "/notifications/fcm/register",
+      "module": "notifications",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "-",
+      "request_body": "yes",
+      "source": "app/api/routes/notifications.py:100",
+      "notes": "Global UNIQUE on token; a cross-tenant collision surfaces as 409, never a silent reassignment.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "DELETE",
+      "path": "/notifications/fcm/register",
+      "module": "notifications",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "-",
+      "request_body": "yes",
+      "source": "app/api/routes/notifications.py:145",
+      "notes": "",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/notifications/settings",
+      "module": "notifications",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "-",
+      "request_body": "no",
+      "source": "app/api/routes/notifications.py:34",
+      "notes": "Lazily creates the row.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "PATCH",
+      "path": "/notifications/settings",
+      "module": "notifications",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "-",
+      "request_body": "yes",
+      "source": "app/api/routes/notifications.py:41",
+      "notes": "email_address is an EmailStr.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/notifications/vapid-public-key",
+      "module": "notifications",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "n/a",
+      "params": "-",
+      "request_body": "no",
+      "source": "app/api/routes/notifications.py:56",
+      "notes": "Public key only; null when unconfigured.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "POST",
+      "path": "/notifications/web-push/subscribe",
+      "module": "notifications",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "-",
+      "request_body": "yes",
+      "source": "app/api/routes/notifications.py:62",
+      "notes": "`endpoint` is validated as a request target \u2014 https only, no private or loopback address, no single-label host \u2014 and re-checked by resolution before the send.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "DELETE",
+      "path": "/notifications/web-push/subscribe",
+      "module": "notifications",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "-",
+      "request_body": "yes",
+      "source": "app/api/routes/notifications.py:82",
+      "notes": "user_id filter plus RLS.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/reports/analytics",
+      "module": "reports",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "device_id, period_days",
+      "request_body": "no",
+      "source": "app/api/routes/reports.py:109",
+      "notes": "period_days bounded ge=1 le=366.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/reports/export.csv",
+      "module": "reports",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "device_id, period_days",
+      "request_body": "no",
+      "source": "app/api/routes/reports.py:123",
+      "notes": "Rendered fresh; nothing is stored server-side.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/reports/export.pdf",
+      "module": "reports",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "device_id, period_days",
+      "request_body": "no",
+      "source": "app/api/routes/reports.py:142",
+      "notes": "WeasyPrint, wrapped in asyncio.to_thread. Seconds per call \u2014 a DoS amplifier if ever unauthenticated.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "GET",
+      "path": "/reports/schedules",
+      "module": "reports",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "-",
+      "request_body": "no",
+      "source": "app/api/routes/reports.py",
+      "notes": "",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "POST",
+      "path": "/reports/schedules",
+      "module": "reports",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "-",
+      "request_body": "yes",
+      "source": "app/api/routes/reports.py",
+      "notes": "cadence discriminator enforced by Pydantic and a DB CHECK.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "PATCH",
+      "path": "/reports/schedules/{schedule_id}",
+      "module": "reports",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "schedule_id",
+      "request_body": "yes",
+      "source": "app/api/routes/reports.py",
+      "notes": "",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "DELETE",
+      "path": "/reports/schedules/{schedule_id}",
+      "module": "reports",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "schedule_id",
+      "request_body": "no",
+      "source": "app/api/routes/reports.py",
+      "notes": "",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "POST",
+      "path": "/reports/schedules/{schedule_id}/send-now",
+      "module": "reports",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "schedule_id",
+      "request_body": "no",
+      "source": "app/api/routes/reports.py",
+      "notes": "Sends to the account's own address; the recipient is not caller-supplied.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "POST",
+      "path": "/ws/tickets",
+      "module": "live",
+      "auth": "Bearer access JWT",
+      "rate_limit": "none",
+      "tenancy": "RLS",
+      "params": "-",
+      "request_body": "no",
+      "source": "app/api/routes/live.py",
+      "notes": "Mints a 30s single-use viewer ticket bound to the caller.",
+      "exposure": "Authenticated + tenant-scoped by RLS"
+    },
+    {
+      "method": "WEBSOCKET",
+      "path": "/ws/viewer",
+      "module": "live",
+      "auth": "Ticket (single-use, 30s)",
+      "rate_limit": "none",
+      "tenancy": "user_id from the redeemed ticket",
+      "params": "ticket",
+      "request_body": "n/a",
+      "source": "app/live/viewer_ws.py:257",
+      "notes": "Not in the OpenAPI document. GETDEL makes redemption atomic; replay is refused. Origin is checked before the ticket is read.",
+      "exposure": "Ticket-authenticated \u2014 single-use, 30s, minted over the authenticated API"
+    },
+    {
+      "method": "WEBSOCKET",
+      "path": "/ws/agent",
+      "module": "ingest",
+      "auth": "Opaque agent token (Bearer sag_...)",
+      "rate_limit": "none",
+      "tenancy": "user_id resolved from the token row",
+      "params": "-",
+      "request_body": "n/a",
+      "source": "app/ingest/ws.py:185",
+      "notes": "Not in the OpenAPI document. A user access JWT is rejected here. Frames are size-capped at 512 KB before parsing and the parser carries a 47-case fuzz suite.",
+      "exposure": "Token-authenticated \u2014 an opaque device-scoped agent token, sha256 at rest"
+    }
+  ],
+  "dependencies": [
+    {
+      "project": "backend (Python)",
+      "manifest": "backend/requirements.txt",
+      "scanner": "pip-audit 2.9.0",
+      "packages": 80,
+      "vulnerable": 0,
+      "severity": "-",
+      "advisory": "-",
+      "fix": "-",
+      "notes": "Pinned closure, resolved on CPython 3.14. A range would have matched no CVE at all \u2014 which is why the lockfile exists.",
+      "ships": "yes \u2014 the server"
+    },
+    {
+      "project": "agent (Python)",
+      "manifest": "agent/pyproject.toml (resolved closure)",
+      "scanner": "pip-audit 2.9.0",
+      "packages": 23,
+      "vulnerable": 0,
+      "severity": "-",
+      "advisory": "-",
+      "fix": "-",
+      "notes": "No lockfile; audited against the venv's resolved versions. Declaring one would make this reproducible.",
+      "ships": "yes \u2014 the binaries"
+    },
+    {
+      "project": "frontend/web",
+      "manifest": "frontend/web/package-lock.json",
+      "scanner": "npm audit",
+      "packages": 0,
+      "vulnerable": 0,
+      "severity": "-",
+      "advisory": "-",
+      "fix": "-",
+      "notes": "Zero advisories. The only JavaScript that reaches a user.",
+      "ships": "yes \u2014 the console bundle"
+    },
+    {
+      "project": "frontend/mobile",
+      "manifest": "frontend/mobile/package-lock.json",
+      "scanner": "npm audit",
+      "packages": 11,
+      "vulnerable": 0,
+      "severity": "-",
+      "advisory": "-",
+      "fix": "Fixed by an npm override: uuid@14",
+      "notes": "Was 11 moderate through expo -> @expo/config-plugins -> xcode -> uuid. An override bumps it without touching the Expo SDK; `expo config` still evaluates and all 95 mobile tests pass.",
+      "ships": "no \u2014 build tooling"
+    },
+    {
+      "project": "selenium-tests",
+      "manifest": "selenium-tests/package-lock.json",
+      "scanner": "npm audit",
+      "packages": 5,
+      "vulnerable": 0,
+      "severity": "-",
+      "advisory": "-",
+      "fix": "Fixed by npm overrides: serialize-javascript@7.1.0, diff@9, uuid@14",
+      "notes": "Was 5 (1 high). npm's own `audit fix --force` was a downgrade to exceljs@3.4.0; an override bumps the vulnerable transitive dep instead. 421 cases re-run and passing.",
+      "ships": "no \u2014 test only"
+    },
+    {
+      "project": "appium-tests",
+      "manifest": "appium-tests/package-lock.json",
+      "scanner": "npm audit",
+      "packages": 12,
+      "vulnerable": 0,
+      "severity": "-",
+      "advisory": "-",
+      "fix": "Fixed by npm overrides, incl. @puppeteer/browsers@3 which drops extract-zip",
+      "notes": "Was 12 (8 high). `extract-zip` had no patched release at any version \u2014 but @puppeteer/browsers@3 replaced it with modern-tar, so forcing that major removes the package from the tree entirely. Verified: the full 560-case Appium suite was re-run against the overridden dependency tree, 560 passing.",
+      "ships": "no \u2014 test only"
+    },
+    {
+      "project": "tools/security-report",
+      "manifest": "tools/security-report/package-lock.json",
+      "scanner": "npm audit",
+      "packages": 1,
+      "vulnerable": 0,
+      "severity": "-",
+      "advisory": "-",
+      "fix": "uuid override",
+      "notes": "The workbook generator. Carries the same uuid override \u2014 a security assessment whose own generator ships a known advisory would be its own finding.",
+      "ships": "no \u2014 report tooling"
+    }
+  ],
+  "domains": [
+    {
+      "domain": "Authentication & session management",
+      "weight": 15,
+      "score": 99,
+      "evidence": "Argon2id with parameters pinned in settings. Refresh rotation with reuse detection confirmed live \u2014 a replay 401s and the rotated token dies with the family. Nine JWT forgeries all refused. No user enumeration by response body or by timing (28ms vs 28ms, ratio 1.02). Signup screens commonly guessed passwords offline; login deliberately does not, so the policy cannot be read off the endpoint. The two cookie-authenticated routes now carry a second layer behind SameSite=strict: a browser announcing a cross-site request is refused on `Sec-Fetch-Site`, a header page JavaScript cannot forge.",
+      "deductions": "The breached-password screen is a curated list rather than a full corpus \u2014 an offline check, chosen so signup does not depend on a third party being reachable."
+    },
+    {
+      "domain": "Authorization & multi-tenancy",
+      "weight": 15,
+      "score": 99,
+      "evidence": "RLS with a policy on all 23 tenant tables, verified against the live database. Migration 0016 forces it for the owner role on the nine tables no owner-role path touches. All 46 protected operations refuse an anonymous caller; a second tenant was denied on every cross-tenant probe, every one a 404 with the victim's data intact. The owner session is policed by an AST-walking test with a seven-entry allow-list.",
+      "deductions": "SEC-003 \u2014 fourteen tables cannot be forced, because the pre-auth paths, the ingest socket and four workers legitimately read them through the owner role."
+    },
+    {
+      "domain": "Input validation & injection resistance",
+      "weight": 10,
+      "score": 100,
+      "evidence": "No dynamic SQL takes user input: the four places a table name is a string interpolate from frozen module constants, each traced individually. 8 payload families x 4 endpoints produced no 5xx and no reflection. 10 traversal payloads across two handlers all refused. The web-push endpoint is validated as a request target at the schema and re-checked by resolution before the send. The ingest frame parser \u2014 the one place an untrusted machine's bytes meet a schema \u2014 carries 47 fuzz tests asserting no input produces anything but a clean ValidationError.",
+      "deductions": "None."
+    },
+    {
+      "domain": "Transport & browser hardening",
+      "weight": 10,
+      "score": 100,
+      "evidence": "Seven security headers on every response including 404s, static files and binary downloads. HSTS correctly scheme-gated. CORS reflects no arbitrary origin. The server binds loopback, so the Funnel's https:// front door is the only way in. Both WebSocket handshakes check Origin before the ticket is read. The CSP carries no 'unsafe-inline' anywhere \u2014 verified in a browser against five live charts streaming from a real agent, with an injected <style> element and setAttribute('style') both refused.",
+      "deductions": "None."
+    },
+    {
+      "domain": "Secrets & credential management",
+      "weight": 10,
+      "score": 97,
+      "evidence": "backend/.env has never been committed. Opaque tokens are 256-bit, sha256 at rest, looked up by unique index. The agent token file is 0600 through a verified descriptor. The access token never touches disk in either client. Every signing key published in this repository is refused in production. The CI and test signing keys are generated per run rather than committed, and the agent-download ticket moved from a query string \u2014 where a URL leaks into access logs and history \u2014 into an HttpOnly, SameSite=strict cookie.",
+      "deductions": "SEC-002 \u2014 the two CI env files still carry docker-compose's own published database passwords."
+    },
+    {
+      "domain": "Dependency & supply chain",
+      "weight": 10,
+      "score": 88,
+      "evidence": "**Zero known vulnerabilities in every manifest**: 80 pinned backend packages, the agent's 23, and all five JavaScript projects. The pinned closure is what makes that mean anything. The release APK is signed with a real key and `make mobile-apk` refuses to fall back to React Native's public debug key. The build manifest is validated, not trusted.",
+      "deductions": "SEC-001 \u2014 four unsigned desktop binaries, blocked on a certificate rather than on code."
+    },
+    {
+      "domain": "Data protection & privacy",
+      "weight": 10,
+      "score": 99,
+      "evidence": "UserOut has no password_hash field to exclude. Metric data is never interpreted as an instruction. FCM tokens redacted before logging. No report stored server-side. Novelty models are permission-checked and HMAC-verified against this deployment's own key before any unpickle.",
+      "deductions": "SEC-004 \u2014 the serialisation format is still code rather than data, which matters only if models are ever made portable."
+    },
+    {
+      "domain": "Configuration & deployment posture",
+      "weight": 10,
+      "score": 100,
+      "evidence": "`ENVIRONMENT` is required with no default, so a deployment that never considered it fails at startup naming the field rather than running unvalidated. The validator then enforces six requirements including every signing key published in this repository. /docs, /redoc and /openapi.json all 404 in production. X-Forwarded-For is trusted only from the local proxy \u2014 six spoofing attempts failed to escape a rate-limit bucket. The default bind is loopback.",
+      "deductions": "None."
+    },
+    {
+      "domain": "Logging, monitoring & error handling",
+      "weight": 5,
+      "score": 96,
+      "evidence": "No stack trace, ORM name or filesystem path in any error body. No Server banner. Secrets redacted before logging. The rate limiter degrades to a per-process counter on a Redis outage rather than removing the limit, and says so in the log.",
+      "deductions": "Nothing on this deployment alerts on the fail-open log line \u2014 an operational task the code cannot do for itself."
+    },
+    {
+      "domain": "Security testing & CI coverage",
+      "weight": 5,
+      "score": 100,
+      "evidence": "1197 tests green across five runners: 777 backend, 188 agent, 80 web, 95 mobile JS, 57 Kotlin. 421 Selenium and 560 Appium cases cover the authenticated surface \u2014 both suites re-run and passing against the final dependency and code state. The ingest parser has a dedicated fuzz suite. SAST, dependency scanning, secret scanning and live API security checks run on every push and pull request, failing only on Critical.",
+      "deductions": "None."
+    }
+  ],
+  "dast": [
+    {
+      "check": "all 46 protected operations refuse an anonymous caller",
+      "severity": "Critical",
+      "observed": "all 401/403",
+      "verdict": "PASS"
+    },
+    {
+      "check": "security headers on /health",
+      "severity": "Medium",
+      "observed": "all present",
+      "verdict": "PASS"
+    },
+    {
+      "check": "security headers on /auth/me",
+      "severity": "Medium",
+      "observed": "all present",
+      "verdict": "PASS"
+    },
+    {
+      "check": "security headers on /",
+      "severity": "Medium",
+      "observed": "all present",
+      "verdict": "PASS"
+    },
+    {
+      "check": "security headers on /nonexistent-page",
+      "severity": "Medium",
+      "observed": "all present",
+      "verdict": "PASS"
+    },
+    {
+      "check": "HSTS is scheme-gated (absent over http)",
+      "severity": "Medium",
+      "observed": "absent",
+      "verdict": "PASS"
+    },
+    {
+      "check": "server banner",
+      "severity": "Low",
+      "observed": "(absent)",
+      "verdict": "INFO"
+    },
+    {
+      "check": "jwt: alg=none refused",
+      "severity": "Critical",
+      "observed": "401",
+      "verdict": "PASS"
+    },
+    {
+      "check": "jwt: signature stripped refused",
+      "severity": "Critical",
+      "observed": "401",
+      "verdict": "PASS"
+    },
+    {
+      "check": "jwt: sub swapped refused",
+      "severity": "Critical",
+      "observed": "401",
+      "verdict": "PASS"
+    },
+    {
+      "check": "jwt: signature flipped refused",
+      "severity": "Critical",
+      "observed": "401",
+      "verdict": "PASS"
+    },
+    {
+      "check": "jwt: expired refused",
+      "severity": "Critical",
+      "observed": "401",
+      "verdict": "PASS"
+    },
+    {
+      "check": "jwt: wrong audience refused",
+      "severity": "Critical",
+      "observed": "401",
+      "verdict": "PASS"
+    },
+    {
+      "check": "jwt: typ confusion refused",
+      "severity": "Critical",
+      "observed": "401",
+      "verdict": "PASS"
+    },
+    {
+      "check": "jwt: garbage refused",
+      "severity": "Critical",
+      "observed": "401",
+      "verdict": "PASS"
+    },
+    {
+      "check": "jwt: bearer scheme required",
+      "severity": "Medium",
+      "observed": "401",
+      "verdict": "PASS"
+    },
+    {
+      "check": "tenancy: a second account is denied everywhere",
+      "severity": "Critical",
+      "observed": "no cross-tenant access",
+      "verdict": "PASS"
+    },
+    {
+      "check": "tenancy: the probe device survived the DELETE attempt",
+      "severity": "Critical",
+      "observed": "intact",
+      "verdict": "PASS"
+    },
+    {
+      "check": "injection: 8 payload families x 4 endpoints",
+      "severity": "High",
+      "observed": "no 5xx",
+      "verdict": "PASS"
+    },
+    {
+      "check": "injection: no reflected XSS in an error body",
+      "severity": "High",
+      "observed": "JSON, escaped",
+      "verdict": "PASS"
+    },
+    {
+      "check": "path traversal: 6 payloads on /downloads/agent",
+      "severity": "Critical",
+      "observed": "all refused",
+      "verdict": "PASS"
+    },
+    {
+      "check": "path traversal: console static handler stays inside dist/",
+      "severity": "Critical",
+      "observed": "no escape",
+      "verdict": "PASS"
+    },
+    {
+      "check": "session: refresh cookie is HttpOnly",
+      "severity": "High",
+      "observed": "present",
+      "verdict": "PASS"
+    },
+    {
+      "check": "session: refresh cookie is SameSite=strict",
+      "severity": "High",
+      "observed": "strict",
+      "verdict": "PASS"
+    },
+    {
+      "check": "session: access token is not in a cookie",
+      "severity": "High",
+      "observed": "body only",
+      "verdict": "PASS"
+    },
+    {
+      "check": "session: Secure flag",
+      "severity": "Info",
+      "observed": "absent (COOKIE_SECURE=false on this stack)",
+      "verdict": "INFO"
+    },
+    {
+      "check": "session: a replayed refresh token is refused",
+      "severity": "Critical",
+      "observed": "first=200 replay=401",
+      "verdict": "PASS"
+    },
+    {
+      "check": "session: reuse revokes the whole family",
+      "severity": "Critical",
+      "observed": "401",
+      "verdict": "PASS"
+    },
+    {
+      "check": "session: logout revokes the family",
+      "severity": "High",
+      "observed": "401",
+      "verdict": "PASS"
+    },
+    {
+      "check": "authn: unknown email and wrong password are indistinguishable",
+      "severity": "Medium",
+      "observed": "401/401, bodies identical",
+      "verdict": "PASS"
+    },
+    {
+      "check": "authn: no timing oracle on the unknown-email path",
+      "severity": "Medium",
+      "observed": "27ms vs 29ms, ratio 1.08",
+      "verdict": "PASS"
+    },
+    {
+      "check": "authn: short passwords are rejected",
+      "severity": "Medium",
+      "observed": "all 3 refused",
+      "verdict": "PASS"
+    },
+    {
+      "check": "cors: an arbitrary origin is not reflected",
+      "severity": "High",
+      "observed": "allow-origin=None",
+      "verdict": "PASS"
+    },
+    {
+      "check": "ssrf: web-push endpoint rejects internal and non-http URLs",
+      "severity": "Medium",
+      "observed": "all refused",
+      "verdict": "PASS"
+    },
+    {
+      "check": "errors: no stack traces or paths in a response body",
+      "severity": "Medium",
+      "observed": "none",
+      "verdict": "PASS"
+    },
+    {
+      "check": "mass assignment: server-owned fields are ignored",
+      "severity": "High",
+      "observed": "ignored",
+      "verdict": "PASS"
+    },
+    {
+      "check": "http: TRACE is refused",
+      "severity": "Low",
+      "observed": "405",
+      "verdict": "PASS"
+    },
+    {
+      "check": "ws: viewer refuses a missing ticket",
+      "severity": "Critical",
+      "observed": "refused (InvalidStatus)",
+      "verdict": "PASS"
+    },
+    {
+      "check": "ws: viewer refuses a fabricated ticket",
+      "severity": "Critical",
+      "observed": "refused (InvalidStatus)",
+      "verdict": "PASS"
+    },
+    {
+      "check": "ws: viewer accepts a valid ticket",
+      "severity": "High",
+      "observed": "ACCEPTED",
+      "verdict": "PASS"
+    },
+    {
+      "check": "ws: a ticket is single-use",
+      "severity": "Critical",
+      "observed": "refused (InvalidStatus)",
+      "verdict": "PASS"
+    },
+    {
+      "check": "ws: ingest refuses a missing agent token",
+      "severity": "Critical",
+      "observed": "refused (InvalidStatus)",
+      "verdict": "PASS"
+    },
+    {
+      "check": "ws: ingest refuses a fabricated agent token",
+      "severity": "Critical",
+      "observed": "refused (InvalidStatus)",
+      "verdict": "PASS"
+    },
+    {
+      "check": "ws: a user access JWT is not an agent token",
+      "severity": "Critical",
+      "observed": "refused (InvalidStatus)",
+      "verdict": "PASS"
+    },
+    {
+      "check": "ws: viewer refuses a foreign Origin",
+      "severity": "High",
+      "observed": "refused (InvalidStatus)",
+      "verdict": "PASS"
+    },
+    {
+      "check": "ws: viewer still accepts its own Origin",
+      "severity": "High",
+      "observed": "ACCEPTED",
+      "verdict": "PASS"
+    },
+    {
+      "check": "ws: ingest refuses a browser Origin",
+      "severity": "Medium",
+      "observed": "refused (InvalidStatus)",
+      "verdict": "PASS"
+    },
+    {
+      "check": "cleanup: probe devices and rules removed",
+      "severity": "Info",
+      "observed": "3/3 removed; the fleet is empty again",
+      "verdict": "INFO"
+    }
+  ]
+}

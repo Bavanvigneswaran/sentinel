@@ -10,9 +10,10 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.config import get_settings
+from app.security.password_policy import password_problem
 
 _settings = get_settings()
 
@@ -25,6 +26,20 @@ class SignupRequest(BaseModel):
         min_length=_settings.password_min_length, max_length=_settings.password_max_length
     )
     display_name: str | None = Field(default=None, max_length=100)
+
+    @field_validator("password")
+    @classmethod
+    def _not_a_commonly_guessed_password(cls, value: str) -> str:
+        """NIST SP 800-63B's other half. See app/security/password_policy.py.
+
+        On signup only. `LoginRequest` must never apply it, for the same reason
+        it does not apply the length minimum: a login that rejected a password
+        for being weak would tell an attacker which candidates to skip.
+        """
+        problem = password_problem(value)
+        if problem is not None:
+            raise ValueError(problem)
+        return value
 
 
 class LoginRequest(BaseModel):

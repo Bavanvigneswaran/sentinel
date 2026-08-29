@@ -37,12 +37,18 @@ off because it is inconvenient — it should still be *tested*, as its own
 scenario asserting that the 11th login is refused, rather than as background
 noise under every other assertion.
 
-**That scenario does not exist yet, and it cannot live in these suites.** They
-run against `.env.ci`, which has the limiter off, so a case asserting a 429 can
-only ever fail here — and one written to pass here would be asserting nothing.
-Covering it needs a second configuration with `RATE_LIMIT_ENABLED=true` and a
-job of its own, not another case in `selenium-tests/`. Recorded as an open gap
-in `docs/TEST_BRIEF.md` rather than quietly dropped.
+**That scenario cannot live in `selenium-tests/` itself.** It runs against
+`.env.ci`, which has the limiter off, so a case asserting a 429 there can only
+ever fail — and one written to pass would be asserting nothing. It needed a
+second configuration with `RATE_LIMIT_ENABLED=true` and a job of its own.
+
+**It exists now, in `.github/workflows/security-review.yml`'s `api_checks`
+job.** A separate step brings up a second uvicorn instance from the same
+`.env.ci` with `RATE_LIMIT_ENABLED=true` overridden, and asserts that a burst
+of failed logins gets a `429` — the exact scenario this file used to record as
+missing. `tools/security-report/api-checks.py` runs the equivalent by hand
+against any base URL: point it at a second instance with the limiter on and
+it covers the login, enrollment-code and signup buckets in one pass.
 
 ---
 
@@ -290,17 +296,22 @@ calls, and freezing would declare a dependency on a client this product
 deliberately does not use.
 
 **Gitleaks will flag `backend/.env.test` and `backend/.env.ci`.** Both are
-committed, both contain credentials, and both are throwaways for databases that
-are dropped and recreated — each file says so at the top. They are true
-positives for the pattern and false positives for the finding.
+committed and both are throwaways for databases that are dropped and
+recreated — each file says so at the top. The JWT signing keys they used to
+carry are gone (generated per run by the Makefile, the composite CI action and
+`tests/conftest.py` instead); what remains is `docker-compose.yml`'s own
+published database password on roles that exist only for those databases.
+True positive for the pattern, false positive for the finding.
 
-Findings a scan should be expected to raise, all known and none of them new:
+Findings a scan should be expected to raise, all known and none of them new —
+see `Vulnerability Test Results/security-review.md` for the full assessment
+this table summarises:
 
 | Finding | Status |
 | --- | --- |
-| `joblib.load` is pickle (`app/services/novelty_service.py`) | Accepted. Operator-written files, never uploaded, never user-supplied, never fetched. The file records the condition under which that stops being acceptable. |
-| No CSRF token on `/auth/refresh`, `/auth/logout` | `SameSite=strict` is the defence, and the prod validator refuses to start with `cookie_samesite=none`. |
-| The rate limiter fails open on a Redis outage | Deliberate, and documented in `app/api/ratelimit.py`: a Redis outage must not lock every user out of the product. Production must alert on that log line. |
+| `joblib.load` is pickle (`app/services/novelty_service.py`) | Accepted, and enforced twice rather than only documented: `_only_owner_can_write()` refuses a model file or directory another local account could write, and `app/services/model_integrity.py`'s HMAC-SHA256 sidecar — keyed on a value derived from `JWT_SECRET` — is verified before the bytes reach the unpickler. A missing sidecar is a failure, not a pass. |
+| No CSRF token on `/auth/refresh`, `/auth/logout` | `SameSite=strict` remains the primary defence, and the prod validator still refuses to start with `cookie_samesite=none`. A second layer sits behind it: `app/api/csrf.py`'s `enforce_same_site()` refuses a request whose `Sec-Fetch-Site` header names anything but `same-origin` or absent — a header page JavaScript cannot forge, needing no client change. |
+| The rate limiter fails open on a Redis outage | Failing open is still deliberate — a Redis outage must not lock every user out of the product — but it no longer fails open to *unlimited*. `_local_hit()` degrades to a per-process fixed-window counter instead. Production must still alert on the `degrading to the in-process fallback` log line; that half is an operational task the code cannot do for itself. |
 
 The browser security headers a scan checks for are set by
 `app/security/headers.py` on every response, including the console's own static

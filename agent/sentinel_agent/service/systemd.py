@@ -44,7 +44,9 @@ def _systemctl(scope: Scope) -> list[str]:
     return ["systemctl"] if scope == "system" else ["systemctl", "--user"]
 
 
-def build_unit(config_path: Path, scope: Scope = "user") -> str:
+def build_unit(
+    config_path: Path, scope: Scope = "user", *, insecure: bool = False
+) -> str:
     """Render the unit file. Pure — no filesystem, no systemd, so it is
     assertable from a Mac."""
     # shlex.quote each element rather than a bare join: systemd's ExecStart is
@@ -58,7 +60,8 @@ def build_unit(config_path: Path, scope: Scope = "user") -> str:
     # literal % — `/home/user/100%backup/…` — would be read as an unknown
     # specifier. `%%` is how systemd spells a literal percent.
     exec_start = " ".join(
-        shlex.quote(part).replace("%", "%%") for part in agent_command(config_path)
+        shlex.quote(part).replace("%", "%%")
+        for part in agent_command(config_path, insecure=insecure)
     )
 
     lines = [
@@ -157,11 +160,13 @@ def enable_lingering() -> tuple[bool, str]:
     return True, f"lingering enabled for {user}"
 
 
-def install(config_path: Path, scope: Scope = "user") -> InstallResult:
+def install(
+    config_path: Path, scope: Scope = "user", *, insecure: bool = False
+) -> InstallResult:
     path = unit_path(scope)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(build_unit(config_path, scope))
+        path.write_text(build_unit(config_path, scope, insecure=insecure))
     except OSError as exc:
         hint = " (run with sudo)" if scope == "system" else ""
         raise ServiceError(f"could not write {path}{hint}: {exc}") from exc

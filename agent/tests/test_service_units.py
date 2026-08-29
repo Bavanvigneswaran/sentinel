@@ -439,3 +439,50 @@ def test_the_module_form_is_the_last_resort(tmp_path, monkeypatch):
     monkeypatch.setattr(base.sys, "executable", str(tmp_path / "python"))
 
     assert base.agent_executable() == [str(tmp_path / "python"), "-m", "sentinel_agent.cli"]
+
+
+# --- --insecure reaches the rendered unit ------------------------------------
+#
+# `run` refuses a remote http:// server unless told otherwise (the agent token
+# is replayed in the handshake on every reconnect, and the agent reconnects with
+# backoff). Without this the installer would register a service that fails at
+# every restart forever, and the operator would rediscover a decision they had
+# already made from a service manager's log.
+
+
+def test_insecure_is_absent_by_default():
+    assert "--insecure" not in agent_command(CONFIG)
+
+
+def test_insecure_is_rendered_after_the_subcommand():
+    """It is a subcommand option, unlike --config, so it has to follow `run`.
+    Asserted through the real parser for the same reason --config's order is."""
+    argv = agent_command(CONFIG, insecure=True)
+    assert argv[-2:] == ["run", "--insecure"]
+    args = _parse_agent_argv(argv)
+    assert args.command == "run"
+    assert args.insecure is True
+
+
+def test_the_systemd_unit_carries_it():
+    unit = systemd.build_unit(CONFIG, "user", insecure=True)
+    exec_start = next(
+        line for line in unit.splitlines() if line.startswith("ExecStart=")
+    )
+    assert exec_start.rstrip().endswith("run --insecure")
+
+
+def test_the_launchd_plist_carries_it():
+    from sentinel_agent.service import launchd
+
+    plist = launchd.build_plist(CONFIG, "user", insecure=True)
+    assert plist["ProgramArguments"][-2:] == ["run", "--insecure"]
+
+
+def test_the_windows_task_carries_it():
+    xml = windows.build_task_xml(CONFIG, "user", insecure=True)
+    assert "--insecure" in xml
+    args = _parse_agent_argv(
+        agent_command(CONFIG, Path("/var/log/sentinel/agent.log"), insecure=True)
+    )
+    assert args.insecure is True

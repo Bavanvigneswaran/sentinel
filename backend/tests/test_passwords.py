@@ -47,7 +47,7 @@ def test_production_defaults_meet_owasp_guidance():
         if key.startswith("ARGON2_"):
             pytest.skip("argon2 overridden in this environment")
 
-    s = Settings(_env_file=None)
+    s = Settings(_env_file=None, environment="test")
     assert s.argon2_time_cost >= 3
     assert s.argon2_memory_cost >= 65536  # 64 MiB
     assert s.argon2_hash_len >= 32

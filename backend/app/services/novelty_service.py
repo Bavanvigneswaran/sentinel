@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import stat
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -29,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analysis.multivariate import TrainedModel, score_row
 from app.config import get_settings
+from app.services import model_integrity
 from app.services.metrics_read import FRESH_WINDOW_SECONDS, latest_per_entity
 
 logger = logging.getLogger(__name__)
@@ -66,20 +69,55 @@ def model_dir() -> Path | None:
     return Path(raw).expanduser().resolve() if raw else None
 
 
+#: Permission bits that would let somebody other than the owner rewrite a model
+#: file — and therefore choose what `joblib.load` unpickles.
+_WRITABLE_BY_OTHERS = stat.S_IWGRP | stat.S_IWOTH
+
+
+def _only_owner_can_write(path: Path) -> bool:
+    """True when neither the model file nor its directory is writable by others.
+
+    POSIX only. Windows permissions are ACLs and `st_mode` says nothing useful
+    about them, so there the check passes and the trust assumption is the
+    directory the operator named — the same position the module docstring
+    describes.
+    """
+    if os.name != "posix":
+        return True
+    try:
+        for candidate in (path, path.parent):
+            if candidate.stat().st_mode & _WRITABLE_BY_OTHERS:
+                return False
+    except OSError:
+        return False
+    return True
+
+
 def load_model(device_id: uuid.UUID) -> TrainedModel | None:
     """The model for one device, or None when there isn't a usable one.
 
-    `joblib.load` is pickle, and unpickling executes arbitrary code. That is
-    acceptable here for one specific reason: these files are written by an
+    `joblib.load` is pickle, and unpickling executes arbitrary code — in this
+    process, which holds the database credential and the JWT signing key. That
+    is acceptable for one specific reason: these files are written by an
     operator running the training script against their own database, into a
-    directory that operator named — they are never uploaded, never
-    user-supplied, and never fetched over a network. If that ever stops being
-    true, this needs a serialisation format that is not pickle, not a
-    sandbox.
+    directory that operator named. They are never uploaded, never
+    user-supplied, and never fetched over a network.
 
-    The isinstance check below is therefore not a security boundary; it is a
-    guard against a stale or truncated file from an interrupted training run
-    turning into an AttributeError somewhere further down.
+    That precondition is *enforced* rather than documented, in two layers. A
+    model file (or the directory holding it) that any other local account can
+    write is refused. And every model carries a detached HMAC sidecar keyed on
+    this deployment's own secret (`model_integrity.py`), verified before the
+    bytes reach the unpickler — so a file an attacker did manage to write, by a
+    permissions drift or a restored backup, is refused rather than executed.
+
+    Neither layer is a substitute for a serialisation format that is not code.
+    If models ever need to move between machines or come from anywhere but the
+    local training script, this wants skops or ONNX: an HMAC proves provenance,
+    not safety.
+
+    The isinstance check below is a separate thing and not a security boundary:
+    it guards against a stale or truncated file from an interrupted training
+    run turning into an AttributeError somewhere further down.
     """
     directory = model_dir()
     if directory is None:
@@ -94,6 +132,19 @@ def load_model(device_id: uuid.UUID) -> TrainedModel | None:
     cached = _CACHE.get(key)
     if cached is not None:
         return cached
+
+    if not _only_owner_can_write(path):
+        logger.error(
+            "refusing to load novelty model at %s: it or its directory is writable by "
+            "another account, and loading it would unpickle whatever that account wrote",
+            path,
+        )
+        return None
+
+    # Provenance, checked before the unpickler sees a byte. Ordered after the
+    # permission check because that one is a stat() and this one hashes ~26 MB.
+    if not model_integrity.verify(path):
+        return None
 
     try:
         model = joblib.load(path)
