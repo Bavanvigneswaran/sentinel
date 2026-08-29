@@ -255,23 +255,47 @@ Four decisions worth knowing about:
   thing npm cannot report — a suite that died before writing `results.json` at
   all.
 
-Two things about the emulator job are load-bearing and easy to get wrong:
-`target: default` (an AOSP image), because the suite asserts that the app
-*reports push as unavailable* and a `google_apis` image carries Play services,
-which would make a correct app fail a correct test; and the Appium server is
-started inside the emulator action's own script rather than as a step of its
-own, so that `ANDROID_HOME` is in *its* environment — the server shells out to
-adb itself and exporting the SDK path only for the test process fails at
-session creation.
+Four things about the emulator job are load-bearing, and every one of them was
+established by a failed run rather than by reading:
 
-**It has not been executed on a runner.** Everything checkable off a runner was
-checked — both workflows parse, no two artifact names collide across the whole
-`.github/workflows/` tree, the three embedded Python steps were run against the
-real `results.json` and `summary.json` from the runs above (pass, fail and
-empty paths), the pinned k6 tarball resolves, and
-`system-images;android-35;default;x86_64` exists in Google's repository. What
-cannot be verified from here is a GitHub-hosted run: the APK build and the
-emulator boot in particular have never run in CI on this project.
+* **The action executes `script:` one line per `sh -c`.** Not as a shell
+  script. A backslash continuation is therefore not a continuation — it arrives
+  as a literal argument — and a multi-line loop does not survive at all.
+* **The Appium server starts in a step of its own, before the emulator.** A
+  backgrounded process survives between steps here, which the composite action
+  already relies on for uvicorn. `ANDROID_HOME` is set globally on a GitHub
+  runner, so the server inherits it; the trap CLAUDE.md records about exporting
+  it only for the test process is a local-machine one.
+* **The APK is installed with `adb`, not handed to the driver.** The suite sets
+  `appium:appPackage`/`appium:appActivity` and not `appium:app`, so it launches
+  a build already on the device — which is what the README's setup does by
+  hand. Without the install, session creation fails and no case runs.
+  (`appium-tests/README.md`'s Capabilities block lists an `appium:app` the
+  suite does not actually send.)
+* **The emulator matches the AVD the suite was validated against** — API 36,
+  `google_apis`, `pixel_7`. None of those three is decoration. Leaving `profile`
+  unset gives the emulator's fallback skin, 320x640, on which the More menu's
+  sixth row falls below the fold and `getPageSource()` omits it entirely; the
+  AOSP image reports `Build.MODEL` as "Android SDK built for x86_64" and lays
+  the rule form out so its buttons fall below the fold too.
+
+**It has been executed on a runner, repeatedly, and that is where most of what
+this section knows came from.** Seven runs. The first failed three jobs for
+four separate reasons — two mine, two of them pre-existing bugs in
+`security-review.yml` that had been failing every push since deliverable 3 was
+finished and that nobody had seen, because that workflow had never been run
+either. Then the Appium job was fixed forward across four more runs: session
+creation, then a fallback screen size, then an AOSP image, then a forecast
+assertion that was asserting an absence the product never promised.
+
+Two suite defects turned up in the process that had nothing to do with CI and
+would have failed on real hardware: `EXPECTED_DEVICE_NAME_RE` refused the
+spaces in a real `Build.MODEL` like "Pixel 7 Pro", and Selenium's TC-315 was
+passing for the wrong reason because `NotFoundPage` carries `page-title`
+itself. A third — a navigation begun while the previous page load's
+`/auth/refresh` was still in flight, presenting a cookie the backend had
+already rotated away — is a genuine race that the app was right to refuse with
+a 401.
 
 ---
 

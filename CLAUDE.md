@@ -183,9 +183,13 @@ emulator, so a full run is around 40 minutes, and per-commit feedback is already
 `e2e-stack.yml`'s and `security-review.yml`'s job. `security-review.yml` gained a `workflow_call`
 trigger for this and nothing else — with its input redeclared under it, because `inputs` resolves
 against whichever trigger fired and `api_checks` would otherwise read an undefined
-`inputs.run-api-checks` on a called run and skip itself silently. **It has never been executed on
-a runner**; everything checkable off one was checked, and `docs/TEST_BRIEF.md`'s deliverable 5
-section lists exactly what that covered and what it did not.
+`inputs.run-api-checks` on a called run and skip itself silently. **It has been executed on a
+runner, repeatedly** — see `docs/TEST_BRIEF.md`'s deliverable 5 section and `docs/HISTORY.md` for
+what that found. The short version: running it was worth more than writing it. The first run
+failed three jobs for four reasons, two of which were pre-existing bugs in `security-review.yml`
+that had been failing on every push since deliverable 3 and that nobody had seen, because **that**
+workflow had never been run on a runner either. Two more were latent suite defects that would have
+failed on real hardware, not just in CI.
 
 **Deployment is this Mac and nothing else.** `make serve` builds the console and serves it, the REST
 API and the viewer socket on one origin; Tailscale Funnel gives that port a stable public

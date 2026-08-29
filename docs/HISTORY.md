@@ -2495,3 +2495,55 @@ The general lesson is the one this file keeps relearning. A workflow that has ne
 because YAML that parses and shell that is syntactically valid look finished. Two of these four had
 been failing every push for a day and nobody knew, which is the same failure mode as the
 notification channels that logged and dropped every alert for twelve phases.
+
+### Fixing it forward: seven runs to a green one
+
+The four defects above were the first run. Six more followed, and the shape of what they found is
+worth keeping, because almost none of it was about CI.
+
+**The Appium job was fixed forward four times, and each failure was further in than the last.**
+Session creation first: the suite sets `appium:appPackage`/`appium:appActivity` and deliberately
+not `appium:app`, so it launches a build that is already on the device — which is what the
+README's setup steps do by hand — and the workflow had built the APK without installing it. Then a
+fallback screen: dropping `profile` from the emulator action does not give a neutral phone, it
+gives 320x640 at 160dpi, on which the More menu's sixth row falls below the fold and
+`getPageSource()` omits what is not rendered, so 57 cases failed describing a menu the app renders
+correctly. Then the image itself.
+
+**The image was wrong because a comment in this repository was wrong.** CLAUDE.md, TEST_BRIEF.md
+and the Appium README all said the suite asserts push is unavailable *because the emulator image
+has no Google Play services*. It does not. `app.config.ts` omits `googleServicesFile` when
+`google-services.json` is absent and passes `hasFirebaseConfig: false` to `src/config.ts`, which is
+what makes Settings say so — a build-time fact no image can touch. The local AVD proves it directly:
+it is `google_apis_playstore`, it carries the Play Store, and the suite passes on it. Taking the
+comment at face value put CI on an AOSP image, whose `Build.MODEL` is "Android SDK built for
+x86_64" and whose layout pushed the rule form's buttons below the fold — 18 failures across two
+jobs, traceable to a sentence. Matching the emulator to the AVD the suite was actually validated
+against — API 36, `google_apis`, `pixel_7` — cleared 22 of the 23 remaining failures at once.
+
+**Three defects had nothing to do with CI and would have failed on real hardware.**
+`EXPECTED_DEVICE_NAME_RE` refused spaces, so it would reject a real `Build.MODEL` like "Pixel 7
+Pro"; it passed only because the AVD it was written against reports `sdk_gphone64_arm64`. Selenium's
+TC-315 was passing for the wrong reason, because `NotFoundPage` carries `page-title` itself and the
+post-click wait was satisfied by the heading of the page being left — the anti-pattern this file
+already documents, in the one case that was not using `clickNav()`. And Module 24 asserted that a
+freshly enrolled device has no forecast, citing `MIN_POINTS_TREND = 24`; that governs the trend
+charts, while the empty state is driven by exhaustion rows whose floor is `MIN_POINTS_EXHAUSTION =
+8`, and the worker plans its window from first report so that — in `analysis/forecast.py`'s own
+words — "a four-minute-old device gets 10s buckets and enough points to fit". It passed on one run
+and failed on the next with no change to the app.
+
+**The last one was a real race, and the app was right.** With TC-315 finally reporting where it
+landed rather than timing out, run 6 said `'/login' !== '/'`. The server log settled it: twenty-five
+consecutive page loads refreshing 200, no test signed out, and then one 401. Every page load runs
+`bootstrapAuth()`, the backend rotates the refresh cookie on each exchange, and a navigation begun
+while the previous one's exchange is still in flight presents a cookie that has already been
+rotated away — a replayed refresh token, which the backend is correct to refuse and correct to
+treat as theft. `dropSessionCookie()` documents the deletion half of this hazard; `go()` now waits
+for the navigation half, on a `PerformanceResourceTiming` entry rather than a sleep.
+
+**Run 7 was green: 421 Selenium, 560 Appium, 31,813 requests at 0.00% failed, six security jobs,
+five workbooks in one run.** The tally over seven runs is six defects introduced by the new
+workflow and five that were already there — two of them failing `security-review.yml` on every
+push since deliverable 3 was finished, unnoticed for the same reason the rest of this entry
+exists: nobody had run it.
