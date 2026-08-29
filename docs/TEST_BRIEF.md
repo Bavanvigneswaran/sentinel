@@ -236,11 +236,13 @@ Four decisions worth knowing about:
   job, so there is no handing a running database to the next — and sharing
   would be wrong anyway, since the Appium suite enrols and removes a real
   device and the load profile's numbers describe whatever fleet it found.
-* **`npm run test:xlsx` cannot fail**, because both suites' `test:report`
+* **The verdict is re-derived from `results.json`.** Both suites' `test:report`
   script ends in `|| true` so a failing run still renders its workbook — which
-  is precisely the run somebody wants the workbook for. Each suite job
-  therefore re-derives the exit code from `results.json` *after* uploading the
-  artifact, and names the failed cases in the step summary.
+  is precisely the run somebody wants the workbook for. `mocha-xlsx.js` does
+  exit 1 when cases failed, so the step is not silent; what the gate adds is a
+  step summary naming *which* cases went red, and a clear message for the one
+  thing npm cannot report — a suite that died before writing `results.json` at
+  all.
 
 Two things about the emulator job are load-bearing and easy to get wrong:
 `target: default` (an AOSP image), because the suite asserts that the app

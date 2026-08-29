@@ -2412,12 +2412,12 @@ from the new workflow reaches `api_checks`'s condition, finds `inputs.run-api-ch
 and skips the live API checks silently. A green run missing a phase is the failure mode worth
 paying a comment for.
 
-**`npm run test:xlsx` cannot fail, on purpose, so the exit code has to come back somewhere else.**
-Both suites' `test:report` script ends in `|| true` — mocha's non-zero exit would otherwise skip the
-reporting step, and a failing run would produce no workbook, which is precisely the run somebody
-wants the workbook for. Each suite job therefore re-derives its verdict from `results.json` *after*
-the artifact upload, and prints the failed case names into the step summary rather than only a
-count.
+**The verdict is re-derived from `results.json` rather than taken from npm.** Both suites'
+`test:report` script ends in `|| true` — mocha's non-zero exit would otherwise skip the reporting
+step, and a failing run would produce no workbook, which is precisely the run somebody wants the
+workbook for. `mocha-xlsx.js` does exit 1 when any case failed, so the step is not silent; what the
+gate adds is a step summary naming *which* cases went red, and a clear message for the one thing
+npm cannot report at all — a suite that died before writing `results.json`.
 
 Two things about the emulator job are load-bearing. `target: default` — an AOSP image, never
 `google_apis`: the suite asserts that the app *reports push as unavailable*, and an image carrying
@@ -2431,10 +2431,67 @@ It does not run on push. The Appium job builds an 82MB release APK through `expo
 and on demand, with a `run-appium` dispatch input that drops it to about six. Per-commit feedback
 is what `e2e-stack.yml` and `security-review.yml` already provide.
 
-**It has never been executed on a runner, and that is the honest limit of this entry.** Both
-workflows parse; no two artifact names collide anywhere under `.github/workflows/`; the three
-embedded Python steps were run against the real `results.json` and `summary.json` from the runs
-above, on their passing, failing and empty-run paths; the pinned k6 tarball resolves; and
-`system-images;android-35;default;x86_64` exists in Google's repository. What none of that covers
-is a GitHub-hosted run — the APK build and the emulator boot in particular have never happened in
-CI on this project.
+Everything checkable off a runner was checked before it was ever pushed: both workflows parse, no
+two artifact names collide anywhere under `.github/workflows/`, the three embedded Python steps ran
+against the real `results.json` and `summary.json` from the runs above on their passing, failing
+and empty-run paths, the pinned k6 tarball resolves, and `system-images;android-35;default;x86_64`
+exists in Google's repository.
+
+None of it caught what the first real run did.
+
+### Four defects that only exist on a runner
+
+The first execution of `test-suites.yml` — and, as it turned out, the first execution of
+`security-review.yml` too. `selenium`, `load`, and three of the five security jobs passed. Three
+jobs failed, for four distinct reasons, and the split between them is the point: two were mine and
+two had been sitting in `master` unnoticed because nobody had ever run the workflow that contains
+them.
+
+**The emulator action runs `script:` one line per `sh -c`.** Not as a shell script — each line is
+its own invocation. So the backslash continuation starting the Appium server was not a
+continuation at all: it reached the command as a literal argument, and the job died on
+`appium: Unrecognized arguments: \`. What makes this one worth writing down is where it landed in
+the sequence. The stack came up, `make mobile-apk-test` produced a release APK on a Linux runner
+for the first time ever, KVM was enabled, the emulator booted in 25.5 seconds and reported
+`Boot completed`. Every expensive, genuinely uncertain step worked. The cheapest line in the job
+was the one that failed, and no amount of local YAML validation could have found it, because the
+file is valid YAML and valid shell — it is the *action's* execution model that makes it wrong.
+
+The server now starts in a step of its own, before the emulator. A backgrounded process survives
+between steps here, which was already proven in this repo and simply not noticed: the composite
+action starts uvicorn exactly this way, and the first run's own teardown logged
+`Terminate orphan process: pid (4040) (uvicorn)` after the job had finished. Appium needs no device
+to start, so starting it early costs nothing. And `ANDROID_HOME` is set globally on a GitHub
+runner, so the server inherits it — the trap CLAUDE.md records, where exporting the SDK path only
+for the test process fails at session creation, is a local-machine trap and not a CI one. What is
+left inside `script:` is two complete single-line commands and a comment saying why they have to
+be.
+
+**A missing `results.json` failed with a traceback.** The consequence of the above: mocha never
+ran, so the gate raised `FileNotFoundError` and the upload separately reported "no files were
+found". Two red steps for one cause, neither naming the suite. The gate now says the suite produced
+no results, and the uploads degrade to `warn` so the gate owns the verdict alone.
+
+**`ValueError: 'Informational' is not in list`** took down the assessment-workbooks job — and had
+been taking it down on every push since deliverable 3 was finished. The remediation pass that
+closed the first assessment's 18 findings reclassified two of them into `Informational`, a severity
+the summary step's `order` list has never contained, and `list.index()` raises rather than sorting
+it last. The failure names the string and not the list, which is exactly the kind of error that
+reads as data corruption. Unknown severities now sort last instead of failing, and the count line
+reports Informational alongside the rest.
+
+**Two secret-scan false positives were failing the SAST job as Critical**, for the same "since
+deliverable 3" reason. `backend/app/security/password_policy.py` holds a blocklist of common
+passwords and a list of keyboard runs — `1234567890abc`, `qwertyuiopasdfghjklzxcvbnm` — which
+detect-secrets reads as high-entropy strings. They are the literal opposite of a secret; the file
+exists to refuse them. `tools/security-report/api-checks.py` holds the deliberately wrong passwords
+its own check uses to assert that an unknown email and a wrong password are indistinguishable. Both
+are now allow-listed by exact path, the way `config.py` and `opaque.py` already were, so a
+candidate appearing in a third file is still Critical. Each of the three flagged lines was read
+before being allow-listed; none is a credential.
+
+The general lesson is the one this file keeps relearning. A workflow that has never run is not
+"probably fine" — it is untested code with an unusually convincing appearance of correctness,
+because YAML that parses and shell that is syntactically valid look finished. Two of these four had
+been failing every push for a day and nobody knew, which is the same failure mode as the
+notification channels that logged and dropped every alert for twelve phases.

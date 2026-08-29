@@ -38,11 +38,14 @@
 #     lines here would mean two definitions of the same assessment drifting
 #     apart. It gained a `workflow_call` trigger and nothing else.
 #
-#   * **`npm run test:xlsx` cannot fail.** Both suites' `test:report` script
-#     ends in `|| true` on purpose — mocha's non-zero exit would otherwise skip
-#     the reporting step and a failing run would produce no workbook, which is
-#     exactly the run somebody needs the workbook for. So the exit code is
-#     re-derived here from `results.json`, after the artifact is uploaded.
+#   * **The verdict is re-derived from `results.json`, not taken from npm.**
+#     Both suites' `test:report` script ends in `|| true` on purpose — mocha's
+#     non-zero exit would otherwise skip the reporting step, and a failing run
+#     would produce no workbook, which is exactly the run somebody needs the
+#     workbook for. `mocha-xlsx.js` does then exit 1 when cases failed, so the
+#     step is not silent; what the gate adds is a readable summary that names
+#     the failed cases, and a clear message for the case npm cannot report at
+#     all — a suite that died before writing `results.json`.
 #
 # docs/TESTING.md is the authority for the stack all of this runs against, and
 # for why it is `make e2e-serve`'s configuration rather than `make serve`'s.
@@ -163,9 +166,10 @@ jobs:
         env:
           SUITE: "Selenium — web console"
         run: |
-          # `npm run test:xlsx` swallows mocha's exit code so the workbook is
-          # rendered even for a failing run — see the header. This is where that
-          # exit code comes back.
+          # `test:report` swallows mocha's exit code so the workbook is
+          # rendered even for a failing run; `mocha-xlsx.js` then exits 1 if any
+          # case failed. This step is what names *which* ones, and what reports
+          # a run that produced no results.json at all. See the header.
           python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json, os, pathlib, sys
 
@@ -344,11 +348,31 @@ jobs:
           disable-animations: true
           # Every line here is its own `sh -c`, so each must be a complete
           # command: no backslash continuations, no multi-line loops.
+          #
+          # The APK is installed with adb, not handed to the driver. The suite
+          # sets `appium:appPackage`/`appium:appActivity` and NOT `appium:app`
+          # — it launches a build that is already on the device, which is what
+          # the README's own setup does — so without this the session fails at
+          # creation with "Either provide 'app' option to install
+          # com.sentinel.viewer or consider setting 'noReset'", and no case
+          # runs at all. (appium-tests/README.md's Capabilities block lists an
+          # `appium:app` the suite does not actually send; the adb install is
+          # the half that is real.)
+          #
+          # The uninstall tolerates its own failure because there is nothing to
+          # remove on a fresh AVD and `adb uninstall` exits non-zero for a
+          # package it cannot find — which, one line per `sh -c`, would fail
+          # the step. It is here for the documented trap it guards: the test
+          # APK carries the real applicationId, so a device holding a
+          # differently-signed build refuses the install.
+          #
           # One session for the whole run — the uiautomator2 driver clears app
           # data at session start, and that is what fixes the run's starting
           # state as signed out with no collector token.
           script: |
             adb wait-for-device
+            adb uninstall com.sentinel.viewer || true
+            adb install -r "$GITHUB_WORKSPACE/frontend/mobile/build/app-appium.apk"
             cd appium-tests && npm run test:xlsx
 
       - name: Upload appium-test-report.xlsx
@@ -367,9 +391,10 @@ jobs:
         env:
           SUITE: "Appium — Android app"
         run: |
-          # `npm run test:xlsx` swallows mocha's exit code so the workbook is
-          # rendered even for a failing run — see the header. This is where that
-          # exit code comes back.
+          # `test:report` swallows mocha's exit code so the workbook is
+          # rendered even for a failing run; `mocha-xlsx.js` then exits 1 if any
+          # case failed. This step is what names *which* ones, and what reports
+          # a run that produced no results.json at all. See the header.
           python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json, os, pathlib, sys
 
