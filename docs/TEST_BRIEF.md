@@ -94,8 +94,19 @@ Four things a cold pickup should know:
 
 Recorded gaps, same class as deliverable 1's: the rate limiter has no scenario
 (`.env.ci` disables it), and push notifications cannot be exercised because the
-emulator image has no Google Play services — the suite asserts that the app
+APK is built without `google-services.json` — the suite asserts that the app
 *says so* rather than pretending the channel works.
+
+That reason was recorded wrongly here until the CI run of deliverable 5 tested
+it. It said the *emulator image* has no Google Play services. The image has
+nothing to do with it: `app.config.ts` omits `googleServicesFile` when
+`google-services.json` is absent and passes `hasFirebaseConfig: false` through
+to `src/config.ts`, which is what makes Settings report push as unavailable —
+a build-time fact the emulator cannot change. The local AVD is
+`google_apis_playstore` and carries the Play Store, and the suite passes on it.
+The mistake was not free: it sent the CI emulator to an AOSP image, whose
+`Build.MODEL` is "Android SDK built for x86_64" and whose layout put the rule
+form's buttons below the fold, for 18 failures across two jobs.
 
 ## 3. Security assessment  ·  **DELIVERED 2026-08-29**
 

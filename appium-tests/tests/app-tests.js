@@ -3215,7 +3215,15 @@ describe("Sentinel Android App — E2E Suite", function () {
   describe("Module 24 — The same screens scoped to one device", function () {
     const seen = {};
 
-    async function openSection(route, screen) {
+    /**
+     * `settled` is polled instead of slept through, for a screen whose content
+     * does not exist yet when the screen does. The flat 3s is enough wherever
+     * the data is already in the database by the time the row is tapped; the
+     * Forecasts screen is the exception, because the forecast worker writes it
+     * on a 120s tick and the screen renders neither its rows nor its empty
+     * state until the first response lands.
+     */
+    async function openSection(route, screen, settled = null) {
       if (!(await isPresent(byId("screen-device")))) {
         await ensureSignedIn();
         await tap(byId(`device-card-${enrolled.id}`));
@@ -3224,7 +3232,14 @@ describe("Sentinel Android App — E2E Suite", function () {
       await tap(byId(`device-section-${route}`));
       await el(byId(screen), 45000);
       await driver.pause(3000);
-      const snap = await snapshot();
+      let snap = await snapshot();
+      if (settled) {
+        const deadline = Date.now() + 30000;
+        while (!settled(snap) && Date.now() < deadline) {
+          await driver.pause(2000);
+          snap = await snapshot();
+        }
+      }
       await back(2500);
       return snap;
     }
@@ -3233,7 +3248,14 @@ describe("Sentinel Android App — E2E Suite", function () {
       this.timeout(300000);
       seen.incidents = await openSection("incidents", "screen-incidents");
       seen.anomalies = await openSection("anomalies", "screen-anomalies");
-      seen.forecasts = await openSection("forecasts", "screen-forecasts");
+      // Either outcome is a settled screen; what must not be snapshotted is
+      // the moment before the first response, when the screen renders its
+      // headings and nothing else.
+      seen.forecasts = await openSection(
+        "forecasts",
+        "screen-forecasts",
+        (snap) => snap.hasId("empty-state") || snap.includesText("%/day"),
+      );
       seen.reports = await openSection("reports", "screen-reports");
       seen.rules = await openSection("alertrules", "screen-alert-rules");
     });
@@ -3274,10 +3296,37 @@ describe("Sentinel Android App — E2E Suite", function () {
       assert.ok(seen.forecasts.includesText(`Forecasts · ${enrolled.name}`));
     });
 
-    it("says a freshly enrolled device has nothing projected yet", function () {
-      // MIN_POINTS_TREND is 24 real buckets; a device minutes old has fewer,
-      // and the answer is an absent forecast rather than an extrapolation.
-      assert.ok(seen.forecasts.hasId("empty-state"));
+    it("never presents a freshly enrolled device's projection as settled", function () {
+      /*
+       * This used to assert the empty state outright, citing MIN_POINTS_TREND
+       * — 24 buckets — as the reason a device minutes old could not have a
+       * projection. That is the wrong constant. It governs the Holt-Winters
+       * trend fit behind the "24h forecasts" charts, while the empty state
+       * here is driven by the *exhaustion* rows, whose floor is
+       * MIN_POINTS_EXHAUSTION = 8; and the worker plans its bucket window from
+       * when the device first reported, so — in analysis/forecast.py's own
+       * words — "a four-minute-old device gets 10s buckets and enough points
+       * to fit". A freshly enrolled device legitimately has rows here, and
+       * whether it does depends on where the worker's 120s tick fell. The
+       * assertion passed on one CI run and failed on the next for exactly
+       * that reason.
+       *
+       * What is invariant is not the absence of a projection but the refusal
+       * to dress one up: forecast_confidence() returns "provisional" below six
+       * hours of history, so anything this device manages to fit must say so.
+       */
+      if (seen.forecasts.hasId("empty-state")) return;
+
+      assert.ok(
+        seen.forecasts.includesText("%/day"),
+        "the screen showed neither an empty state nor a projection",
+      );
+      if (seen.forecasts.hasText("24h forecasts")) {
+        assert.ok(
+          seen.forecasts.includesText("Provisional"),
+          "a trend forecast for a device minutes old must be labelled provisional",
+        );
+      }
     });
 
     it("opens Reports scoped to the device", function () {

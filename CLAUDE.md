@@ -135,8 +135,13 @@ against it, and the only thing left was counting Edits down the screen — the p
 locator the conventions forbid. `AlertsScreen` had already got this right with
 `alert-silence-{uuid}`; `AlertRulesScreen` had not, and now carries `rule-edit-{uuid}` /
 `rule-delete-{uuid}`. Any new row's buttons need their own hooks for the same reason. Its
-own recorded gap is push: the emulator image has no Google Play services, so the suite
+own recorded gap is push: the APK is built without `google-services.json`, so the suite
 asserts that Settings *says* push is unavailable rather than pretending the channel works.
+**This used to say the emulator image has no Google Play services, and that was wrong** —
+push availability is decided at build time, by `app.config.ts` omitting `googleServicesFile`
+and passing `hasFirebaseConfig: false` to `src/config.ts`. No image can change it, which the
+local AVD proves: it carries the Play Store and the suite passes on it. Believing otherwise
+cost 18 CI failures, because it argued for an AOSP emulator image.
 
 Deliverable 3 as well: **`Vulnerability Test Results/`, an eight-phase security assessment**
 (`security-review.md`, `executive-summary.md`, `dependency-report.md`, `endpoint-inventory.xlsx`,
