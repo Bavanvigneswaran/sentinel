@@ -1,0 +1,571 @@
+# Every test artefact docs/TEST_BRIEF.md asks for, in one run.
+#
+# Deliverable 5. The four suites are deliverables 1-4 — Selenium against the
+# web console, Appium against the Android app, the security assessment, and the
+# k6 baseline load profile — and the point of gathering them here is the last
+# line of the brief: **every Excel report downloadable as an artifact.** A
+# reviewer should be able to open one run and download five workbooks:
+#
+#   selenium-report        selenium-test-report.xlsx
+#   appium-report          appium-test-report.xlsx
+#   load-test-report       load-test-report.xlsx
+#   security-assessment    findings.xlsx, endpoint-inventory.xlsx
+#
+# `upload-artifact` rejects duplicate artifact names across jobs, so every
+# upload is named for the job that produced it — including the ones inside the
+# security workflow this one calls.
+#
+# Things about this file that are deliberate:
+#
+#   * **It does not run on push.** The Appium job builds an 82 MB release APK
+#     through `expo prebuild` + `assembleRelease` and boots an emulator; the
+#     load job holds a runner for a minute doing nothing a reviewer needs to
+#     see on every commit. Per-commit feedback is what `e2e-stack.yml` (the
+#     stack itself) and `security-review.yml` (which does run on push) are
+#     for. This one is nightly and on demand, which is the cadence a
+#     40-minute full-artefact run actually gets read at.
+#
+#   * **Each suite job brings the stack up for itself.** A service container
+#     lives for one job, so there is no way to hand a running database to the
+#     next one — and sharing would be wrong anyway: the Appium suite enrols and
+#     removes a real device, and the load profile's `/fleet/overview` numbers
+#     describe whatever fleet it found. Three independent stacks from
+#     `./.github/actions/sentinel-stack` is both the only option and the honest
+#     one.
+#
+#   * **The security suite is called, not copied.** `security-review.yml` is
+#     deliverable 3 and already runs all eight phases; duplicating its 500
+#     lines here would mean two definitions of the same assessment drifting
+#     apart. It gained a `workflow_call` trigger and nothing else.
+#
+#   * **`npm run test:xlsx` cannot fail.** Both suites' `test:report` script
+#     ends in `|| true` on purpose — mocha's non-zero exit would otherwise skip
+#     the reporting step and a failing run would produce no workbook, which is
+#     exactly the run somebody needs the workbook for. So the exit code is
+#     re-derived here from `results.json`, after the artifact is uploaded.
+#
+# docs/TESTING.md is the authority for the stack all of this runs against, and
+# for why it is `make e2e-serve`'s configuration rather than `make serve`'s.
+
+name: test-suites
+
+on:
+  workflow_dispatch:
+    inputs:
+      run-appium:
+        description: >
+          Run the Appium suite. Off gives a ~6-minute run of the other three;
+          on adds the APK build and the emulator, and roughly 40 minutes.
+        type: boolean
+        default: true
+  schedule:
+    # 03:00 UTC. Nothing depends on the hour; it is outside the working day so
+    # a nightly emulator boot is not competing for runners with real pushes.
+    - cron: "0 3 * * *"
+
+permissions:
+  contents: read
+
+env:
+  # Must match backend/requirements.txt's header — a pinned closure is specific
+  # to one interpreter, and 3.11 fails on numpy with an error that names the
+  # package rather than the Python. See docs/TESTING.md.
+  PYTHON_VERSION: "3.14"
+  NODE_VERSION: "22"
+  # Pinned so two runs a month apart are comparable. A load baseline whose
+  # measuring instrument changed underneath it is not a baseline.
+  K6_VERSION: "2.2.0"
+
+# The services block below is duplicated across three jobs because a composite
+# action cannot declare services and YAML anchors are not supported in Actions
+# workflows. It is the block from ./.github/actions/sentinel-stack's header
+# comment; the credentials are docker-compose.yml's, which is what
+# backend/.env.ci expects, and the restricted role is created by migration 0001
+# from APP_DB_ROLE.
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Deliverable 1 — 421 browser cases against the web console.
+  # ---------------------------------------------------------------------------
+  selenium:
+    name: selenium (web E2E)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      timescaledb:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_USER: sentinel
+          POSTGRES_PASSWORD: sentinel
+          POSTGRES_DB: sentinel
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sentinel"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Bring up the stack
+        id: stack
+        uses: ./.github/actions/sentinel-stack
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          node-version: ${{ env.NODE_VERSION }}
+
+      # selenium-webdriver 4 resolves its own driver through Selenium Manager,
+      # so there is nothing to install — but print the browser it matched
+      # against. A Chrome/chromedriver mismatch surfaces as "session not
+      # created", which reads like a suite bug.
+      - name: Chrome
+        run: google-chrome --version
+
+      - name: Install the suite
+        working-directory: selenium-tests
+        run: |
+          npm ci
+          # The workbook renderer is shared with the Appium suite and lives
+          # outside both, so it is not in either lockfile.
+          npm install --prefix ../tools/test-report --no-audit --no-fund
+
+      - name: Run the suite and render the workbook
+        working-directory: selenium-tests
+        env:
+          SENTINEL_URL: ${{ steps.stack.outputs.base-url }}
+          SENTINEL_E2E_EMAIL: ${{ steps.stack.outputs.email }}
+          SENTINEL_E2E_PASSWORD: ${{ steps.stack.outputs.password }}
+          HEADLESS: "1"
+        run: npm run test:xlsx
+
+      - name: Upload selenium-test-report.xlsx
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: selenium-report
+          path: |
+            selenium-tests/selenium-test-report.xlsx
+            selenium-tests/results.json
+          if-no-files-found: error
+
+      - name: Fail if any case failed
+        if: always()
+        working-directory: selenium-tests
+        env:
+          SUITE: "Selenium — web console"
+        run: |
+          # `npm run test:xlsx` swallows mocha's exit code so the workbook is
+          # rendered even for a failing run — see the header. This is where that
+          # exit code comes back.
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, os, pathlib, sys
+
+          run = json.loads(pathlib.Path("results.json").read_text())
+          stats = run.get("stats", {})
+          total = stats.get("tests", 0)
+          failures = stats.get("failures", 0)
+          seconds = (stats.get("duration") or 0) / 1000
+
+          print(f"### {os.environ['SUITE']}\n")
+          print(f"{stats.get('passes', 0)} / {total} passing, "
+                f"{failures} failing, {seconds:.1f}s\n")
+
+          if failures:
+              # Names, not just a count: the workbook has the detail, but a reader
+              # should not have to download it to see which cases went red.
+              print("| Failed case |")
+              print("| --- |")
+              for case in run.get("failures", [])[:20]:
+                  print(f"| {case.get('fullTitle', '?')} |")
+              print("")
+
+          # Both exits write to stderr, which is the job log rather than this
+          # redirected stdout — otherwise a red step says only "exit 1" and the
+          # reason is in a summary the log does not link to.
+          if total == 0:
+              sys.exit("::error::no cases ran — the workbook would be empty")
+          if failures:
+              sys.exit(f"::error::{failures} of {total} cases failed")
+          PY
+
+      - name: Upload the server log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: selenium-server-log
+          path: sentinel-server.log
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Deliverable 2 — 560 Android cases, including modules 19-25 against a real
+  # agent: the emulator enrols itself through the app's own flow.
+  # ---------------------------------------------------------------------------
+  appium:
+    name: appium (Android E2E)
+    runs-on: ubuntu-latest
+    # The APK build alone is 15-20 minutes and the suite runs for ten.
+    timeout-minutes: 90
+    if: github.event_name != 'workflow_dispatch' || inputs.run-appium
+
+    services:
+      timescaledb:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_USER: sentinel
+          POSTGRES_PASSWORD: sentinel
+          POSTGRES_DB: sentinel
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sentinel"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # 0.0.0.0, which the action already binds: the emulator reaches the
+      # runner at 10.0.2.2 and a loopback bind is invisible to it.
+      - name: Bring up the stack
+        id: stack
+        uses: ./.github/actions/sentinel-stack
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          node-version: ${{ env.NODE_VERSION }}
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install the mobile app's dependencies
+        working-directory: frontend/mobile
+        run: npm ci
+
+      # EXPO_PUBLIC_* is inlined into the bundle at build time, so this cannot
+      # be set later: a wrong value produces an app that installs, opens, and
+      # cannot sign in. And it must be a *release* build — `assembleDebug`
+      # gives a dev-client shell with no JS bundle, which boots to "waiting for
+      # Metro" with nothing for a driver to drive. `mobile-apk-test` generates
+      # its own throwaway keystore, so this needs no signing secret and
+      # produces nothing publishable.
+      - name: Build the Appium APK
+        env:
+          EXPO_PUBLIC_API_URL: http://10.0.2.2:8000
+        run: make mobile-apk-test
+
+      - name: Install the suite
+        working-directory: appium-tests
+        run: |
+          npm ci
+          npm install --prefix ../tools/test-report --no-audit --no-fund
+          npm install -g appium
+          appium driver install uiautomator2
+
+      # Without this the emulator falls back to software rendering and the
+      # boot alone outlasts the job.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # `target: default`, never `google_apis`. The suite's Settings assertions
+      # check that the app *reports push as unavailable*, which is true only on
+      # an image with no Google Play services — a Play-services image would
+      # make a correct app fail a correct test.
+      #
+      # The Appium server is started inside this script rather than as a step
+      # of its own so that ANDROID_HOME is in *its* environment: the server
+      # shells out to adb itself, and exporting the SDK path only for the test
+      # process fails at session creation. See CLAUDE.md.
+      - name: Run the suite and render the workbook
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          SENTINEL_URL: ${{ steps.stack.outputs.base-url }}
+          SENTINEL_APP_URL: http://10.0.2.2:8000
+          SENTINEL_E2E_EMAIL: ${{ steps.stack.outputs.email }}
+          SENTINEL_E2E_PASSWORD: ${{ steps.stack.outputs.password }}
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          ram-size: 4096M
+          # These REPLACE the action's defaults rather than adding to them, so
+          # -no-snapshot has to be restated: without it a run can resume a
+          # saved snapshot and start from a state no test established.
+          emulator-options: >-
+            -no-window -no-snapshot -gpu swiftshader_indirect -noaudio
+            -no-boot-anim -camera-back none
+          disable-animations: true
+          script: |
+            adb wait-for-device
+            nohup appium --port 4723 --log-timestamp \
+              > "$GITHUB_WORKSPACE/appium-server.log" 2>&1 &
+            for _ in $(seq 1 60); do
+              curl -fsS http://127.0.0.1:4723/status > /dev/null && break
+              sleep 2
+            done
+            curl -fsS http://127.0.0.1:4723/status > /dev/null \
+              || { echo "::error::appium did not come up on :4723"; exit 1; }
+            # One session for the whole run: the uiautomator2 driver clears app
+            # data at session start, and that is what fixes the run's starting
+            # state as signed out with no collector token.
+            cd appium-tests && npm run test:xlsx
+
+      - name: Upload appium-test-report.xlsx
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: appium-report
+          path: |
+            appium-tests/appium-test-report.xlsx
+            appium-tests/results.json
+          if-no-files-found: error
+
+      - name: Fail if any case failed
+        if: always()
+        working-directory: appium-tests
+        env:
+          SUITE: "Appium — Android app"
+        run: |
+          # `npm run test:xlsx` swallows mocha's exit code so the workbook is
+          # rendered even for a failing run — see the header. This is where that
+          # exit code comes back.
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, os, pathlib, sys
+
+          run = json.loads(pathlib.Path("results.json").read_text())
+          stats = run.get("stats", {})
+          total = stats.get("tests", 0)
+          failures = stats.get("failures", 0)
+          seconds = (stats.get("duration") or 0) / 1000
+
+          print(f"### {os.environ['SUITE']}\n")
+          print(f"{stats.get('passes', 0)} / {total} passing, "
+                f"{failures} failing, {seconds:.1f}s\n")
+
+          if failures:
+              # Names, not just a count: the workbook has the detail, but a reader
+              # should not have to download it to see which cases went red.
+              print("| Failed case |")
+              print("| --- |")
+              for case in run.get("failures", [])[:20]:
+                  print(f"| {case.get('fullTitle', '?')} |")
+              print("")
+
+          # Both exits write to stderr, which is the job log rather than this
+          # redirected stdout — otherwise a red step says only "exit 1" and the
+          # reason is in a summary the log does not link to.
+          if total == 0:
+              sys.exit("::error::no cases ran — the workbook would be empty")
+          if failures:
+              sys.exit(f"::error::{failures} of {total} cases failed")
+          PY
+
+      - name: Upload the logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: appium-logs
+          path: |
+            sentinel-server.log
+            appium-server.log
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Deliverable 3 — the eight-phase assessment, which already has a workflow.
+  # Called rather than reproduced; it uploads findings.xlsx and
+  # endpoint-inventory.xlsx as `security-assessment`.
+  # ---------------------------------------------------------------------------
+  security:
+    name: security assessment
+    uses: ./.github/workflows/security-review.yml
+    permissions:
+      contents: read
+
+  # ---------------------------------------------------------------------------
+  # Deliverable 4 — 100 VUs, one minute, continuous.
+  # ---------------------------------------------------------------------------
+  load:
+    name: load (100 VUs, 1 minute)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      timescaledb:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_USER: sentinel
+          POSTGRES_PASSWORD: sentinel
+          POSTGRES_DB: sentinel
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sentinel"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Bring up the stack
+        id: stack
+        uses: ./.github/actions/sentinel-stack
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          node-version: ${{ env.NODE_VERSION }}
+
+      # The pinned tarball rather than the apt repository: the repo's key comes
+      # from a keyserver, which fails intermittently and takes the run with it,
+      # and `apt install k6` would also mean a different k6 from one week to
+      # the next under a job whose whole output is a comparison over time.
+      - name: Install k6
+        run: |
+          curl -fsSL -o /tmp/k6.tar.gz \
+            "https://github.com/grafana/k6/releases/download/v${K6_VERSION}/k6-v${K6_VERSION}-linux-amd64.tar.gz"
+          tar -xzf /tmp/k6.tar.gz -C /tmp
+          sudo install "/tmp/k6-v${K6_VERSION}-linux-amd64/k6" /usr/local/bin/k6
+          k6 version
+
+      # No gate step after this: k6 exits 99 when a threshold fails, so the run
+      # fails on its own terms. The thresholds are regression guards rather
+      # than SLOs — see the note in baseline.js about why an SLO here would go
+      # red on a background worker tick.
+      - name: Run the baseline profile
+        working-directory: load-tests
+        env:
+          SENTINEL_URL: ${{ steps.stack.outputs.base-url }}
+          SENTINEL_E2E_EMAIL: ${{ steps.stack.outputs.email }}
+          SENTINEL_E2E_PASSWORD: ${{ steps.stack.outputs.password }}
+        run: k6 run baseline.js
+
+      - name: Render the workbook
+        if: always()
+        working-directory: load-tests
+        run: |
+          npm install --no-audit --no-fund
+          npm run report
+
+      - name: Summarise the run
+        if: always()
+        working-directory: load-tests
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, pathlib
+
+          data = json.loads(pathlib.Path("summary.json").read_text())
+          metrics = data.get("metrics", {})
+
+          def v(name, key):
+              return ((metrics.get(name) or {}).get("values") or {}).get(key)
+
+          def ms(x):
+              return "—" if x is None else f"{x:.1f} ms"
+
+          seconds = round((data.get("state") or {}).get("testRunDurationMs", 0) / 1000)
+          rate, count = v("http_reqs", "rate"), v("http_reqs", "count")
+          failed = v("http_req_failed", "rate")
+
+          # Read the profile back from the run rather than restating it: a CLI
+          # override changes both, and a heading that still says 100 VUs over a
+          # smoke run is a caption that lies about its own figures.
+          print(f"### Load — {int(v('vus_max', 'max') or 0)} VUs, {seconds}s\n")
+          print("| Measure | Value |")
+          print("| --- | --- |")
+          print(f"| Requests/second | {rate:.1f} req/s |" if rate else "| Requests/second | — |")
+          print(f"| Requests total | {int(count or 0)} |")
+          print(f"| Failed | {failed * 100:.2f}% |" if failed is not None else "| Failed | — |")
+          print(f"| Response time — min | {ms(v('http_req_duration', 'min'))} |")
+          print(f"| Response time — avg | {ms(v('http_req_duration', 'avg'))} |")
+          print(f"| Response time — p95 | {ms(v('http_req_duration', 'p(95)'))} |")
+          print(f"| Response time — max | {ms(v('http_req_duration', 'max'))} |")
+          print("")
+          for name, metric in metrics.items():
+              for expr, result in (metric.get("thresholds") or {}).items():
+                  ok = result.get("ok", True) if isinstance(result, dict) else not result
+                  print(f"- `{name} {expr}` — {'PASS' if ok else 'FAIL'}")
+          print("")
+          print("A lone spike in `max` is usually a background worker rather than the")
+          print("request path: the alert evaluator ticks every 15s and the forecast")
+          print("worker every 120s, both in this process. See docs/TESTING.md.")
+          PY
+
+      - name: Upload load-test-report.xlsx
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: load-test-report
+          path: |
+            load-tests/load-test-report.xlsx
+            load-tests/summary.json
+          if-no-files-found: error
+
+      - name: Upload the server log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: load-server-log
+          path: sentinel-server.log
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # One place to see whether the run produced all five workbooks, without
+  # opening four jobs. Runs even when something upstream failed — that is the
+  # case where it is worth most.
+  # ---------------------------------------------------------------------------
+  summary:
+    name: artefact summary
+    runs-on: ubuntu-latest
+    needs: [selenium, appium, security, load]
+    if: always()
+    steps:
+      - name: Publish
+        run: |
+          {
+            echo "## Test artefacts"
+            echo ""
+            echo "| Deliverable | Suite | Result | Artifact |"
+            echo "| --- | --- | --- | --- |"
+            echo "| 1 | Selenium — web console | ${{ needs.selenium.result }} | \`selenium-report\` |"
+            echo "| 2 | Appium — Android app | ${{ needs.appium.result }} | \`appium-report\` |"
+            echo "| 3 | Security assessment | ${{ needs.security.result }} | \`security-assessment\` |"
+            echo "| 4 | Load — 100 VUs, 1 minute | ${{ needs.load.result }} | \`load-test-report\` |"
+            echo ""
+            echo "Five workbooks across those artifacts: \`selenium-test-report.xlsx\`,"
+            echo "\`appium-test-report.xlsx\`, \`findings.xlsx\`, \`endpoint-inventory.xlsx\`,"
+            echo "\`load-test-report.xlsx\`. The security job also uploads its own"
+            echo "SAST, dependency and API-check reports."
+            echo ""
+            if [ "${{ needs.appium.result }}" = "skipped" ]; then
+              echo "> The Appium suite was skipped for this run, so \`appium-test-report.xlsx\`"
+              echo "> is not among the artifacts."
+              echo ""
+            fi
+            echo "The stack under test is \`.env.ci\`'s, not the deployment's — rate"
+            echo "limiting off, \`COOKIE_SECURE=false\`. docs/TESTING.md explains why all"
+            echo "three of prod's settings break an end-to-end run."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if a suite failed
+        if: >-
+          needs.selenium.result == 'failure' ||
+          needs.appium.result == 'failure' ||
+          needs.security.result == 'failure' ||
+          needs.load.result == 'failure'
+        run: exit 1

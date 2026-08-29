@@ -29,7 +29,12 @@
 #     file a failure.
 #
 # `upload-artifact` rejects duplicate artifact names across jobs, so every
-# upload here is named for its job.
+# upload here is named for its job — including when this workflow is *called*
+# by test-suites.yml, whose own three jobs share the run with these five.
+#
+# It is callable as well as triggered: deliverable 5 of docs/TEST_BRIEF.md asks
+# for one workflow covering all four suites, and copying these five jobs into
+# it would have meant two definitions of the same assessment drifting apart.
 
 name: security-review
 
@@ -37,6 +42,17 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      run-api-checks:
+        description: Bring the stack up and run the live API checks
+        type: boolean
+        default: true
+  # Called by test-suites.yml, which gathers all four suites' artefacts into a
+  # single run. The input is redeclared rather than left to the dispatch block
+  # because `inputs` resolves against whichever trigger actually fired: on a
+  # called run the dispatch inputs do not exist, so `api_checks`'s condition
+  # would read an undefined `inputs.run-api-checks` and skip the job silently.
+  workflow_call:
     inputs:
       run-api-checks:
         description: Bring the stack up and run the live API checks

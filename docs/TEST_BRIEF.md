@@ -154,7 +154,7 @@ because a scan will still raise the underlying pattern:
   password on roles that exist only for databases dropped on every run. True
   positives for the pattern, false positives for the finding.
 
-## 4. Baseline load test
+## 4. Baseline load test  ·  **DELIVERED 2026-08-29**
 
 100 concurrent virtual users, one minute, continuous. Report requests/second
 and the response-time distribution (min, average, max).
@@ -162,7 +162,41 @@ and the response-time distribution (min, average, max).
 Already in place: `load-tests/baseline.js` (k6 v2.2.0 installed), `README.md`
 explaining why the token is minted once in `setup()`, and `npm run report`.
 
-## 5. One GitHub Actions workflow covering all four
+**Run against `make e2e-db` + `make e2e-serve`, 100 VUs for 60s: 127,330
+requests at 2,114.4 req/s, 0.00% failed.** Response time min 0.2 ms, avg
+47.1 ms, median 57.8 ms, p95 87.7 ms, p99 162.6 ms, max 567.6 ms; 96.1 MB
+received. All three thresholds passed. `npm run report` renders
+`load-test-report.xlsx` (Summary + Per-endpoint) from `summary.json`; both are
+gitignored as run artefacts for the reason `.gitignore` gives — a committed
+workbook is a stale claim about a pass rate.
+
+Per endpoint, 42,443 requests each:
+
+| Endpoint | Avg | p95 | Max |
+| --- | --- | --- | --- |
+| `/health` | 5.6 ms | 7.8 ms | 521.3 ms |
+| `/fleet/overview` | 68.7 ms | 108.2 ms | 527.7 ms |
+| `/devices` | 67.1 ms | 102.1 ms | 567.6 ms |
+
+Two things a cold pickup should know:
+
+* **The `max` column is one shared stall, not three slow handlers.** All three
+  endpoints peak within 46 ms of each other, and one of them is `/health`,
+  which touches no database at all — so whatever cost half a second cannot have
+  been a query, a pool checkout or any one handler. It is the single event loop
+  stopping for everything at once, which is exactly the shape `README.md` and
+  `docs/TESTING.md` predict for a background worker tick: four of them share
+  this process, and the forecast worker's ETS fit lands inside any 60-second
+  window. Genuine product behaviour, reported rather than tuned away. It is
+  also one occurrence in 127,330 requests — the p99 is 162.6 ms.
+* **The fleet was not empty.** `sentinel_ci` held 19 real device rows, all
+  offline, left by the Selenium and Appium runs that enrolled and removed real
+  agents. So `/fleet/overview` was answering over a real fleet rather than the
+  empty state, which is what makes the 5.6 ms floor and the ~68 ms real query
+  worth comparing. Nothing was seeded to achieve that, and nothing could be:
+  there is no metric seeder and there will not be one.
+
+## 5. One GitHub Actions workflow covering all four  ·  **DELIVERED 2026-08-29**
 
 A single `.yml` running all four suites, **with every Excel report downloadable
 as an artifact**. Must be written last, since the other four have to exist.
@@ -172,6 +206,59 @@ re-writing those steps; its header comment carries the `services:` block the
 job must declare. `.github/workflows/e2e-stack.yml` is a separate self-test —
 leave it alone. Note `upload-artifact` rejects duplicate artifact names across
 jobs.
+
+**`.github/workflows/test-suites.yml`**, five jobs, five workbooks:
+
+| Job | Suite | Artifact | Workbook |
+| --- | --- | --- | --- |
+| `selenium` | 421 browser cases | `selenium-report` | `selenium-test-report.xlsx` |
+| `appium` | 560 Android cases | `appium-report` | `appium-test-report.xlsx` |
+| `security` | the eight-phase assessment | `security-assessment` | `findings.xlsx`, `endpoint-inventory.xlsx` |
+| `load` | 100 VUs, 1 minute | `load-test-report` | `load-test-report.xlsx` |
+| `summary` | — | — | a step summary naming all of them |
+
+Four decisions worth knowing about:
+
+* **The security suite is called, not copied.** `security-review.yml` already
+  runs all eight phases and already uploads both workbooks. It gained a
+  `workflow_call` trigger — the input is redeclared under it, because `inputs`
+  resolves against whichever trigger fired and `api_checks` would otherwise
+  read an undefined `inputs.run-api-checks` on a called run and skip itself
+  silently. Nothing else about it changed. Duplicating those five jobs would
+  have meant two definitions of one assessment drifting apart.
+* **It does not run on push.** The Appium job builds an 82 MB release APK
+  through `expo prebuild` + `assembleRelease` and boots an emulator; a full run
+  is around 40 minutes. Nightly at 03:00 UTC and on demand, with a
+  `run-appium` dispatch input that drops it to about six. Per-commit feedback
+  is what `e2e-stack.yml` and `security-review.yml` (which does run on push)
+  already provide.
+* **Each suite job brings up its own stack.** A service container lives for one
+  job, so there is no handing a running database to the next — and sharing
+  would be wrong anyway, since the Appium suite enrols and removes a real
+  device and the load profile's numbers describe whatever fleet it found.
+* **`npm run test:xlsx` cannot fail**, because both suites' `test:report`
+  script ends in `|| true` so a failing run still renders its workbook — which
+  is precisely the run somebody wants the workbook for. Each suite job
+  therefore re-derives the exit code from `results.json` *after* uploading the
+  artifact, and names the failed cases in the step summary.
+
+Two things about the emulator job are load-bearing and easy to get wrong:
+`target: default` (an AOSP image), because the suite asserts that the app
+*reports push as unavailable* and a `google_apis` image carries Play services,
+which would make a correct app fail a correct test; and the Appium server is
+started inside the emulator action's own script rather than as a step of its
+own, so that `ANDROID_HOME` is in *its* environment — the server shells out to
+adb itself and exporting the SDK path only for the test process fails at
+session creation.
+
+**It has not been executed on a runner.** Everything checkable off a runner was
+checked — both workflows parse, no two artifact names collide across the whole
+`.github/workflows/` tree, the three embedded Python steps were run against the
+real `results.json` and `summary.json` from the runs above (pass, fail and
+empty paths), the pinned k6 tarball resolves, and
+`system-images;android-35;default;x86_64` exists in Google's repository. What
+cannot be verified from here is a GitHub-hosted run: the APK build and the
+emulator boot in particular have never run in CI on this project.
 
 ---
 

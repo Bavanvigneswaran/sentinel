@@ -2367,3 +2367,74 @@ Recorded gaps. The rate limiter still has no scenario, for the same `.env.ci` re
 Selenium suite. And push cannot be exercised at all: the emulator image has no Google Play
 services, so the suite asserts that Settings *says* push is unavailable rather than pretending the
 channel works — the same posture the app itself takes towards an unconfigured credential.
+
+### The load baseline, and half a second that belonged to no endpoint
+
+Deliverable 4 of `docs/TEST_BRIEF.md`, run against `make e2e-db` + `make e2e-serve`: 100 virtual
+users, one minute, continuous. 127,330 requests at 2,114.4 req/s, 0.00% failed, min 0.2ms, avg
+47.1ms, median 57.8ms, p95 87.7ms, p99 162.6ms, max 567.6ms, 96.1MB received. All three thresholds
+passed. `npm run report` rendered `load-test-report.xlsx` — Summary and Per-endpoint — from the
+`summary.json` `handleSummary()` writes.
+
+It found no defect, which is worth stating plainly rather than leaving as an absence. What it did
+produce is a reading of its own `max` that the per-endpoint sheet makes and the headline figure
+cannot.
+
+**The half-second maximum belongs to no endpoint.** `/health`, `/fleet/overview` and `/devices` all
+peaked within 46ms of each other — 521.3ms, 527.7ms and 567.6ms — and `/health` touches no database
+at all. So whatever cost half a second was not a query, not a pool checkout past its ceiling, and
+not any one handler: it was the single event loop stopping for everything at once. That is exactly
+the shape `docs/TESTING.md` predicts, because four background workers share this process and a
+forecast tick lands inside any 60-second window. It is one occurrence in 127,330 requests, the p99
+is 162.6ms, and it is genuine product behaviour — reported, not tuned away. The three-endpoint
+choice in `baseline.js` is what made it legible: without a no-database floor in the same run, a
+lone `max` is unattributable and reads as a slow query.
+
+**The fleet was not empty, and nobody arranged that.** `sentinel_ci` held 19 real device rows, all
+offline, left behind by the Selenium and Appium runs that had enrolled and removed real agents. So
+`/fleet/overview` answered over a real fleet rather than the empty state — which is what makes
+5.6ms of `/health` and ~68ms of a rollup-backed query worth putting side by side. Nothing was
+seeded to achieve it and nothing could have been.
+
+### One workflow for all four suites
+
+Deliverable 5, and the last of the brief. `.github/workflows/test-suites.yml`: `selenium`,
+`appium`, `security`, `load`, and a `summary` job that names every artifact in the run. Five
+workbooks come out of one run — `selenium-test-report.xlsx`, `appium-test-report.xlsx`,
+`findings.xlsx`, `endpoint-inventory.xlsx`, `load-test-report.xlsx`.
+
+**The security suite is called, not copied**, and making that work needed one non-obvious line.
+`security-review.yml` already ran all eight phases and already uploaded both workbooks; reproducing
+its five jobs would have meant two definitions of one assessment drifting apart. So it gained a
+`workflow_call` trigger — with `run-api-checks` *redeclared underneath it*, because `inputs`
+resolves against whichever trigger actually fired. Without that redeclaration, a run dispatched
+from the new workflow reaches `api_checks`'s condition, finds `inputs.run-api-checks` undefined,
+and skips the live API checks silently. A green run missing a phase is the failure mode worth
+paying a comment for.
+
+**`npm run test:xlsx` cannot fail, on purpose, so the exit code has to come back somewhere else.**
+Both suites' `test:report` script ends in `|| true` — mocha's non-zero exit would otherwise skip the
+reporting step, and a failing run would produce no workbook, which is precisely the run somebody
+wants the workbook for. Each suite job therefore re-derives its verdict from `results.json` *after*
+the artifact upload, and prints the failed case names into the step summary rather than only a
+count.
+
+Two things about the emulator job are load-bearing. `target: default` — an AOSP image, never
+`google_apis`: the suite asserts that the app *reports push as unavailable*, and an image carrying
+Play services would make a correct app fail a correct test. And the Appium server starts inside the
+emulator action's own script rather than as a step of its own, so `ANDROID_HOME` is in *its*
+environment — the server shells out to adb itself, and exporting the SDK path only for the test
+process fails at session creation.
+
+It does not run on push. The Appium job builds an 82MB release APK through `expo prebuild` +
+`assembleRelease` and boots an emulator, so a full run is around 40 minutes; nightly at 03:00 UTC
+and on demand, with a `run-appium` dispatch input that drops it to about six. Per-commit feedback
+is what `e2e-stack.yml` and `security-review.yml` already provide.
+
+**It has never been executed on a runner, and that is the honest limit of this entry.** Both
+workflows parse; no two artifact names collide anywhere under `.github/workflows/`; the three
+embedded Python steps were run against the real `results.json` and `summary.json` from the runs
+above, on their passing, failing and empty-run paths; the pinned k6 tarball resolves; and
+`system-images;android-35;default;x86_64` exists in Google's repository. What none of that covers
+is a GitHub-hosted run — the APK build and the emulator boot in particular have never happened in
+CI on this project.

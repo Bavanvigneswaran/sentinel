@@ -158,6 +158,30 @@ forward `overrides` that at first looked unfixable — see `dependency-report.md
 fixed and covered by 91 new tests. Both the 421-case Selenium suite and the 560-case Appium suite
 were re-run against the final state and pass. Migration `0016` is the one this produced.
 
+Deliverables 4 and 5 as well, which completes the brief. **The baseline load profile ran on
+2026-08-29: 100 VUs for 60s against `make e2e-db` + `make e2e-serve`, 127,330 requests at
+2,114.4 req/s, 0.00% failed, min 0.2ms / avg 47.1ms / p95 87.7ms / max 567.6ms, all three
+thresholds passing.** `load-tests/load-test-report.xlsx` (Summary + Per-endpoint) is rendered by
+`npm run report` and gitignored like the other two suite reports — a committed workbook is a stale
+claim about a pass rate. The one number worth reading twice is that `max`: all three endpoints peak
+within 46ms of each other and one of them is `/health`, which touches no database, so half a second
+was the single event loop stopping for everything at once rather than any handler being slow. Four
+background workers share that loop and a forecast tick lands inside any 60-second window; it is
+product behaviour, it is one occurrence in 127,330 requests (p99 162.6ms), and it gets reported
+rather than tuned away.
+
+**`.github/workflows/test-suites.yml` is the one workflow covering all four suites**, with all five
+workbooks downloadable from a single run — `selenium-report`, `appium-report`, `load-test-report`
+and, from the security workflow it *calls* rather than copies, `security-assessment`. It runs
+nightly and on demand, not on push: the Appium job builds an 82MB release APK and boots an
+emulator, so a full run is around 40 minutes, and per-commit feedback is already
+`e2e-stack.yml`'s and `security-review.yml`'s job. `security-review.yml` gained a `workflow_call`
+trigger for this and nothing else — with its input redeclared under it, because `inputs` resolves
+against whichever trigger fired and `api_checks` would otherwise read an undefined
+`inputs.run-api-checks` on a called run and skip itself silently. **It has never been executed on
+a runner**; everything checkable off one was checked, and `docs/TEST_BRIEF.md`'s deliverable 5
+section lists exactly what that covered and what it did not.
+
 **Deployment is this Mac and nothing else.** `make serve` builds the console and serves it, the REST
 API and the viewer socket on one origin; Tailscale Funnel gives that port a stable public
 `https://` front door so the APK and remote agents keep working when the LAN address moves. It runs
