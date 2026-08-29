@@ -152,7 +152,10 @@ jobs:
           path: |
             selenium-tests/selenium-test-report.xlsx
             selenium-tests/results.json
-          if-no-files-found: error
+          # `warn`, not `error`: when the suite dies before producing either
+          # file the next step says so in one clear sentence, and a second red
+          # step for the same cause only buries it.
+          if-no-files-found: warn
 
       - name: Fail if any case failed
         if: always()
@@ -166,7 +169,17 @@ jobs:
           python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json, os, pathlib, sys
 
-          run = json.loads(pathlib.Path("results.json").read_text())
+          # The first CI run died before mocha wrote anything, and this step
+          # then failed with a FileNotFoundError traceback that said nothing
+          # about the suite. Name the real situation instead.
+          results = pathlib.Path("results.json")
+          if not results.exists():
+              print(f"### {os.environ['SUITE']}\n")
+              print("The suite produced no `results.json` — it failed before "
+                    "any case ran. See the job log above.\n")
+              sys.exit("::error::the suite produced no results.json; no cases ran")
+
+          run = json.loads(results.read_text())
           stats = run.get("stats", {})
           total = stats.get("tests", 0)
           failures = stats.get("failures", 0)
@@ -272,6 +285,31 @@ jobs:
           npm install -g appium
           appium driver install uiautomator2
 
+      # Started here rather than inside the emulator step's `script`, for two
+      # reasons found by running it. The action executes that script ONE LINE
+      # PER `sh -c`, so a backslash continuation is not a continuation at all —
+      # it reaches the command as a literal argument, and the first attempt
+      # died on `appium: Unrecognized arguments: \`. And a backgrounded process
+      # survives between steps here anyway: the composite action starts uvicorn
+      # exactly like this and it is still serving several steps later.
+      #
+      # Appium needs no device to start, so starting it before the emulator
+      # boots costs nothing. ANDROID_HOME is set globally on a GitHub runner,
+      # so the server inherits it — the thing CLAUDE.md warns about (exporting
+      # the SDK path only for the test process, which fails at session
+      # creation) is a local-machine trap rather than a CI one.
+      - name: Start the Appium server
+        run: |
+          nohup appium --port 4723 --log-timestamp \
+            > "$GITHUB_WORKSPACE/appium-server.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:4723/status > /dev/null && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:4723/status > /dev/null \
+            || { echo "::error::appium did not come up on :4723"; cat "$GITHUB_WORKSPACE/appium-server.log"; exit 1; }
+          echo "appium is up (ANDROID_HOME=$ANDROID_HOME)"
+
       # Without this the emulator falls back to software rendering and the
       # boot alone outlasts the job.
       - name: Enable KVM
@@ -285,11 +323,6 @@ jobs:
       # check that the app *reports push as unavailable*, which is true only on
       # an image with no Google Play services — a Play-services image would
       # make a correct app fail a correct test.
-      #
-      # The Appium server is started inside this script rather than as a step
-      # of its own so that ANDROID_HOME is in *its* environment: the server
-      # shells out to adb itself, and exporting the SDK path only for the test
-      # process fails at session creation. See CLAUDE.md.
       - name: Run the suite and render the workbook
         uses: reactivecircus/android-emulator-runner@v2
         env:
@@ -309,19 +342,13 @@ jobs:
             -no-window -no-snapshot -gpu swiftshader_indirect -noaudio
             -no-boot-anim -camera-back none
           disable-animations: true
+          # Every line here is its own `sh -c`, so each must be a complete
+          # command: no backslash continuations, no multi-line loops.
+          # One session for the whole run — the uiautomator2 driver clears app
+          # data at session start, and that is what fixes the run's starting
+          # state as signed out with no collector token.
           script: |
             adb wait-for-device
-            nohup appium --port 4723 --log-timestamp \
-              > "$GITHUB_WORKSPACE/appium-server.log" 2>&1 &
-            for _ in $(seq 1 60); do
-              curl -fsS http://127.0.0.1:4723/status > /dev/null && break
-              sleep 2
-            done
-            curl -fsS http://127.0.0.1:4723/status > /dev/null \
-              || { echo "::error::appium did not come up on :4723"; exit 1; }
-            # One session for the whole run: the uiautomator2 driver clears app
-            # data at session start, and that is what fixes the run's starting
-            # state as signed out with no collector token.
             cd appium-tests && npm run test:xlsx
 
       - name: Upload appium-test-report.xlsx
@@ -332,7 +359,7 @@ jobs:
           path: |
             appium-tests/appium-test-report.xlsx
             appium-tests/results.json
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Fail if any case failed
         if: always()
@@ -346,7 +373,17 @@ jobs:
           python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json, os, pathlib, sys
 
-          run = json.loads(pathlib.Path("results.json").read_text())
+          # The first CI run died before mocha wrote anything, and this step
+          # then failed with a FileNotFoundError traceback that said nothing
+          # about the suite. Name the real situation instead.
+          results = pathlib.Path("results.json")
+          if not results.exists():
+              print(f"### {os.environ['SUITE']}\n")
+              print("The suite produced no `results.json` — it failed before "
+                    "any case ran. See the job log above.\n")
+              sys.exit("::error::the suite produced no results.json; no cases ran")
+
+          run = json.loads(results.read_text())
           stats = run.get("stats", {})
           total = stats.get("tests", 0)
           failures = stats.get("failures", 0)

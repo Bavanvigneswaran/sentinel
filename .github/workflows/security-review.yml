@@ -222,7 +222,17 @@ jobs:
           ALLOWED_EXACT = {"Makefile", "docker-compose.yml", "backend/app/config.py",
                            "backend/app/security/opaque.py",
                            "backend/scripts/seed_e2e_account.py",
-                           "appium-tests/tests/app-tests.js"}
+                           "appium-tests/tests/app-tests.js",
+                           # A blocklist of bad passwords and a list of keyboard
+                           # runs — "1234567890abc", "qwertyuiopasdfghjklzxcvbnm".
+                           # detect-secrets reads them as high-entropy strings;
+                           # they are the literal opposite of a secret, and the
+                           # file exists to refuse them.
+                           "backend/app/security/password_policy.py",
+                           # Deliberately wrong passwords in the DAST script's
+                           # own checks — the pair that asserts an unknown email
+                           # and a wrong password are indistinguishable.
+                           "tools/security-report/api-checks.py"}
 
           results = json.loads(pathlib.Path("reports/secrets.json").read_text())["results"]
           unexpected = {
@@ -553,11 +563,22 @@ jobs:
           print(f"**Score {data['meta']['score']} / 100** · "
                 f"Critical {counts['Critical']} · High {counts['High']} · "
                 f"Medium {counts['Medium']} · Low {counts['Low']} · "
+                f"Informational {counts['Informational']} · "
                 f"{len(data['endpoints'])} endpoints inventoried\n")
           print("| ID | Severity | Finding | Status |")
           print("| --- | --- | --- | --- |")
-          order = ["Critical", "High", "Medium", "Low"]
-          for f in sorted(data["findings"], key=lambda f: (order.index(f["severity"]), f["id"])):
+          # `Informational` is in this list because the remediation pass that
+          # closed the first assessment's 18 findings reclassified two of them
+          # into it, and `.index()` raises on a severity it has never heard of
+          # — which took this whole job down with a ValueError naming the
+          # string and not the list. Unknown severities now sort last instead
+          # of failing, so a future sixth one degrades the ordering rather than
+          # the run.
+          order = ["Critical", "High", "Medium", "Low", "Informational"]
+          def rank(f):
+              sev = f["severity"]
+              return (order.index(sev) if sev in order else len(order), f["id"])
+          for f in sorted(data["findings"], key=rank):
               if f["severity"] in ("Critical", "High", "Medium"):
                   print(f"| {f['id']} | {f['severity']} | {f['type']} | {f['status']} |")
           print("\nFull detail in `Vulnerability Test Results/`.")
