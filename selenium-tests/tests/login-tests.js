@@ -152,9 +152,43 @@ async function navigateTo(url) {
   }
 }
 
+/**
+ * Wait for this page load's auth exchange to finish before anyone navigates
+ * again.
+ *
+ * Every page load runs bootstrapAuth(), which POSTs /auth/refresh, and the
+ * backend ROTATES the refresh cookie on each exchange. Navigate again while
+ * one is still in flight and the new load presents a cookie the server has
+ * already rotated away — which is a replayed refresh token, which the backend
+ * correctly refuses with a 401 and which logs the browser out in the middle of
+ * a suite that never signed out. The next protected route then redirects to
+ * /login and the failure lands on whichever case happened to be next.
+ *
+ * dropSessionCookie() documents the deletion half of this hazard already; this
+ * is the navigation half. It cost one CI run, as TC-315 arriving at /login,
+ * after ~25 consecutive page loads whose refreshes had all returned 200.
+ *
+ * Best-effort by design: it returns quietly when no exchange is observable,
+ * because its job is to avoid a race rather than to assert that one happened.
+ * `responseEnd` is 0 while a request is still outstanding.
+ */
+async function settleAuthExchange(timeout = 5000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const done = await driver.executeScript(
+      "const rs = performance.getEntriesByType('resource')" +
+        "  .filter((r) => r.name.indexOf('/auth/refresh') !== -1);" +
+        "return rs.length > 0 && rs.every((r) => r.responseEnd > 0);",
+    );
+    if (done === true) return;
+    await driver.sleep(100);
+  }
+}
+
 async function go(path) {
   await navigateTo(`${BASE}${path}`);
   await settle();
+  await settleAuthExchange();
 }
 
 /**
