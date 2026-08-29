@@ -323,10 +323,25 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # `target: default`, never `google_apis`. The suite's Settings assertions
-      # check that the app *reports push as unavailable*, which is true only on
-      # an image with no Google Play services — a Play-services image would
-      # make a correct app fail a correct test.
+      # API 36 + google_apis, because that is what the suite's 560 cases were
+      # actually validated against: the local AVD is
+      # `system-images/android-36/google_apis_playstore/arm64-v8a`. CI cannot
+      # match the ABI, and does not need to, but the API level and the image
+      # family are what decide layout and `Build.MODEL`.
+      #
+      # An earlier revision pinned `target: default` on the stated reasoning
+      # that the suite's push assertions need an image with no Google Play
+      # services. That reasoning is wrong, and CLAUDE.md, docs/TEST_BRIEF.md
+      # and appium-tests/README.md all repeat it. Push availability is a
+      # BUILD-time fact: app.config.ts omits `googleServicesFile` when
+      # `google-services.json` is absent and passes `hasFirebaseConfig: false`
+      # through to src/config.ts, which is what makes Settings say push is
+      # unavailable. The image cannot change it — which the local AVD proves,
+      # since it carries the Play Store and the suite passes there.
+      #
+      # The AOSP image cost two things that were not free: `Build.MODEL` reads
+      # "Android SDK built for x86_64", with spaces, and its layout put the
+      # rule form's buttons below the fold.
       - name: Run the suite and render the workbook
         uses: reactivecircus/android-emulator-runner@v2
         env:
@@ -335,8 +350,8 @@ jobs:
           SENTINEL_E2E_EMAIL: ${{ steps.stack.outputs.email }}
           SENTINEL_E2E_PASSWORD: ${{ steps.stack.outputs.password }}
         with:
-          api-level: 35
-          target: default
+          api-level: 36
+          target: google_apis
           arch: x86_64
           # `pixel_7`, to match the AVD the suite's 560 cases were actually
           # validated against — 1080x2400 at 420dpi. Leaving this unset does

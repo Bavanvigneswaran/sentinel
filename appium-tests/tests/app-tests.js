@@ -85,8 +85,17 @@ const WAIT = 30000;
 /** For asserting something is *absent*; a full WAIT here would cost minutes. */
 const SHORT_WAIT = 4000;
 
-/** The name the collector gives this phone — Build.MODEL on the emulator. */
-const EXPECTED_DEVICE_NAME_RE = /^[\w.-]+$/;
+/**
+ * The name the collector gives this phone — Build.MODEL on the emulator.
+ *
+ * Spaces are allowed because real phones have them: Build.MODEL is "Pixel 7
+ * Pro" on a Pixel and "Android SDK built for x86_64" on an AOSP emulator
+ * image. The original pattern refused both and happened to pass only because
+ * the AVD it was written against reports `sdk_gphone64_arm64`. What this is
+ * really asserting is that the name came from the device rather than being a
+ * placeholder or blank, so it stays strict about everything except the space.
+ */
+const EXPECTED_DEVICE_NAME_RE = /^[\w .-]+$/;
 
 let driver;
 /** Bearer token for the fixture calls. Minted once in the root `before`. */
