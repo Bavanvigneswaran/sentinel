@@ -40,7 +40,18 @@ react-native-svg for charts) in `mobile/`, plus a Kotlin collector module in Pha
 - `make serve` — **build the console and serve it + the API on one port, bound to 127.0.0.1.**
   Reachable from another machine through the Tailscale Funnel, which proxies from localhost.
   `SERVE_HOST=0.0.0.0` restores the plaintext LAN bind and prints a warning saying why you
-  should not — see the security assessment's SEC-001.
+  should not — see the security assessment's SEC-001. **On its own it does not give you a
+  working console**: see `make serve-lan`.
+- `make serve-lan` — **the same server reachable by every device on the current network**, by
+  typing a URL, with nothing installed on the viewing device. `SERVE_HOST=0.0.0.0` alone is not
+  enough and this is the correction to it: the refresh cookie is set `secure=cookie_secure`, prod
+  forces that true, and a browser silently discards a `Secure` cookie on a plaintext origin — so a
+  bare LAN bind yields a login that accepts the password and never persists, which reads as a
+  broken app rather than a cookie flag. This target passes `COOKIE_SECURE=false ENVIRONMENT=dev`
+  as environment variables (they outrank `backend/.env`, so the real secrets stay in one file),
+  holds `RATE_LIMIT_ENABLED` and `SameSite=strict` on, and prints **the LAN IP** as the link.
+  Not the `.local` name — Chrome on Android has no mDNS resolver, so that name is not universal.
+  The IP belongs to the network joined *right now*; changing networks means re-running it.
 - `make dev-backend` — FastAPI dev server on :8000 (reload, localhost only)
 - `make dev-frontend` — Vite dev server on :5173 (proxies `/api` → :8000, `/ws` → :8000)
 - `make migrate` — apply Alembic migrations · `make revision m="..."` — autogenerate a new one
@@ -244,6 +255,18 @@ correctly absent because it is scheme-gated and so never appeared on the listene
 Point `frontend/mobile/.env` at the Funnel hostname, not a LAN IP. `SERVE_HOST=0.0.0.0` is still
 there for a genuinely trusted network and says what it costs.
 
+**The Funnel is the wrong tool for same-network access, and using it that way cost a long
+evening on 2026-08-31.** It is a *public-internet* front door: with every device on the same
+phone hotspot, traffic still left the phone, crossed to Tailscale's ingress
+(`103.84.155.153`/`.217`) and came back. That path is carrier-dependent and was measurably
+dead for ~20 minutes and then healthy again with nothing changed — so devices failed and
+recovered independently and it read as "the app is randomly broken". Two traps made it hard
+to see: **MagicDNS**, which resolves the `.ts.net` name to this Mac's own tailnet IP so
+testing the Funnel *from this Mac* proves nothing (pin the public IP with `curl --resolve`
+instead), and the loopback bind above, which left no fallback path when the Funnel flaked.
+For devices on the same network use `make serve-lan`; keep the Funnel for genuinely remote
+access and for the APK, whose `EXPO_PUBLIC_API_URL` is baked in at build time.
+
 The honest limits, unchanged: no code-signing certificates exist, so all four desktop builds are
 unsigned and Gatekeeper/SmartScreen interrupt every install; and there is no cloud deployment — if
 Tailscale or `make serve` is not running on this Mac, nothing is reachable.
@@ -310,13 +333,22 @@ Added 2026-08-30, and only buildable because the Gmail credential above exists �
 * **The new password is validated by the Pydantic schema, before the handler runs**, so a weak
   choice returns 422 without burning the single-use token — the user retypes and the same link
   still works.
-* **`apiFetch` treats 202 as bodyless, alongside 204.** Found in a browser, not by a test: the
-  server was correctly returning 202 with no body, `response.json()` threw a SyntaxError on the
-  empty string, and the page reported "Could not reach the server" — the one thing that had
-  definitely not happened. This is the only 202 in the API.
+* **`apiFetch` treats 202 as bodyless, alongside 204 — in *both* clients.** Found in a browser,
+  not by a test: the server was correctly returning 202 with no body, `response.json()` threw a
+  SyntaxError on the empty string, and the page reported "Could not reach the server" — the one
+  thing that had definitely not happened. This is the only 202 in the API. The mobile client
+  carried the identical bug, dormant, until it got a caller on 2026-08-31; the TS types in
+  `frontend/*/src/lib/api.ts` are hand-maintained copies, so a fix to one is a fix to neither
+  until the second grows a reason to hit it.
 * **The emailed link's origin comes from the request** unless `PASSWORD_RESET_BASE_URL` is set.
   Right for `make serve` (one origin, and `--proxy-headers` makes it the Funnel front door),
   wrong for the split dev stack where the console is on :5173 — hence the override.
+* **The Android app requests a reset; it never completes one.** `AuthScreen`'s third mode POSTs
+  `/auth/forgot-password` and shows the same "if an account exists" copy for the same
+  anti-enumeration reason; choosing the new password stays in the browser on the emailed link.
+  Deep-linking the token into the app would mean a second consumption path for a single-use
+  credential the app has no other reason to hold. There is no `ResetPassword` screen and that is
+  deliberate.
 
 **Deleting an alert rule while it is FIRING orphans its event.** `alert_events.rule_id` is `ON
 DELETE SET NULL` (firing history outlives its rule — hence the snapshotted `rule_name`/`rule_type`)

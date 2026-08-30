@@ -2618,3 +2618,81 @@ truly cannot fit, and, in `ExhaustionSummary.tsx`, splitting the entity name ont
 span (full path on hover via `title`) while the percentage reading next to it stays `shrink-0` and
 never truncates. Verified against the rebuilt CSS at 1600px, 1100px, and 375px — identical to the
 old layout at 1600px, where there was always room, and only diverging once there wasn't.
+
+## 2026-08-31 — The Funnel was the wrong tool for same-network access
+
+The console stopped opening on the phone. `ERR_CONNECTION_CLOSED`, while the same URL worked on
+the Mac. Nothing in the app had changed, and it eventually recovered on its own without a single
+edit — which is the shape of the whole entry: **the failure was never in this codebase**, and
+three separate traps kept saying it was.
+
+Since the security assessment's SEC-001 fix, `make serve` binds loopback, so the Tailscale Funnel
+URL was the *only* way in. Funnel is a public-internet front door. With every device sitting on the
+same phone hotspot, traffic still left the phone, crossed to Tailscale's ingress
+(`103.84.155.153`/`.217`) and came back — so "same network" access depended on a carrier route to
+a third party. That route was measurably dead for about twenty minutes: TCP connected, then the TLS
+handshake returned **zero bytes**. Identical with a 241-byte TLS 1.2 ClientHello and a 1574-byte
+TLS 1.3 one, which rules out MTU and fragmentation; `google.com` and `login.tailscale.com` over the
+same uplink were fine throughout. Then it recovered with nothing changed.
+
+**Trap one: MagicDNS makes local testing meaningless.** This Mac is a tailnet member, so its
+resolver answers `bavans-macbook-pro.tail9d00e9.ts.net` with `100.100.196.9` — the Mac's own
+tailnet address. Every `curl` from here returned a healthy 200 in ~10ms while the public path was
+dead, because the request never left the machine. The only honest test is public DNS plus
+`curl --resolve <host>:443:<public-ip>`. Hours went into "the server is broken" on the strength of
+a green local check that was structurally incapable of failing.
+
+**Trap two: the documented escape hatch did not work.** CLAUDE.md said `SERVE_HOST=0.0.0.0`
+"restores the plaintext LAN bind". It restores the *bind*, and nothing else. The refresh cookie is
+set `secure=settings.cookie_secure`, `ENVIRONMENT=prod` forces that true, and every browser
+discards a `Secure` cookie on a plaintext origin — so the LAN bind yields a login form that accepts
+the password, sets a cookie the browser throws away, and logs you out on the next navigation. It
+reads as a broken app rather than a cookie flag. Written as a working fallback, never once tested.
+`make serve-lan` is the correction: `0.0.0.0` plus `COOKIE_SECURE=false ENVIRONMENT=dev` passed as
+environment variables, which outrank `backend/.env` so the real secrets stay in one file with no
+second copy to drift, with `RATE_LIMIT_ENABLED` and `SameSite=strict` held on explicitly.
+
+**Trap three: `.local` is not a universal link.** The first banner led with the mDNS name as
+"stable, survives changing networks", which is true and useless: Chrome on Android has no mDNS
+resolver. macOS and Windows both resolved it natively, the phone could not, and that read as yet
+another network fault. The banner now leads with the IP — the only address every browser resolves —
+and says why the name is absent.
+
+Two smaller things that each cost time. A bare `curl /` against the Funnel returns FastAPI's
+`{"detail":"Not Found"}`, because `WebConsoleMiddleware` only answers requests carrying
+`Sec-Fetch-Mode: navigate` or an HTML `Accept` — correct behaviour that looks exactly like a
+broken console build. And the banner prints the IP **at startup**: changing networks afterwards
+leaves a stale address on screen while the server itself keeps working, which is how a link the
+user had never been shown ended up being the one that worked.
+
+The lesson worth keeping is not about Tailscale. Funnel is right for reaching this machine from a
+network you are not on, and the APK still uses it that way. It was wrong as the answer to "two
+devices on the same network cannot reach each other", because it solves that by leaving the network
+entirely. The security fix that made it the sole ingress was correct on its own terms and removed
+the only fallback in the same breath, and neither half was stated at the time.
+
+## 2026-08-31 — Password reset reaches the Android app, and finds the 202 bug again
+
+The web flow landed 2026-08-30; the app had no equivalent. It is now a third mode on `AuthScreen`
+("one screen, two modes" became three) rather than a new screen, so nothing in the navigator
+changed. The app only *requests* the mail: choosing the new password stays in the browser on the
+emailed link, because the token is single-use and scoped to that URL, and deep-linking it would
+mean either a second consumption path for the same token or handing the app a credential it has no
+other reason to hold. The backend builds that link from the request's own origin, which is the
+address the app is already talking to.
+
+It would not have worked. `frontend/mobile/src/lib/api.ts` treated `204` as bodyless and nothing
+else — **the identical defect the web client hit and fixed on 2026-08-30**, in a copy nobody
+updated, lying dormant because `/auth/forgot-password` is the API's only 202 and mobile had no
+caller for it. `response.json()` on an empty body throws a `SyntaxError` that `send` cannot
+distinguish from a dead socket, so the screen would have reported "could not reach the backend" for
+a request that had in fact succeeded — the one thing that definitely did not happen, which is
+word-for-word what the web bug did. Found by reading the client before writing the screen rather
+than by a test, and the general form is worth naming: a fix applied to one of two hand-maintained
+client copies is a fix applied to neither, until the second one gets a caller.
+
+One regression was introduced and caught before it shipped. The first version of the mode switcher
+cleared the password field on every toggle; the original cleared only the error. Appium module 3
+asserts that what was typed survives a toggle in both directions, and while it happens to assert
+only on the email, the change was an unrequested behavioural difference in a screen 117 test
+assertions already depend on. `goTo()` now clears exactly what belongs to the mode being left.

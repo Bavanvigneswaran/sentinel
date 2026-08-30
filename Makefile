@@ -1,4 +1,4 @@
-.PHONY: up down dev dev-backend dev-frontend test agent logs install serve web-build \
+.PHONY: up down dev dev-backend dev-frontend test agent logs install serve serve-lan web-build \
         migrate migrate-down revision db-shell redis-shell reset-db lint typecheck \
         agent-enroll agent-sample agent-status agent-install-service agent-uninstall-service \
         agent-build agent-build-check agent-build-clean \
@@ -100,6 +100,67 @@ serve: web-build
 	fi; \
 	echo ""
 	cd backend && .venv/bin/uvicorn app.main:app --host $(SERVE_HOST) --port 8000 \
+		--proxy-headers --forwarded-allow-ips=127.0.0.1 --no-server-header
+
+# Serve to every device on the network this machine is currently joined to —
+# a phone hotspot, typically — reachable by typing a URL, with nothing to
+# install on the viewing device. This is `serve` with SERVE_HOST=0.0.0.0 plus
+# the one setting that bind alone does not fix.
+#
+# COOKIE_SECURE is the trap. In prod it is true, and a `Secure` cookie is
+# discarded by every browser on a plaintext http:// origin — so a LAN bind on
+# its own gets you a login form that accepts the password, sets a refresh
+# cookie the browser silently drops, and logs you out on the next navigation.
+# It reads as "the app is broken", not as a cookie flag. Serving http:// means
+# cookie_secure=false, and the prod validator (correctly) refuses that pairing,
+# hence ENVIRONMENT=dev here. Both are passed as environment variables, which
+# take precedence over backend/.env, so the real secrets in that file are still
+# the ones used and there is no second copy of them to drift.
+#
+# What that costs, stated plainly: logins on this address cross the network in
+# cleartext, and /docs + /openapi.json are reachable (they 404 under prod).
+# RATE_LIMIT_ENABLED and the strict SameSite cookie are held on explicitly so
+# only the two settings that http:// actually forces are relaxed. Use this on a
+# network you own — your own hotspot, your own devices. On any other network,
+# `make serve` and the Funnel URL are the right answer.
+serve-lan: web-build
+	@iface=$$(route -n get default 2>/dev/null | awk '/interface:/{print $$2}'); \
+	ip=$$(ipconfig getifaddr $$iface 2>/dev/null); \
+	if [ -z "$$ip" ]; then \
+		ip=$$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $$1}'); \
+	fi; \
+	echo ""; \
+	if [ -z "$$ip" ]; then \
+		echo "  This Mac has no network address right now, so there is no link to"; \
+		echo "  print. Join the hotspot and re-run \`make serve-lan\`."; \
+		echo ""; \
+	else \
+		echo "  ┌──────────────────────────────────────────────────────────┐"; \
+		echo "  │  Open this on any device on this network:                │"; \
+		echo "  │                                                          │"; \
+		printf "  │      http://%-45s│\n" "$$ip:8000"; \
+		echo "  └──────────────────────────────────────────────────────────┘"; \
+		echo ""; \
+		echo "  One link, every device, every browser. Type it exactly as shown,"; \
+		echo "  including the http:// — Chrome tries https:// first otherwise and"; \
+		echo "  this listener is plaintext, which fails looking like a dead server."; \
+		echo ""; \
+		echo "  This address belongs to the network this Mac is joined to RIGHT"; \
+		echo "  NOW. Switch between the hotspot and wifi and it changes, while"; \
+		echo "  this banner still shows the old one — stop this and re-run"; \
+		echo "  \`make serve-lan\` after changing networks to print the new link."; \
+		echo ""; \
+		echo "  (Deliberately not the .local name: Chrome on Android has no mDNS"; \
+		echo "  resolver and cannot open it, so it is not a universal link.)"; \
+		echo ""; \
+		echo "  WARNING: this address is plaintext http. Logins on it cross the"; \
+		echo "           network readable, so use it on a network you own. Anything"; \
+		echo "           reached from outside this network should use \`make serve\`"; \
+		echo "           and the Tailscale Funnel URL instead."; \
+		echo ""; \
+	fi
+	cd backend && COOKIE_SECURE=false ENVIRONMENT=dev RATE_LIMIT_ENABLED=true \
+		.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 \
 		--proxy-headers --forwarded-allow-ips=127.0.0.1 --no-server-header
 
 test:
