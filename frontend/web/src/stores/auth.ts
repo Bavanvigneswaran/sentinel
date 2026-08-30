@@ -16,7 +16,13 @@ import {
   discardRefreshSingleFlight,
   refreshSession,
 } from "@/lib/api"
-import type { LoginRequest, SessionResponse, SignupRequest, User } from "@/types/api"
+import type {
+  LoginRequest,
+  ResetPasswordRequest,
+  SessionResponse,
+  SignupRequest,
+  User,
+} from "@/types/api"
 
 /** A string-literal union, not a TS enum — erasableSyntaxOnly forbids enums. */
 export type AuthStatus = "idle" | "bootstrapping" | "authenticated" | "anonymous"
@@ -31,6 +37,7 @@ interface AuthState {
 
   login: (credentials: LoginRequest) => Promise<void>
   signup: (payload: SignupRequest) => Promise<void>
+  resetPassword: (payload: ResetPasswordRequest) => Promise<void>
   logout: () => Promise<void>
 }
 
@@ -60,6 +67,20 @@ export const useAuth = create<AuthState>((set) => ({
 
   signup: async (payload) => {
     const session = await apiFetch<SessionResponse>("/auth/signup", {
+      method: "POST",
+      body: payload,
+      anonymous: true,
+    })
+    applySession(session)
+  },
+
+  /**
+   * Spend a reset link. The server signs the user in on the new password, so
+   * this adopts the returned session exactly as login and signup do — every
+   * *other* session the account had was revoked server-side by the same call.
+   */
+  resetPassword: async (payload) => {
+    const session = await apiFetch<SessionResponse>("/auth/reset-password", {
       method: "POST",
       body: payload,
       anonymous: true,

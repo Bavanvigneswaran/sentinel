@@ -2547,3 +2547,74 @@ five workbooks in one run.** The tally over seven runs is six defects introduced
 workflow and five that were already there — two of them failing `security-review.yml` on every
 push since deliverable 3 was finished, unnoticed for the same reason the rest of this entry
 exists: nobody had run it.
+
+### Password reset, and the two bugs only running it found
+
+The feature had never been built — not rejected, just never reached. `/auth/signup`, `/auth/login`,
+`/auth/refresh`, `/auth/logout`, `/auth/me`, and nothing to recover a forgotten password, on a
+codebase that had carried the scaffolding for one since Phase 1: `User.password_changed_at` already
+invalidated access tokens issued before it, and `RefreshToken.REVOKED_REASONS` already listed
+`"password_change"`, set by nothing. Both were wired up rather than added.
+
+The design followed two precedents already in the codebase rather than inventing new ones. The
+token is a Redis entry shaped exactly like `app/live/tickets.py`'s viewer ticket — sha256 at rest,
+consumed with `GETDEL` so a forwarded or double-clicked link works once — which is also why this
+needed no migration; `master` stayed at `0016`. And `POST /auth/forgot-password` answers 202
+identically for a known and an unknown address, the same reasoning `/auth/login` already uses to
+answer identically for a wrong password and an unknown email — the mail is queued as a
+`BackgroundTask` specifically so awaiting an SMTP round trip could not make the known-address path
+observably slower and leak the answer the status code refuses to give.
+
+**The reset token carries a fingerprint of the password hash it was minted against**, which is the
+one piece with no precedent to copy: two links requested minutes apart must not each work, or the
+older one silently undoes the newer. A reset also has to revoke every refresh token for the account,
+not just the family the reset happened through — a thief's live session sits on a *different*
+family — and bump `password_changed_at`, because an access JWT is valid on its signature alone for
+its full 15 minutes and is checked against no table; revoking refresh tokens alone leaves that
+thief's current window untouched.
+
+Everything landed clean by every test that ran without a browser: 798 backend (777 plus 21 new),
+lint, typecheck. It broke on the first real click. `POST /auth/forgot-password` returns 202 with no
+body, correctly — and `apiFetch` only special-cased 204. `response.json()` threw a `SyntaxError` on
+the empty string, and the page reported "Could not reach the server," which was the one thing that
+had definitely not happened. Nothing in 798 tests exercises the client against a live server; a
+`TestClient` response and a real `fetch()` response are not the same object, and this is the
+category of bug that only exists in the gap between them. Fixed by teaching `apiFetch` that 202 is
+bodyless too — the only other occurrence in the API — and caught by minting a real token, driving
+the actual built bundle through `make e2e-serve`, and clicking the button, which is the same lesson
+Phase 15's Selenium work and the CI runs above keep relearning: a path no test walks is untested, no
+matter how confident the code reads.
+
+### A card that only breaks when the window is narrow enough
+
+Found by the user, not by a test, immediately after the password-reset work above: the device
+history page's summary card — health score, breakdown, time-to-capacity, novelty — rendering
+overlapping garbage instead of four side-by-side panels. The instinct was to suspect the just-landed
+change; it touched none of the five files involved. What actually exposed it was `make web-build`
+replacing a `dist/` that predated this card's own commit, in front of a `make serve` that had been
+running for 38 minutes — the same `@lru_cache`/stale-process hazard CLAUDE.md already names for
+settings, now confirmed for compiled assets too: a long-running `uvicorn` serves stale code, not
+just stale settings.
+
+The bug itself was already committed, waiting on the right data. `HealthBreakdown`'s rows are a
+`w-24` label plus a `w-14` value, both `shrink-0` — an ~11rem floor the row cannot compress below —
+sitting inside a container marked `min-w-0 flex-1`, which explicitly permits the *container* to
+shrink past what its own content refuses to. Force it below that floor and the content overflows a
+box narrower than itself; with no `overflow-hidden` anywhere in the ancestry, it paints straight
+over the sibling panel next to it rather than clipping. What forces it is real data doing exactly
+what it is supposed to: the exhaustion forecast's disk entity is `/System/Volumes/Update/SFR/mnt1`,
+a 31-character APFS update-volume path from Phase 2's own documented quirk, sitting in a
+neighbouring panel marked `shrink-0` that will not give it room. Ordinary devices with short mount
+names or no disk forecast at all never surface it, which is presumably why nothing had caught it —
+one more instance of a bug that needs specific real data to exist at all, the same shape as the
+`cpu_freq == 4` and `scaling_cur_freq` quirks Phase 2 and Phase 10b both found by running the thing
+rather than reading it.
+
+Reproduced before touching source: a standalone HTML harness loaded against the *actual* built CSS
+(not a description of it) reproduced the screenshot pixel-for-pixel, which is what turned "trust me,
+it's fixed" into something checked. The fix is `min-w-64` in place of `min-w-0` — a real floor
+instead of an unbounded one — plus `flex-wrap` so panels wrap rather than collide when four of them
+truly cannot fit, and, in `ExhaustionSummary.tsx`, splitting the entity name onto its own `truncate`
+span (full path on hover via `title`) while the percentage reading next to it stays `shrink-0` and
+never truncates. Verified against the rebuilt CSS at 1600px, 1100px, and 375px — identical to the
+old layout at 1600px, where there was always room, and only diverging once there wasn't.

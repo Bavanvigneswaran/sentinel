@@ -104,8 +104,11 @@ Three things live outside git and will not survive a fresh clone:
 Also outside git, unchanged from earlier phases: the release keystore in `~/.sentinel-keys/`, and
 `agent/dist/` with its five published builds.
 
-**Everything is green as of 2026-08-29, on a runner as well as on this Mac.** 777 backend tests,
-188 agent, 80 web, 95 mobile JS, 57 Kotlin — 1197 in total — plus `make lint` and `make typecheck`.
+**Everything is green as of 2026-08-30, on a runner as well as on this Mac.** 798 backend tests,
+188 agent, 80 web, 95 mobile JS, 57 Kotlin — 1218 in total — plus `make lint` and `make typecheck`.
+(Was 1197; the password-reset flow added 21 backend tests on 2026-08-30. The 421-case Selenium
+suite was re-run against the change and still passes at 421 — no browser cases were added, so
+that deliverable's documented count is unchanged.)
 Migrations are at head (`0016`), applied locally. **`test-suites.yml` run 7 was fully green**: 421
 Selenium, 560 Appium, 100 VUs at 0.00% failed, six security jobs, and all five workbooks
 downloadable from the one run. That took seven runs and eleven fixes — `docs/HISTORY.md`'s last two
@@ -279,6 +282,41 @@ silently dropped by the unconfigured-guard branches in `notify.py`. Current stat
   project, a service-account credential, and a signed release rebuild (`make mobile-prebuild` +
   `make mobile-apk`) to get it. Revisit only if the native-app attribution itself becomes something
   that matters, not because a channel is technically missing.
+
+### Password reset
+
+Added 2026-08-30, and only buildable because the Gmail credential above exists — the flow is
+`POST /auth/forgot-password` → emailed link → `POST /auth/reset-password`. Invariants:
+
+* **The request endpoint answers identically for a known and an unknown address**, always 202,
+  and the success page says "if an account exists" for the same reason. Anything that
+  distinguished them would make this an account-enumeration oracle, which is the same reasoning
+  `/auth/login` uses to answer identically for a wrong password and an unknown email. The mail is
+  queued as a `BackgroundTask` rather than awaited *as part of that guarantee*, not for speed: an
+  SMTP conversation takes a second or more, and awaiting it would time the answer the status code
+  refuses to give.
+* **The token lives in Redis, not a table**, following `app/live/tickets.py` — sha256 at rest,
+  consumed with `GETDEL` so a forwarded or double-clicked link succeeds at most once. That is why
+  this feature needed no migration; `master` is still at `0016`. Losing Redis loses outstanding
+  links, which is the right trade.
+* **It carries a fingerprint of the password hash it was minted against**, so completing a reset
+  invalidates every *other* outstanding link. Without it two links requested minutes apart would
+  each work once, and the older one would silently undo the newer.
+* **A reset revokes every refresh token for the account and bumps `password_changed_at`.** Both
+  halves are needed and the second is the non-obvious one: an access JWT is valid on its signature
+  alone for its full 15 minutes and is checked against no table, so revoking refresh tokens alone
+  would leave a thief's current session alive. This is what `RefreshToken.REVOKED_REASONS`'
+  `"password_change"` entry was scaffolded for; nothing had ever set it until now.
+* **The new password is validated by the Pydantic schema, before the handler runs**, so a weak
+  choice returns 422 without burning the single-use token — the user retypes and the same link
+  still works.
+* **`apiFetch` treats 202 as bodyless, alongside 204.** Found in a browser, not by a test: the
+  server was correctly returning 202 with no body, `response.json()` threw a SyntaxError on the
+  empty string, and the page reported "Could not reach the server" — the one thing that had
+  definitely not happened. This is the only 202 in the API.
+* **The emailed link's origin comes from the request** unless `PASSWORD_RESET_BASE_URL` is set.
+  Right for `make serve` (one origin, and `--proxy-headers` makes it the Funnel front door),
+  wrong for the split dev stack where the console is on :5173 — hence the override.
 
 **Deleting an alert rule while it is FIRING orphans its event.** `alert_events.rule_id` is `ON
 DELETE SET NULL` (firing history outlives its rule — hence the snapshotted `rule_name`/`rule_type`)
@@ -974,7 +1012,11 @@ suites are run, `docs/ANDROID_METRICS.md` for what a phone may report,
 - **`RATE_LIMIT_ENABLED=false` is refused in prod.** `.env.example` ships it false for real dev
   reasons (the Vite proxy puts every request in the 127.0.0.1 bucket), which is exactly why a
   deployment that copies it and flips `ENVIRONMENT=prod` must not start: `/auth/login` guards a
-  password and `/enroll` is the only unauthenticated write in the system.
+  password, and `/enroll`, `/auth/forgot-password` and `/auth/reset-password` are the
+  unauthenticated writes in the system. The last two are authenticated the same way `/enroll` is —
+  by a single-use credential rather than a session — and `forgot-password` is the only route that
+  makes the server send mail to an address an anonymous caller chose, which is why it carries a
+  per-address limit as well as a per-IP one.
 - **The download endpoints are authenticated.** The binary is not secret, but making it public would
   add a second unauthenticated route beside `/enroll` — which this codebase keeps as the only one —
   for no gain, since an agent is useless without an enrollment code and minting one requires signing

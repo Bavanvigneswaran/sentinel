@@ -167,16 +167,23 @@ function DeviceHistoryView({ deviceId }: { deviceId: string }) {
 
       {summary && (
         <Card>
-          <CardContent className="flex flex-col gap-4 pt-6 sm:flex-row sm:items-start sm:gap-8">
+          {/* flex-wrap, and a real minimum on the breakdown rather than
+              min-w-0. Its rows are w-24 label + w-14 value, both shrink-0, so
+              the column has a hard floor of ~11rem that min-w-0 let the
+              container drop below — the content then overflowed a
+              narrower-than-content box and painted on top of the sibling
+              panels. A long disk entity (an APFS volume path like
+              /System/Volumes/Update/SFR/mnt1) is what starves it. */}
+          <CardContent className="flex flex-col gap-4 pt-6 sm:flex-row sm:flex-wrap sm:items-start sm:gap-8">
             <div className="shrink-0">
               <span className="text-xs text-muted-foreground">Health</span>
               <HealthScore health={summary.health} />
             </div>
-            <div className="min-w-0 flex-1">
+            <div className="min-w-64 flex-1">
               <HealthBreakdown health={summary.health} />
             </div>
             {exhaustion.length > 0 && (
-              <div className="shrink-0 sm:border-l sm:pl-8">
+              <div className="min-w-0 sm:border-l sm:pl-8">
                 <ExhaustionSummary estimates={exhaustion} />
               </div>
             )}

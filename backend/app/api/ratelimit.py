@@ -174,3 +174,23 @@ def refresh_limit() -> RateLimit:
 
 def logout_limit() -> RateLimit:
     return RateLimit("logout", _s().rl_logout_per_minute, 60, key="ip")
+
+
+def forgot_password_ip_limit() -> RateLimit:
+    return RateLimit("forgot_password", _s().rl_forgot_password_per_hour, 3600, key="ip")
+
+
+def forgot_password_email_limit() -> RateLimit:
+    """Per-address as well as per-IP.
+
+    The IP limit alone would still let a botnet mail-bomb one account, and the
+    address is the thing being spammed. Keyed on the hashed email exactly as
+    the login limiter is, so no plaintext address reaches Redis.
+    """
+    return RateLimit(
+        "forgot_password_email", _s().rl_forgot_password_per_email_per_hour, 3600, key="email"
+    )
+
+
+def reset_password_limit() -> RateLimit:
+    return RateLimit("reset_password", _s().rl_reset_password_per_hour, 3600, key="ip")

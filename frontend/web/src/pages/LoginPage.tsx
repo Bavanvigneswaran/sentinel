@@ -46,6 +46,10 @@ export function LoginPage() {
       testId="login"
       title="Sign in"
       description="Access your monitored devices."
+      // In the footer rather than beside the password field, which is the more
+      // conventional spot: AuthForm renders this inside a <p>, so everything
+      // here stays inline, and the sign-in form keeps exactly the four
+      // focusable controls it had.
       footer={
         <>
           No account?{" "}
@@ -55,6 +59,14 @@ export function LoginPage() {
             className="text-foreground underline-offset-4 hover:underline"
           >
             Create one
+          </Link>
+          {" · "}
+          <Link
+            to="/forgot-password"
+            data-testid="login-to-forgot"
+            className="text-foreground underline-offset-4 hover:underline"
+          >
+            Forgot password?
           </Link>
         </>
       }

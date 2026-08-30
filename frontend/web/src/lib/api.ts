@@ -152,7 +152,12 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   }
 
   if (!response.ok) throw await toApiError(response)
-  if (response.status === 204) return undefined as T
+  // Both of the bodyless successes. 202 is /auth/forgot-password, which
+  // accepts the request and queues the mail rather than reporting on it;
+  // parsing "" as JSON throws a SyntaxError that every caller here would
+  // report as "could not reach the server", which is the one thing that
+  // definitely did not happen.
+  if (response.status === 204 || response.status === 202) return undefined as T
   return (await response.json()) as T
 }
 

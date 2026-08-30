@@ -12,25 +12,44 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 
 from app.api.csrf import enforce_same_site
 from app.api.deps import CurrentUser, UnscopedSession
 from app.api.ratelimit import (
+    forgot_password_email_limit,
+    forgot_password_ip_limit,
     login_email_limit,
     login_ip_limit,
     logout_limit,
     refresh_limit,
+    reset_password_limit,
     signup_limit,
 )
 from app.config import get_settings
-from app.schemas.auth import LoginRequest, SessionResponse, SignupRequest, UserOut
+from app.schemas.auth import (
+    ForgotPasswordRequest,
+    LoginRequest,
+    ResetPasswordRequest,
+    SessionResponse,
+    SignupRequest,
+    UserOut,
+)
 from app.security.cookies import clear_refresh_cookie, set_refresh_cookie
-from app.services import auth_service
+from app.services import auth_service, password_reset
 from app.services.auth_service import (
     EmailAlreadyRegistered,
     InvalidCredentials,
     InvalidRefreshToken,
+    InvalidResetToken,
     IssuedSession,
 )
 
@@ -44,6 +63,15 @@ INVALID_CREDENTIALS = HTTPException(
 )
 INVALID_REFRESH = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired session"
+)
+# 400, not 401: there is no credential being re-presented here and nothing for
+# a client to retry with, so a 401 would send it into the re-login loop the
+# same status code was chosen to avoid on /auth/refresh's CSRF refusal.
+# Identical for expired, already-spent, and never-existed, which are the same
+# fact from the user's side — ask for another link.
+INVALID_RESET = HTTPException(
+    status_code=status.HTTP_400_BAD_REQUEST,
+    detail="This reset link is invalid or has expired. Request a new one.",
 )
 
 
@@ -164,6 +192,87 @@ async def logout(request: Request, response: Response, session: UnscopedSession)
     await auth_service.logout(session, request.cookies.get(settings.refresh_cookie_name))
     clear_refresh_cookie(response)
     return Response(status_code=status.HTTP_204_NO_CONTENT, headers=dict(response.headers))
+
+
+def _reset_base_url(request: Request) -> str:
+    """Where the emailed link should point.
+
+    Falls back to the origin the request arrived on, which is correct for
+    `make serve` — console and API on one port — and behind the Funnel
+    `--proxy-headers` makes that the public https:// front door rather than
+    the loopback bind. A split dev stack needs the explicit setting.
+    """
+    configured = get_settings().password_reset_base_url
+    return configured.rstrip("/") if configured else str(request.base_url).rstrip("/")
+
+
+@router.post(
+    "/forgot-password",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(forgot_password_ip_limit()), Depends(forgot_password_email_limit())],
+)
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    request: Request,
+    background: BackgroundTasks,
+    session: UnscopedSession,
+) -> Response:
+    """Email a reset link. Always 202, whether or not the address has an account.
+
+    The response must not distinguish the two, or this becomes an
+    account-enumeration oracle — the same reasoning that makes /auth/login
+    answer identically for a wrong password and an unknown email.
+
+    Sending is queued as a background task rather than awaited, and that is
+    part of the same guarantee rather than a performance choice: an SMTP
+    conversation takes a second or more, so awaiting it would make the
+    known-address path visibly slower than the unknown one and time the
+    answer the status code refuses to give. It also means a mail failure
+    cannot be reported here — it is logged, and the user sees the same
+    "check your inbox" either way.
+    """
+    issued = await auth_service.begin_password_reset(session, email=payload.email)
+    if issued is not None:
+        user, token = issued
+        background.add_task(
+            password_reset.send_reset_email,
+            user.email,
+            password_reset.build_reset_url(_reset_base_url(request), token),
+        )
+    return Response(status_code=status.HTTP_202_ACCEPTED)
+
+
+@router.post(
+    "/reset-password",
+    response_model=SessionResponse,
+    dependencies=[Depends(reset_password_limit())],
+)
+async def reset_password(
+    payload: ResetPasswordRequest,
+    request: Request,
+    response: Response,
+    session: UnscopedSession,
+) -> SessionResponse:
+    """Spend a reset link and sign the user in on the new password.
+
+    Signing them straight in mirrors /auth/signup: they have just proved
+    control of the account's mailbox and chosen a password, so bouncing them
+    to a login form to type it again is a UX regression for no security gain.
+
+    The session this issues is the only one that survives — every refresh
+    token the account had is revoked, and `password_changed_at` invalidates
+    every access token issued before now, so a thief holding a live session
+    loses it here. That is the point of a reset.
+    """
+    try:
+        user = await auth_service.complete_password_reset(
+            session, token=payload.token, password=payload.password
+        )
+    except InvalidResetToken as exc:
+        raise INVALID_RESET from exc
+
+    issued = await auth_service.issue_session(session, user, **_client_context(request))
+    return _session_body(issued, response)
 
 
 @router.get("/me", response_model=UserOut)

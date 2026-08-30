@@ -25,6 +25,11 @@ from app.models import RefreshToken, User
 from app.security.opaque import new_refresh_token, sha256_bytes
 from app.security.passwords import hash_password, verify_dummy_password, verify_password
 from app.security.tokens import issue_access_token
+from app.services.password_reset import (
+    mint_reset_token,
+    password_fingerprint,
+    redeem_reset_token,
+)
 
 
 class EmailAlreadyRegistered(Exception):
@@ -37,6 +42,10 @@ class InvalidCredentials(Exception):
 
 class InvalidRefreshToken(Exception):
     """The presented refresh token is unusable. Always maps to a 401."""
+
+
+class InvalidResetToken(Exception):
+    """The presented password-reset token is unusable. Always maps to a 400."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +224,64 @@ async def rotate_refresh(
         user_agent=user_agent,
         ip=ip,
     )
+
+
+async def begin_password_reset(
+    session: AsyncSession, *, email: str
+) -> tuple[User, str] | None:
+    """Mint a reset token for this address, or None if there is nothing to reset.
+
+    None covers both an unknown address and a deactivated account, and the
+    route must answer identically either way — see its docstring. Nothing is
+    written to the database: the token lives in Redis, so a request for an
+    address that does not exist leaves no trace to distinguish it from one
+    that does.
+    """
+    normalized = normalize_email(email)
+    user = await session.scalar(sa.select(User).where(User.email == normalized))
+    if user is None or not user.is_active:
+        return None
+    return user, await mint_reset_token(user.id, user.password_hash)
+
+
+async def complete_password_reset(
+    session: AsyncSession, *, token: str, password: str
+) -> User:
+    """Spend a reset token and set the new password, or raise InvalidResetToken."""
+    claim = await redeem_reset_token(token)
+    if claim is None:
+        raise InvalidResetToken("unknown or expired token")
+
+    user = await session.get(User, claim.user_id)
+    if user is None or not user.is_active:
+        raise InvalidResetToken("user unavailable")
+
+    # The token was minted against one specific password hash. A mismatch
+    # means the password has changed since — a newer link was already used, or
+    # the account was reset another way — and honouring this one would
+    # silently undo that.
+    if password_fingerprint(user.password_hash) != claim.fingerprint:
+        raise InvalidResetToken("token superseded")
+
+    now = datetime.now(UTC)
+    user.password_hash = await hash_password(password)
+    # Rejects every access token issued before now (app/api/deps.py's
+    # _resolve_user), which is the half a refresh-token revocation cannot
+    # reach: an access JWT is valid on its own signature for its full 15
+    # minutes and is checked against no table.
+    user.password_changed_at = now
+    await session.flush()
+
+    # revoke_family() covers one family; a reset has to reach every session
+    # the account has anywhere, which is the case this reason string was
+    # added for and never wired to anything until now.
+    await session.execute(
+        sa.update(RefreshToken)
+        .where(RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=now, revoked_reason="password_change")
+    )
+    await session.commit()
+    return user
 
 
 async def logout(session: AsyncSession, presented_secret: str | None) -> None:

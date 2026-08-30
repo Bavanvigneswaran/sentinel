@@ -138,6 +138,22 @@ class Settings(BaseSettings):
     rl_signup_per_hour: int = 5
     rl_refresh_per_minute: int = 30
     rl_logout_per_minute: int = 60
+    # Tighter than login, and limited per address as well as per IP: this is
+    # the one endpoint that makes the server send mail to an address chosen by
+    # an unauthenticated caller, so an unthrottled one is a spam relay pointed
+    # at whichever account the caller names.
+    rl_forgot_password_per_hour: int = 5
+    rl_forgot_password_per_email_per_hour: int = 3
+    rl_reset_password_per_hour: int = 10
+
+    # --- Password reset --------------------------------------------------
+    password_reset_ttl_seconds: int = 1800  # 30 minutes
+    # Where the emailed link points. Unset derives it from the request that
+    # asked for the reset, which is right for `make serve` (console and API on
+    # one origin, and behind the Funnel --proxy-headers makes it the https://
+    # front door) and wrong for `make dev-frontend`, where the console is on
+    # :5173 and the API on :8000 — hence the override.
+    password_reset_base_url: str | None = None
 
     # --- Alerts ------------------------------------------------------------
     alert_evaluator_interval_seconds: int = 15

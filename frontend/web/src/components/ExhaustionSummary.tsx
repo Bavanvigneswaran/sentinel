@@ -22,12 +22,23 @@ export function ExhaustionSummary({ estimates }: { estimates: ExhaustionForecast
       <span className="text-xs text-muted-foreground">Time to capacity</span>
       {estimates.map((e) => (
         <div key={e.metric} className="flex items-baseline justify-between gap-3 text-sm">
-          <span>
-            {METRIC_LABEL[e.metric]}
-            {e.entity ? ` (${e.entity})` : ""}
-            <span className="text-muted-foreground"> · {e.current_value.toFixed(0)}%</span>
+          {/* Only the name truncates, and the reading never does. An entity is
+              a real mount path and can be arbitrarily long (APFS gives us
+              /System/Volumes/Update/SFR/mnt1); letting it set this panel's
+              width crushed the health breakdown beside it. The full path stays
+              available on hover rather than being dropped. */}
+          <span className="flex min-w-0 items-baseline">
+            <span className="truncate" title={e.entity ?? undefined}>
+              {METRIC_LABEL[e.metric]}
+              {e.entity ? ` (${e.entity})` : ""}
+            </span>
+            <span className="shrink-0 text-muted-foreground">
+              {" "}· {e.current_value.toFixed(0)}%
+            </span>
           </span>
-          <span className={e.projected_at ? "font-medium" : "text-muted-foreground"}>
+          <span
+            className={`shrink-0 ${e.projected_at ? "font-medium" : "text-muted-foreground"}`}
+          >
             {e.projected_at
               ? `full ${formatDaysUntil(e.projected_at)}`
               : "not trending toward capacity"}

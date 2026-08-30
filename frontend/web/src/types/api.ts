@@ -32,6 +32,15 @@ export interface LoginRequest {
   password: string
 }
 
+export interface ForgotPasswordRequest {
+  email: string
+}
+
+export interface ResetPasswordRequest {
+  token: string
+  password: string
+}
+
 /** Mirrors app/schemas/devices.py:DeviceOut. `status` is server-derived —
  * see DEVICE_STALE_AFTER_SECONDS in the backend — never trust a stored
  * "online" without checking `last_seen_at` yourself if you bypass this type. */

@@ -43,8 +43,9 @@ def test_a_correctly_configured_production_boots():
         # .env.example ships this false for good dev reasons (the Vite proxy
         # puts every request in the 127.0.0.1 bucket), so a deployment that
         # copies it and flips ENVIRONMENT=prod would otherwise run with
-        # /auth/login and /enroll — the only unauthenticated write in the
-        # system — unthrottled, and nothing would say so.
+        # /auth/login, /enroll and the two password-reset routes — the
+        # unauthenticated writes in the system — unthrottled, and nothing
+        # would say so.
         ({"rate_limit_enabled": False}, "rate_limit_enabled"),
     ],
 )

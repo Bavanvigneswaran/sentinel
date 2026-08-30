@@ -9,12 +9,14 @@ import { AnomaliesPage } from "@/pages/AnomaliesPage"
 import { DashboardPage } from "@/pages/DashboardPage"
 import { DeviceHistoryPage } from "@/pages/DeviceHistoryPage"
 import { ForecastsPage } from "@/pages/ForecastsPage"
+import { ForgotPasswordPage } from "@/pages/ForgotPasswordPage"
 import { IncidentDetailPage } from "@/pages/IncidentDetailPage"
 import { IncidentsPage } from "@/pages/IncidentsPage"
 import { LiveMonitoringPage } from "@/pages/LiveMonitoringPage"
 import { LoginPage } from "@/pages/LoginPage"
 import { NotFoundPage } from "@/pages/NotFoundPage"
 import { ReportsPage } from "@/pages/ReportsPage"
+import { ResetPasswordPage } from "@/pages/ResetPasswordPage"
 import { SettingsPage } from "@/pages/SettingsPage"
 import { SignupPage } from "@/pages/SignupPage"
 
@@ -52,5 +54,11 @@ export const router = createBrowserRouter([
       { path: "/settings", element: <SettingsPage /> },
     ],
   },
+  // Outside PublicOnlyRoute on purpose. Both are reached from an email, which
+  // is as likely to be opened on a machine that is already signed in as not,
+  // and bouncing that click to the dashboard would look like the link was
+  // broken. A reset ends the signed-in session anyway.
+  { path: "/forgot-password", element: <ForgotPasswordPage /> },
+  { path: "/reset-password", element: <ResetPasswordPage /> },
   { path: "*", element: <NotFoundPage /> },
 ])

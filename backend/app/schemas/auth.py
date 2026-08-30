@@ -49,6 +49,34 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=_settings.password_max_length)
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    # Bounded for the same reason the password field is: this one is looked up
+    # by a sha256 of itself, so an unbounded value is free hashing work.
+    token: str = Field(min_length=1, max_length=512)
+    password: str = Field(
+        min_length=_settings.password_min_length, max_length=_settings.password_max_length
+    )
+
+    @field_validator("password")
+    @classmethod
+    def _not_a_commonly_guessed_password(cls, value: str) -> str:
+        """The same policy signup applies, for the same reason.
+
+        Applied here rather than in the route body deliberately: a 422 from
+        this validator happens before the handler runs, so a weak choice
+        cannot burn the single-use token and leave the user holding a dead
+        link — they retype and the same link still works.
+        """
+        problem = password_problem(value)
+        if problem is not None:
+            raise ValueError(problem)
+        return value
+
+
 class UserOut(BaseModel):
     """Has no password_hash field at all, so it cannot leak by accident.
     Relying on an `exclude` would be one refactor away from a breach."""
