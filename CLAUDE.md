@@ -252,8 +252,15 @@ rather than concluding the route is missing.
 finding.** `make serve` binds loopback, so the process no longer answers plaintext `http://` on
 every LAN interface — which it did, carrying the account password on `POST /auth/login`, with HSTS
 correctly absent because it is scheme-gated and so never appeared on the listener that needed it.
-Point `frontend/mobile/.env` at the Funnel hostname, not a LAN IP. `SERVE_HOST=0.0.0.0` is still
-there for a genuinely trusted network and says what it costs.
+`SERVE_HOST=0.0.0.0` is still there for a genuinely trusted network and says what it costs.
+
+**`frontend/mobile/.env` currently points at the LAN IP, not the Funnel hostname, and that is
+deliberate** — see the next paragraph for why the Funnel stopped being the right default. It is
+baked in at *build* time, so changing it means `make mobile-prebuild` (required: both
+`withReleaseSigning` and `withDevBackendCleartext` read the environment at prebuild, and the
+cleartext exception is scoped to exactly that host) then `make mobile-apk`, then
+`agent/build/register_build.py` to republish it to `/download`. The Funnel hostname is still the
+right value for an APK meant to work off this network.
 
 **The Funnel is the wrong tool for same-network access, and using it that way cost a long
 evening on 2026-08-31.** It is a *public-internet* front door: with every device on the same
@@ -288,6 +295,13 @@ silently dropped by the unconfigured-guard branches in `notify.py`. Current stat
   `https://` origin, not a LAN IP — the Push API does not exist on an insecure origin, and the app
   reports that as "this browser does not support push notifications", which reads like a browser
   problem and is not one.
+  **So `make serve-lan` turns web push off, and that is the real cost of the LAN front door.**
+  `http://<lan-ip>:8000` is not a secure context, so no browser reaching it that way can subscribe
+  or receive — existing `web_push_subscriptions` rows are untouched and simply have nothing
+  delivering to them from that origin. `http://localhost:8000` on this Mac still works, because
+  loopback is a secure context by definition. Email is unaffected: it is sent server-side and does
+  not care what origin the console was loaded from, which makes it the working channel while the
+  deployment is LAN-only. Load the console over the Funnel URL when push is what is being tested.
 * **Email — configured and working, verified end to end.** Gmail SMTP (`smtp.gmail.com:587`, an App
   Password, not the account password) plus changing the signed-in account's `users.email` off the
   Phase 10a placeholder `phase10a@example.com` (IANA's reserved, unroutable documentation domain) to
