@@ -24,7 +24,18 @@ from app.security.tokens import issue_access_token
 from app.services import enrollment_service as svc
 from app.services import model_integrity, novelty_service
 
-NOW = datetime.now(UTC)
+
+def _now() -> datetime:
+    """Evaluated per call, never at import.
+
+    The endpoint judges freshness against the real clock, so a timestamp
+    pinned at collection time silently ages while the rest of the suite runs.
+    The `-30s` reading below leaves the 90s window once the suite is a minute
+    old, so this file passed on a fast run and failed on a slow one with
+    nothing changed. Found exactly that way: the whole suite took 101s and
+    this test ran past the 60s mark.
+    """
+    return datetime.now(UTC)
 
 
 def _headers(user_id) -> dict:
@@ -76,7 +87,7 @@ async def device_with_reading(admin_session):
             MetricSample(
                 user_id=user.id,
                 device_id=device.id,
-                ts=ts or NOW,
+                ts=ts if ts is not None else _now(),
                 resolution_seconds=1,
                 **_reading(**overrides),
             )
@@ -139,7 +150,7 @@ async def test_a_quiet_device_is_not_scored_on_a_stale_reading(
     same rule every headline number on a summary follows."""
     user, device = device_with_reading["user"], device_with_reading["device"]
     _write_model(model_dir, device.id)
-    await device_with_reading["add_reading"](ts=NOW - timedelta(minutes=10))
+    await device_with_reading["add_reading"](ts=_now() - timedelta(minutes=10))
 
     r = await client.get(f"/devices/{device.id}/novelty", headers=_headers(user.id))
 
@@ -170,12 +181,13 @@ async def test_an_unusual_reading_scores_higher_than_an_ordinary_one(
     user, device = device_with_reading["user"], device_with_reading["device"]
     _write_model(model_dir, device.id)
 
-    await device_with_reading["add_reading"](ts=NOW - timedelta(seconds=30))
+    now = _now()
+    await device_with_reading["add_reading"](ts=now - timedelta(seconds=30))
     ordinary = (
         await client.get(f"/devices/{device.id}/novelty", headers=_headers(user.id))
     ).json()["score"]
 
-    await device_with_reading["add_reading"](ts=NOW, cpu_percent=99.0, load1=48.0, mem_percent=97.0)
+    await device_with_reading["add_reading"](ts=now, cpu_percent=99.0, load1=48.0, mem_percent=97.0)
     unusual = (await client.get(f"/devices/{device.id}/novelty", headers=_headers(user.id))).json()[
         "score"
     ]

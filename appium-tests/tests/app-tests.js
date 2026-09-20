@@ -327,6 +327,30 @@ async function isGone(selector, timeout = SHORT_WAIT) {
   return !(await isPresent(selector));
 }
 
+/**
+ * Wait for a node's `enabled` to reach an expected value.
+ *
+ * setField() returns once the platform has written the text, but the submit
+ * button's disabled state is React state driven by onChangeText and lands a
+ * re-render later. Asserting off the very next snapshot races that render and
+ * reads the state the form held *before* the last field was typed into, so the
+ * assertion fails intermittently against a form behaving correctly. Same defect
+ * class as the stale error-note handled in submitAuth().
+ *
+ * Returns the last value seen rather than throwing, so a genuine mismatch still
+ * fails the caller's own assertion with the real value instead of a timeout.
+ */
+async function waitForEnabled(id, expected, timeout = SHORT_WAIT) {
+  const deadline = Date.now() + timeout;
+  let seen = null;
+  for (;;) {
+    const node = (await snapshot()).byId(id);
+    seen = node === null ? null : node.enabled;
+    if (seen === expected || Date.now() >= deadline) return seen;
+    await driver.pause(150);
+  }
+}
+
 async function setField(id, value) {
   const field = await el(byId(id));
   if (value === "") {
@@ -351,7 +375,23 @@ async function fieldText(id) {
  * sign-in into a timeout that reports the wrong thing entirely, and vice versa.
  */
 async function submitAuth(timeout = 25000) {
+  // The note left by the PREVIOUS attempt is still mounted at the moment of the
+  // tap. `submit()` clears it with setError(null), but React has not
+  // re-rendered yet, so the first snapshot below can still catch the old node
+  // and return its message as this attempt's verdict. Module 27 is where that
+  // bites: the traversal case leaves a 422 "must have an @-sign", which then
+  // reads as the answer to the template-injection attempt that follows it, and
+  // `includesText("Invalid email or password")` fails against a backend that
+  // answered correctly. Intermittent by nature — it depends on whether the
+  // re-render lands before the first poll.
+  //
+  // Same defect class as Selenium TC-315: hold the stale node and wait for it
+  // to go, rather than waiting for *a* node to be present. Bounded by
+  // isGone()'s own window, so a note that legitimately never clears falls
+  // through to the poll below instead of hanging.
+  const hadNote = await isPresent(byId("error-note"));
   await tap(byId("auth-submit"));
+  if (hadNote) await isGone(byId("error-note"));
   const deadline = Date.now() + timeout;
   let snap = null;
   while (Date.now() < deadline) {
@@ -729,23 +769,23 @@ describe("Sentinel Android App — E2E Suite", function () {
     it("enables the submit button once both fields are filled", async function () {
       await setField("auth-email", "user@example.com");
       await setField("auth-password", "a-password");
-      assert.strictEqual((await snapshot()).byId("auth-submit").enabled, true);
+      assert.strictEqual(await waitForEnabled("auth-submit", true), true);
     });
 
     it("leaves the submit button disabled with only an email", async function () {
       await setField("auth-email", "user@example.com");
-      assert.strictEqual((await snapshot()).byId("auth-submit").enabled, false);
+      assert.strictEqual(await waitForEnabled("auth-submit", false), false);
     });
 
     it("leaves the submit button disabled with only a password", async function () {
       await setField("auth-password", "a-password");
-      assert.strictEqual((await snapshot()).byId("auth-submit").enabled, false);
+      assert.strictEqual(await waitForEnabled("auth-submit", false), false);
     });
 
     it("treats a whitespace-only email as empty", async function () {
       await setField("auth-email", "   ");
       await setField("auth-password", "a-password");
-      assert.strictEqual((await snapshot()).byId("auth-submit").enabled, false);
+      assert.strictEqual(await waitForEnabled("auth-submit", false), false);
     });
 
     it("reveals the password when the eye control is tapped", async function () {
