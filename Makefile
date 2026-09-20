@@ -3,7 +3,7 @@
         agent-enroll agent-sample agent-status agent-install-service agent-uninstall-service \
         agent-build agent-build-check agent-build-clean \
         train-novelty train-novelty-report \
-        mobile mobile-android mobile-prebuild mobile-test mobile-collector-test \
+        mobile mobile-go mobile-android mobile-prebuild mobile-test mobile-collector-test \
         mobile-apk mobile-apk-test \
         mobile-collector-logs \
         deps-lock e2e-db e2e-serve e2e-code
@@ -278,6 +278,35 @@ agent-build-clean:
 # Metro, for an already-installed dev build.
 mobile:
 	cd frontend/mobile && npx expo start --dev-client
+
+# Metro in EXPO GO mode, for the stock Expo Go app from the Play Store rather
+# than a dev build. --lan because a phone reaches this Mac by its network
+# address, never by localhost.
+#
+# READ THIS BEFORE REACHING FOR IT: on a real device (2026-09-01) Expo Go
+# REFUSED this project — "requires a newer version of Expo Go" — and no
+# setting here fixes that. Since SDK 50 Expo Go supports exactly one SDK
+# version, whichever its own Play Store release was built for, and this project
+# pins expo 57. The mismatch is between the store build and our SDK, not
+# something the flag or the LAN address can change. `make mobile-android` (a
+# dev build) is the working path and is what frontend/mobile/README.md
+# specifies; this target is kept only for the day Expo Go ships SDK 57.
+#
+# The JS half IS Expo-Go-ready and that part is not in doubt:
+# modules/sentinel-collector/index.ts loads its native side with
+# requireOptionalNativeModule() and exports UNSUPPORTED_STATUS when absent, and
+# `expo start --go` bundles clean (1228 modules) and serves an
+# exposdk:57.0.0 manifest. Verified server-side by curl — which is precisely
+# what could NOT see the client-side SDK refusal above. Bundling is not
+# evidence that a client will accept the bundle.
+#
+# EXPO_PUBLIC_API_URL is inlined by Metro at BUNDLE time here, not baked into an
+# APK, so editing frontend/mobile/.env and restarting this target is enough --
+# no prebuild, no gradle, no reinstall. It must be the address the PHONE can
+# reach, i.e. this Mac's LAN IP, and the backend must be bound to 0.0.0.0 with
+# COOKIE_SECURE=false or the refresh cookie is dropped on every restart.
+mobile-go:
+	cd frontend/mobile && npx expo start --go --lan
 
 # Build, install and launch the dev build on the running emulator/device.
 # The first run compiles the Android project and takes a while.
