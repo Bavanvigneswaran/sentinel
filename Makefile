@@ -35,6 +35,15 @@ logs:
 dev-backend:
 	cd backend && .venv/bin/uvicorn app.main:app --reload --port 8000 --no-server-header
 
+# Same as dev-backend, but reachable from another device on the network (a
+# phone on the hotspot) instead of localhost only — the --reload dev-loop
+# equivalent of `make serve-lan`. COOKIE_SECURE=false ENVIRONMENT=dev is
+# required over plain http:// or the refresh cookie is silently dropped and
+# login looks broken rather than misconfigured; see serve-lan's own comment.
+dev-backend-lan:
+	cd backend && COOKIE_SECURE=false ENVIRONMENT=dev RATE_LIMIT_ENABLED=true \
+		.venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --no-server-header
+
 dev-frontend:
 	cd frontend/web && npm run dev
 
