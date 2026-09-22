@@ -303,13 +303,22 @@ box and the user needs to know.
 
 ## The Android APK
 
-**Decision: it belongs in the distribution story, and no APK is published here.**
+**Decision: it belongs in the distribution story, and `make mobile-apk` publishes it.**
 
 Phase 10b's collector is a real agent, so the manifest schema accepts
 `os: "android"`, the backend's `KNOWN_OS` includes it, and the download page
 renders it like any other platform. `agent/build/register_build.py` adds a
 Gradle-built APK to the same manifest — Android is not special-cased anywhere
 downstream.
+
+`make mobile-apk` runs `register_build.py` itself once `gradlew assembleRelease`
+succeeds — a build that isn't published is indistinguishable from one that
+never happened, and it used to be a separate command this target only printed
+as a suggestion. `download_service.py`'s `load_catalog()` reads the manifest
+fresh on every request rather than caching it, so the new build is live on the
+"Add a device" page immediately: no backend restart, and no second command to
+remember. The version registered is read straight out of `app.config.ts`, so
+the manifest can never drift from what was actually built.
 
 What stops one shipping today is the key. `expo prebuild` generates an
 `android/app/build.gradle` whose **release** buildType points at

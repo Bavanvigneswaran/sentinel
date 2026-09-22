@@ -308,6 +308,23 @@ mobile:
 mobile-go:
 	cd frontend/mobile && npx expo start --go --lan
 
+# Compares this Mac's current network IP against what's baked into
+# frontend/mobile/.env, and only touches anything if they've drifted — a
+# hotspot's DHCP lease is not stable across sessions. Run this before
+# `make serve-lan` whenever you've rejoined a network, physical device in
+# play. `mobile-ip-check` reports only; `mobile-sync-ip` updates .env AND
+# rebuilds the release APK (the IP is baked in at build time there);
+# `mobile-sync-ip-dev` updates .env only, for mobile-go/mobile-android, which
+# read it at bundle time and need no rebuild.
+mobile-ip-check:
+	./scripts/mobile-sync-ip.sh --check
+
+mobile-sync-ip:
+	./scripts/mobile-sync-ip.sh
+
+mobile-sync-ip-dev:
+	./scripts/mobile-sync-ip.sh --dev-only
+
 # Build, install and launch the dev build on the running emulator/device.
 # The first run compiles the Android project and takes a while.
 mobile-android:
@@ -339,6 +356,14 @@ mobile-test:
 # variable nor the fix.
 ANDROID_SDK ?= $(or $(ANDROID_HOME),$(HOME)/Library/Android/sdk)
 
+# Publishes to agent/dist/ + manifest.json automatically once the build
+# succeeds — the console's "Add a device" page reads that manifest fresh on
+# every request (see download_service.py's load_catalog(), deliberately not
+# cached), so a newly built APK is live on the download page immediately,
+# no backend restart required. This used to be a separate command this
+# target only printed as a suggestion; forgetting to run it meant the
+# download page kept silently serving a stale build with a stale baked-in
+# backend URL — the exact class of bug this closes.
 mobile-apk:
 	@if [ ! -d "$(ANDROID_SDK)" ]; then \
 		echo "No Android SDK at $(ANDROID_SDK). Set ANDROID_HOME."; \
@@ -356,12 +381,16 @@ mobile-apk:
 		echo "public debug key — see docs/PACKAGING.md."; \
 		exit 1; \
 	fi; \
+	version=$$(grep -m1 '^\s*version:' frontend/mobile/app.config.ts | sed -E 's/.*"([^"]+)".*/\1/'); \
 	cd frontend/mobile && npx expo prebuild --platform android --clean && \
 		cd android && ANDROID_HOME="$(ANDROID_SDK)" ./gradlew assembleRelease && \
+		cd ../../.. && \
 		echo "APK: frontend/mobile/android/app/build/outputs/apk/release/app-release.apk" && \
-		echo "Publish it with: python agent/build/register_build.py --os android \\" && \
-		echo "  --arch arm64 --version 0.1.0 --signed --signing '<your key>' \\" && \
-		echo "  --file frontend/mobile/android/app/build/outputs/apk/release/app-release.apk"
+		python3 agent/build/register_build.py --os android --arch arm64 \
+			--version "$$version" --signed \
+			--signing "self-signed release key (see ~/.sentinel-keys/)" \
+			--file frontend/mobile/android/app/build/outputs/apk/release/app-release.apk && \
+		echo "Published to agent/dist/ — the console's Add a device page now serves this build (no restart needed)."
 
 # --- end-to-end suites (Selenium, Appium, load) -------------------------------
 # These run against a *separate* stack from `make serve`, configured by
