@@ -3,8 +3,9 @@
 # frontend/mobile/.env (EXPO_PUBLIC_API_URL), and only rebuilds the APK when
 # they actually differ. A hotspot's DHCP lease is not stable across sessions
 # — see CLAUDE.md's Phase 10a/11 notes on the LAN IP changing per network —
-# so this is meant to be run before every `make serve-lan` session with a
-# physical device, not just once.
+# so this is meant to be run before every session with a physical device, not
+# just once: `make serve-lan` (one command) or `make dev-backend-lan` (the
+# --reload dev loop, for the three-terminal method) both need it.
 #
 # Usage:
 #   scripts/mobile-sync-ip.sh            # check + rebuild the APK if the IP moved
@@ -86,4 +87,6 @@ make mobile-apk
 
 echo ""
 echo "Done. Reinstall the new APK on the phone, then start the backend on the"
-echo "same address, e.g.:  make serve-lan"
+echo "same address — make serve-lan (one command), or make dev-backend-lan"
+echo "(the --reload dev loop, three-terminal method) — either binds the same"
+echo "address this was just synced to."
