@@ -258,9 +258,14 @@ correctly absent because it is scheme-gated and so never appeared on the listene
 deliberate** — see the next paragraph for why the Funnel stopped being the right default. It is
 baked in at *build* time, so changing it means `make mobile-prebuild` (required: both
 `withReleaseSigning` and `withDevBackendCleartext` read the environment at prebuild, and the
-cleartext exception is scoped to exactly that host) then `make mobile-apk`, then
-`agent/build/register_build.py` to republish it to `/download`. The Funnel hostname is still the
-right value for an APK meant to work off this network.
+cleartext exception is scoped to exactly that host) then `make mobile-apk`, which now republishes
+it to `/download` itself — `agent/build/register_build.py` used to be a second command this target
+only printed as a suggestion, easy to forget and indistinguishable from a build that was never
+published; the target runs it now. `scripts/mobile-sync-ip.sh` (`make mobile-ip-check` /
+`mobile-sync-ip`) wraps the whole sequence: compares the current network IP against what's baked
+into `frontend/mobile/.env`, and only edits it and rebuilds when the two actually disagree — a
+hotspot's DHCP lease is not stable across sessions. The Funnel hostname is still the right value
+for an APK meant to work off this network.
 
 **The Funnel is the wrong tool for same-network access, and using it that way cost a long
 evening on 2026-08-31.** It is a *public-internet* front door: with every device on the same
